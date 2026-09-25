@@ -1,0 +1,16 @@
+{
+  "name": "novel-loom",
+  "version": "0.7.0",
+  "private": true,
+  "type": "module",
+  "description": "SillyTavern 扩展：导入小说，分段提取大纲/角色/世界书/人物关系，生成角色卡并写入酒馆，可选续写与局部重写",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "smoke": "python tests/browser/smoke.py",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "globals": "^15.0.0"
+  }
+}

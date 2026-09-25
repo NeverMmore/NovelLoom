@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NovelLoom harness</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  :root { --SmartThemeBodyColor: #dcdcd2; --SmartThemeQuoteColor: #e18a24; --SmartThemeBlurTintColor: rgba(23,23,28,.96); --SmartThemeBorderColor: rgba(255,255,255,.15); }
+  body { background: #333; color: #ddd; font-family: sans-serif; margin: 0; }
+  #mes_stop { display: none; }
+</style>
+</head>
+<body>
+<div id="extensions_settings2"></div>
+<div id="extensionsMenu"></div>
+<div id="chat"></div>
+<textarea id="send_textarea"></textarea><button id="send_but">send</button><div id="mes_stop">stop</div>
+<div id="toast-container"></div>
+<script>
+window.toastr = { success: (m) => console.log('[toast]', m), error: (m) => console.log('[toast-err]', m), info: () => {}, warning: () => {} };
+window.__saved = { worlds: {}, imports: [] };
+const mock = (prompt) => {
+  if (prompt.includes('<source>')) {
+    const src = prompt.split('<source>')[1].split('</source>')[0];
+    const title = (prompt.match(/第 (\d+) 段「([^」]+)」/) || [])[2] || '';
+    const characters = [];
+    if (src.includes('江酒')) characters.push({ name: '江酒', aliases: src.includes('小酒') ? ['小酒'] : [], identity: src.includes('女仆') || prompt.includes('身份: 莉莉丝的女仆') ? '莉莉丝的女仆' : '渣男', personality: '脸皮厚，被抓包也照样笑', relationship: '莉莉丝的前男友', experiences: [title + '的经历'], quotes: src.includes('分手') ? [{ text: '没错，今晚我是来跟你提分手的。', context: '赴约' }] : [], importance: 'main' });
+    if (src.includes('莉莉丝')) characters.push({ name: '莉莉丝', identity: '大魔女', personality: '说话慢条斯理，从不提高音量', relationship: '江酒的主人', appearance: ['黑色长裙', '唇色苍白'], importance: 'main' });
+    if (src.includes('姜小白')) characters.push({ name: '姜小白', identity: '迷路的女孩', importance: 'support' });
+    const entries = { 地点: [], 世界观: [] };
+    if (src.includes('酒吧')) entries.地点.push({ name: '酒吧', keywords: ['酒吧'], content: '名称: 莉莉丝的酒吧\n位置: 下城区边缘' });
+    if (src.includes('魔药')) entries.世界观.push({ name: '魔女秘药', keywords: ['魔药', '秘药'], content: '效果: 喝下会成为见习魔女' });
+    return '```json\n' + JSON.stringify({ chapters: [{ name: title, notes: title + '：江酒与莉莉丝之间发生了新的变化，关系进一步推进。' }], characters, entries, style: { perspective: '第三人称', tone: '口语化', mood: '轻松中带惊悚' }, missing_names: src.includes('雨中') ? [{ type: '地名类', vague: '那家店', context: '走进了那家店', suggest: '莉莉丝酒吧' }] : [] }) + '\n```';
+  }
+  if (prompt.includes('字段写法')) return JSON.stringify({ name: '莉莉丝', description: '基本信息:\n  姓名: 莉莉丝\n  身份: 大魔女\n外貌特征:\n  - 黑色长裙\n性格调色盘:\n  底色: 骄傲\n  主色调: 从容', personality: '慢条斯理', scenario: '酒吧打烊后，{{user}} 推门进来', first_mes: '莉莉丝把最后一只杯子倒扣在吧台上——仿佛早就知道你会来。\n“坐。”', alternate_greetings: ['雨夜，门铃响了。', '茶会结束后。'], mes_example: '<START>\n{{user}}: 你好\n{{char}}: 坐。', creator_notes: '来自《魔女》', tags: ['魔女', '奇幻'] });
+  if (prompt.includes('审稿意见')) return JSON.stringify({ first_mes: '莉莉丝把最后一只杯子倒扣在吧台上。\n“坐。”' });
+  if (prompt.includes('处中断了')) return '莉莉丝放下书，看了他一眼。';
+  if (window.__truncateOnce && prompt.includes('续写任务')) { window.__truncateOnce = false; const t = (prompt.match(/请续写《[^》]+》的下一章：([^，]+)，/) || [])[1]; return t + ' 雨夜\n\n' + '江酒擦着杯子，莉莉丝在楼上翻书。'.repeat(20) + '江酒刚想开口，'; }
+  if (window.__refuseOnce && prompt.includes('续写任务')) { window.__refuseOnce = false; return '抱歉，我无法继续这个请求。'; }
+  if (prompt.includes('提炼这本书的文风')) return '```json\n' + JSON.stringify({ perspective: '第三人称有限视角，跟随江酒', tone: '短句口语化，对话多', mood: '轻松中带惊悚', rules: ['对话推进剧情', '心理活动一句带过'], banned: ['宛如'] }) + '\n```';
+  if (prompt.includes('出现了禁用词')) return prompt.split('<text>\n')[1].split('\n</text>')[0].replace(/仿佛/g, '');
+  if (prompt.includes('续写任务') && prompt.includes('<sample>')) { const t = (prompt.match(/请续写《[^》]+》的下一章：([^，]+)，/) || [])[1]; return t + ' 雨夜\n\n' + '江酒擦着杯子，仿佛什么都没发生。'.repeat(30); }
+  if (prompt.includes('续写任务')) { const t = (prompt.match(/请续写《[^》]+》的下一章：([^，]+)，/) || [])[1]; return t + ' 雨夜\n\n' + '江酒擦着杯子，莉莉丝在楼上翻书。'.repeat(40); }
+  if (prompt.includes('指向同一实体的名称组')) return '{"groups": []}';
+  if (prompt.includes('本卷梗概')) { const v = (prompt.match(/「([^」]+)」的章节概要/) || [])[1]; return v + '：本卷里江酒在酒吧打工，结识了新朋友。'; }
+  if (prompt.includes('规划接下来的')) {
+    const n = Number((prompt.match(/规划接下来的 (\d+) 章/) || [])[1] || 3);
+    const useScenes = prompt.includes('拆成 3-5 个场次');
+    return JSON.stringify({ overview: '江酒前往魔女学院', chapters: Array.from({ length: n }, (_, i) => ({
+      title: '学院篇' + (i + 1), summary: '第' + (i + 1) + '个规划：江酒在学院里遇到新的麻烦。', characters: ['江酒', '莉莉丝'], events: ['事件' + (i + 1)], foreshadowing: ['魔女秘药'],
+      scenes: useScenes ? [{ location: '学院', characters: ['江酒', '莉莉丝'], summary: '江酒在学院里遇到新的麻烦' }] : [],
+      hook: '门外传来脚步声' })) });
+  }
+  if (prompt.includes('设计一个可以放进同一个群聊场景的开场情境')) {
+    return JSON.stringify({ scenario: '酒吧打烊后，莉莉丝留江酒帮忙收拾。', first_mes: '灯光渐暗，莉莉丝靠在吧台边看着两人。', notes: { 江酒: '有点心虚，嘴上却不肯认输', 莉莉丝: '气定神闲，偶尔逗一逗江酒' } });
+  }
+  if (prompt.includes('写卡前的快速试聊')) return '“坐吧，喝一杯？”莉莉丝笑了笑，语气里带着熟稔。';
+  if (prompt.includes('整理出全书当前的伏笔看板')) return JSON.stringify({ items: [{ text: '莉莉丝的过去', plantedNo: 1, status: 'open', resolvedNo: null }] });
+  if (prompt.includes('是否与已知设定存在矛盾')) return JSON.stringify({ issues: [] });
+  if (prompt.includes('修改要求') && prompt.includes('的大纲')) return JSON.stringify({ title: '改写后的章', summary: '按要求改写：莉莉丝提前登场。', characters: ['莉莉丝'], events: ['莉莉丝登场'], foreshadowing: [], hook: '她笑了' });
+  if (prompt.includes('故事梗概')) return '江酒被莉莉丝变成女仆，此后在下城区的酒吧打工。';
+  if (prompt.includes('按「重写要求」重写')) {
+    const sel = (prompt.split('<selected>\n')[1] || '').split('\n</selected>')[0];
+    const instr = ((prompt.match(/# 重写要求\n([\s\S]*?)\n\n# 要求/) || [])[1] || '').trim();
+    return '【改写】' + sel.replace(/仿佛/g, '') + '（' + instr + '）';
+  }
+  if (prompt.includes('梳理角色之间已经明确建立的关系')) {
+    const has = (n) => prompt.includes('姓名: ' + n);
+    const rel = [];
+    if (has('江酒') && has('莉莉丝')) rel.push({ from: '江酒', to: '莉莉丝', type: 'romantic', mutual: false, label: '曾是恋人，如今在她的酒吧当女仆' });
+    if (has('姜小白')) rel.push({ from: '江酒', to: '姜小白', type: 'friend', mutual: true, label: '在下城区的雨夜相遇，此后常来店里坐坐' });
+    return JSON.stringify({ relationships: rel });
+  }
+  return '你好';
+};
+const ctx = {
+  name1: 'User', name2: '莉莉丝', characters: [], chat: [], characterId: undefined,
+  extensionSettings: { connectionManager: { profiles: [{ id: 'p1', name: 'DeepSeek 测试', model: 'deepseek-chat', api: 'openai' }] } },
+  saveSettingsDebounced() { window.__settingsSaved = (window.__settingsSaved || 0) + 1; },
+  getRequestHeaders: ({ omitContentType } = {}) => omitContentType ? { 'X-CSRF-Token': 't' } : { 'Content-Type': 'application/json', 'X-CSRF-Token': 't' },
+  async generateRaw({ prompt, systemPrompt }) {
+    const text = Array.isArray(prompt) ? prompt.map((m) => m.content).join('\n') : prompt;
+    window.__roles = (window.__roles || []).concat([Array.isArray(prompt) ? prompt.map((m) => m.role) : ['string']]);
+    window.__prompts = (window.__prompts || []).concat([text]);
+    await new Promise((r) => setTimeout(r, 30));
+    return mock(text);
+  },
+  async saveWorldInfo(name, data) { window.__saved.worlds[name] = data; },
+  async updateWorldInfoList() {},
+  getWorldInfoNames: () => Object.keys(window.__saved.worlds),
+  async getCharacters() { ctx.characters = window.__saved.imports.map((f) => ({ avatar: f + '.png', name: f })); },
+  async selectCharacterById(i) { window.__selected = i; },
+  stopGeneration() {},
+  ConnectionManagerRequestService: { async sendRequest(id, msgs) { return { content: mock(msgs.map((m) => m.content).join('\n')) }; } },
+  SlashCommandParser: { addCommandObject(o) { window.__slash = o; } },
+  SlashCommand: { fromProps: (p) => p },
+};
+window.SillyTavern = { getContext: () => ctx };
+// 模拟酒馆聊天：点击发送 → 追加用户消息 → 生成中（#mes_stop 可见）→ 追加 AI 回复
+document.getElementById('send_but').addEventListener('click', () => {
+  const text = document.getElementById('send_textarea').value;
+  ctx.chat.push({ is_user: true, mes: text, name: 'User' });
+  const stop = document.getElementById('mes_stop');
+  stop.style.display = 'block';
+  setTimeout(() => ctx.chat.push({ is_user: false, name: '莉莉丝', mes: '<thinking>构思</thinking>第' + ctx.chat.length + '楼：' + '莉莉丝翻过一页书。'.repeat(20) }), 300);
+  setTimeout(() => { stop.style.display = 'none'; }, 600);
+});
+const origFetch = window.fetch.bind(window);
+window.fetch = async (url, init) => {
+  if (String(url).includes('/api/characters/import')) {
+    const form = init.body;
+    const file = form.get('avatar');
+    const text = file.type === 'application/json' ? await file.text() : '(png ' + file.size + ' bytes)';
+    const name = 'card_' + (window.__saved.imports.length + 1);
+    window.__saved.imports.push(name);
+    window.__saved.lastImport = { type: form.get('file_type'), text, preserved: form.get('preserved_name') };
+    return new Response(JSON.stringify({ file_name: name }), { status: 200 });
+  }
+  return origFetch(url, init);
+};
+</script>
+<script type="module" src="/index.js"></script>
+</body>
+</html>

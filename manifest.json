@@ -1,0 +1,11 @@
+{
+  "display_name": "NovelLoom 小说织卡",
+  "loading_order": 1000,
+  "js": "index.js",
+  "css": "style.css",
+  "author": "David",
+  "version": "0.7.0",
+  "homePage": "https://github.com/",
+  "auto_update": false,
+  "description": "导入 TXT 小说，自动分段提取大纲、角色、世界书与人物关系，一键生成角色卡（含群聊场景卡，写入前可试聊，封面前置、分字段重roll）并写入酒馆；角色档案支持 AI 扩写与 NSFW 补充资料，关系图谱支持自定义类型，全站统一 🎲 重roll；可选 AI 续写新章节（支持多视角文风、局部重写、连续性检查）并回灌资料；接口支持 DeepSeek 专属预设。"
+}
