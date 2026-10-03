@@ -50,7 +50,7 @@ export function buildWorldbookEntries(project, settings, opt = {}) {
                     category: '角色',
                     name: c.name,
                     keywords: uniq([c.name, ...c.aliases]),
-                    content: characterProfileText(c, { maxExperiences: ex.maxExperiences ?? 12, maxQuotes: ex.maxQuotes ?? 8 }),
+                    content: characterProfileText(c, { maxExperiences: ex.maxExperiences ?? 12, maxQuotes: ex.maxQuotes ?? 8, maxDialogues: ex.maxDialogues ?? 3 }),
                     constant: cfg.constant ?? cat.constant,
                     position: Number(cfg.position ?? cat.position),
                     depth: Number(cfg.depth ?? cat.depth),

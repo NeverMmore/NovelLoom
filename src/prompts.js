@@ -326,6 +326,66 @@ export const DEFAULT_PROMPTS = {
 
 只输出新的「{FIELD_LABEL}」字段文本，不要输出字段名、JSON、代码块标记或任何额外说明。`,
 
+    deduceBranchesSystem: `你是经验丰富的故事编辑/游戏策划，擅长从一张角色卡当前的设定出发，推演故事可能的发展方向。你只输出一个 JSON 数组，不要有任何其他文字、代码块标记或说明。`,
+
+    deduceBranches: `这是一张角色卡当前的实际内容（以这里为准，优先于下面的背景资料）：
+
+<角色卡内容>
+{CARD_CONTENT}
+</角色卡内容>
+
+以下是写这张卡时用到的背景资料（人物设定、相关角色、世界观、剧情大纲等，仅供参考）：
+
+<背景资料>
+{CONTEXT}
+</背景资料>
+
+# 任务
+如果从这张卡的开场白往后继续发展下去，剧情可能会怎么走？请按下面给出的 {COUNT} 个方向，逐条生成对应的走向，顺序要对应：
+
+<方向要求>
+{DIRECTIONS}
+</方向要求>
+
+标了具体方向的，就照着这个方向把走向写具体、写完整，结合这张卡的实际设定重新展开，不要原样照抄方向提示里的文字；标"不限方向"的，由你自由发挥，但要和其他几条有明显区别（不要互为变体、不要只是程度不同）。不分先后、先不展开分阶段细节，停留在"整体方向"这一层就好。{INSTRUCTION_LINE}
+
+{WRITING_RULES}
+
+只输出一个 JSON 数组，按上面方向的顺序排列，每个元素是：
+{"title": "一句话走向标题（8-16字）", "summary": "100-200字，说明这个走向大致会怎么发展、核心冲突或看点是什么"}
+
+数组长度必须正好是 {COUNT}，不要输出数组之外的任何文字、代码块标记或说明。`,
+
+    deduceStagesSystem: `你是经验丰富的故事编辑，擅长把一个大致的剧情走向细化成具体、可执行的分阶段推演。你只输出一个 JSON 数组，不要有任何其他文字、代码块标记或说明。`,
+
+    deduceStages: `这是一张角色卡当前的实际内容（以这里为准，优先于下面的背景资料）：
+
+<角色卡内容>
+{CARD_CONTENT}
+</角色卡内容>
+
+以下是写这张卡时用到的背景资料（仅供参考）：
+
+<背景资料>
+{CONTEXT}
+</背景资料>
+
+用户已经选定了下面这个（或这几个）剧情走向：
+
+<已选走向>
+{BRANCHES}
+</已选走向>
+
+# 任务
+把上面选定的走向推演成按时间顺序推进的分阶段剧情（如果选了不止一个，把它们融合成一条连贯的发展线，取各自看点、不要互相矛盾，不要分开各写一条）。阶段数你自己判断，通常 4-7 个，要形成一条有推进、有转折、首尾呼应的完整故事线，不要只是泛泛罗列可能性。{INSTRUCTION_LINE}
+
+{WRITING_RULES}
+
+只输出一个 JSON 数组，每个元素是：
+{"title": "阶段标题（8-16字）", "content": "150-300字，具体描述这个阶段发生的事、关键转折或冲突，和上一阶段衔接、为下一阶段做铺垫"}
+
+不要输出数组之外的任何文字、代码块标记或说明。`,
+
     styleAnalyzeSystem: `你是文学编辑，擅长拆解小说的文风，并把它写成其他作者可以照着执行的规则。你只输出一个 JSON 对象。`,
 
     styleAnalyze: `# 任务
@@ -549,6 +609,10 @@ export const PROMPT_LABELS = {
     fix: '审稿修订 · 主提示',
     cardFieldRegenSystem: '角色卡单字段重roll · 系统提示',
     cardFieldRegen: '角色卡单字段重roll · 主提示',
+    deduceBranchesSystem: '剧情推演 · 走向 · 系统提示',
+    deduceBranches: '剧情推演 · 走向 · 主提示',
+    deduceStagesSystem: '剧情推演 · 分阶段 · 系统提示',
+    deduceStages: '剧情推演 · 分阶段 · 主提示',
     styleAnalyzeSystem: 'AI 提炼文风 · 系统提示',
     styleAnalyze: 'AI 提炼文风 · 主提示',
     styleFixSystem: '禁用词修正 · 系统提示',
@@ -569,6 +633,8 @@ export const PROMPT_PLACEHOLDERS = {
     extract: ['{BOOK}', '{CHUNK_NO}', '{CHUNK_TITLE}', '{CHUNK_TEXT}', '{CATEGORY_GUIDE}', '{OPTIONAL_GUIDE}', '{KNOWN}', '{KNOWN_RULE}', '{JSON_TEMPLATE}', '{WRITING_RULES}', '{SUFFIX}'],
     card: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}', '{TIMEPOINT}', '{CHAR_PROFILE}', '{RELATED}', '{WORLD}', '{OUTLINE}', '{STYLE}', '{REQUIREMENT}', '{GREETINGS}', '{FIRST_MES_LEN}', '{WRITING_RULES}'],
     cardFieldRegen: ['{CONTEXT}', '{FIELD_LABEL}', '{CURRENT}', '{FORMAT_NOTE}', '{INSTRUCTION_LINE}', '{WRITING_RULES}'],
+    deduceBranches: ['{CARD_CONTENT}', '{CONTEXT}', '{COUNT}', '{DIRECTIONS}', '{INSTRUCTION_LINE}', '{WRITING_RULES}'],
+    deduceStages: ['{CARD_CONTENT}', '{CONTEXT}', '{BRANCHES}', '{INSTRUCTION_LINE}', '{WRITING_RULES}'],
     continue: ['{BOOK}', '{CHAPTER_TITLE}', '{WORDS}', '{STYLE}', '{OUTLINE}', '{WORLD}', '{DIRECTION}', '{PLAN}', '{TAIL}'],
     plan: ['{BOOK}', '{COUNT}', '{START_NO}', '{END_NO}', '{REQUIREMENT}', '{STYLE}', '{STORY}', '{CHARACTERS}', '{WORLD}', '{EXISTING}', '{ARCS}', '{TAIL}', '{DETAIL}', '{SCENE_GUIDE}'],
     planRevise: ['{BOOK}', '{NO}', '{INSTRUCTION}', '{STORY}', '{PREV}', '{CURRENT}', '{NEXT}', '{DETAIL}'],

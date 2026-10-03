@@ -210,4 +210,6 @@ export const DEFAULT_SETTINGS = {
     defaultEntries: [], // [{category, name, keywords, content}]
     /** 自定义关系类型：保存在扩展设置里，跨项目共享，与内置类型合并使用（见 relations.js 的 allRelationTypes） */
     customRelationTypes: [], // [{value, label, color}]
+    /** 剧情推演·走向模板：保存在扩展设置里，跨项目共享（见 deduce.js 的 branchTemplates） */
+    branchTemplates: [], // [{id, label, hint, createdAt}]
 };

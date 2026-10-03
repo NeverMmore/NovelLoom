@@ -107,6 +107,42 @@ export function characterExistsInST(avatarName) {
     }
 }
 
+/**
+ * 创建酒馆群聊（POST /api/groups/create）；返回酒馆分配的群组 id
+ * @param {{name:string, members:string[], allow_self_responses?:boolean, activation_strategy?:number, generation_mode?:number}} body
+ *   members：角色的 avatar 文件名（含 .png），即 importCharacterToST 的返回值 + '.png'
+ * @returns {Promise<string>} 群组 id
+ */
+export async function createGroupInST(body) {
+    const res = await fetch('/api/groups/create', { method: 'POST', headers: headers(), body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(`创建群聊失败：HTTP ${res.status}（请确认酒馆版本支持群聊 API）`);
+    const data = await res.json().catch(() => null);
+    const id = data?.id ?? data?.chat_id ?? body.id;
+    if (!id) throw new Error('酒馆没有返回群组 id');
+    return String(id);
+}
+
+/** 更新已创建的群聊（POST /api/groups/edit，需要完整 group 对象，最少带 id） */
+export async function updateGroupInST(body) {
+    if (!body?.id) throw new Error('缺少群组 id');
+    const res = await fetch('/api/groups/edit', { method: 'POST', headers: headers(), body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(`更新群聊失败：HTTP ${res.status}`);
+    return true;
+}
+
+/** 群聊是否仍存在于酒馆（用于判断“已在酒馆”状态） */
+export async function groupExistsInST(id) {
+    if (!id) return false;
+    try {
+        const res = await fetch('/api/groups/all', { method: 'POST', headers: headers() });
+        if (!res.ok) return false;
+        const list = await res.json().catch(() => []);
+        return Array.isArray(list) && list.some((g) => String(g.id) === String(id));
+    } catch {
+        return false;
+    }
+}
+
 export function toast(type, message, title = 'NovelLoom') {
     const t = globalThis.toastr;
     if (t?.[type]) t[type](message, title);
