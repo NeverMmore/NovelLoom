@@ -85,7 +85,7 @@ export function removeBranchTemplate(settings, id) {
 }
 
 /** 把每条走向的方向提示（可能有空槽位，表示"不限方向"）渲染成提示词里的一段列表 */
-function directionsText(directions) {
+export function directionsText(directions) {
     return directions
         .map((d, i) => `${i + 1}. ${String(d || '').trim() || '（不限方向，由你自由发挥，但要和其他几条有明显区别）'}`)
         .join('\n');
@@ -111,7 +111,7 @@ export function buildBranchesPrompt(project, settings, card, { count = DEFAULT_B
     };
 }
 
-function normBranch(b) {
+export function normBranch(b) {
     return {
         id: uid('branch_'),
         title: String(b?.title || b?.标题 || '').trim(),
@@ -200,7 +200,7 @@ export function buildStagesPrompt(project, settings, card, { instruction = '' } 
     };
 }
 
-function normStage(s) {
+export function normStage(s) {
     return {
         id: uid('stage_'),
         title: String(s?.title || s?.标题 || '').trim(),

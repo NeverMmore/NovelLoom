@@ -4,9 +4,11 @@
 import { app } from './src/app.js';
 import { VERSION } from './src/constants.js';
 import { closeMain, openMain } from './src/ui/main.js';
+import { openLiveDeduceDialog } from './src/ui/livededuce-dialog.js';
 
 const SETTINGS_ID = 'nl-settings-panel';
 const WAND_ID = 'nl-wand-button';
+const WAND_DEDUCE_ID = 'nl-wand-deduce-button';
 
 function ctx() {
     return globalThis.SillyTavern?.getContext?.();
@@ -56,6 +58,19 @@ function addWandButton() {
     menu.appendChild(item);
 }
 
+function addWandDeduceButton() {
+    if (document.getElementById(WAND_DEDUCE_ID)) return;
+    const menu = document.getElementById('extensionsMenu');
+    if (!menu) return;
+    const item = document.createElement('div');
+    item.id = WAND_DEDUCE_ID;
+    item.className = 'list-group-item flex-container flexGap5 interactable';
+    item.tabIndex = 0;
+    item.innerHTML = '<div class="fa-solid fa-route extensionsMenuExtensionButton"></div><span>推演当前对话</span>';
+    item.addEventListener('click', () => openLiveDeduceDialog());
+    menu.appendChild(item);
+}
+
 function registerSlashCommand() {
     const c = ctx();
     try {
@@ -93,6 +108,7 @@ async function init() {
     }
     addSettingsPanel();
     addWandButton();
+    addWandDeduceButton();
     registerSlashCommand();
     try {
         await app.init();

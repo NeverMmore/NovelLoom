@@ -386,6 +386,68 @@ export const DEFAULT_PROMPTS = {
 
 不要输出数组之外的任何文字、代码块标记或说明。`,
 
+    // ---------------- 剧情推演：直接基于酒馆当前对话（而不是 NovelLoom 项目里的卡） ----------------
+
+    deduceChatBranchesSystem: `你是经验丰富的互动小说/游戏剧情设计师，擅长根据一段正在进行的角色扮演对话，推演接下来可能的发展方向。你只输出一个 JSON 数组，不要有任何其他文字、代码块标记或说明。`,
+
+    deduceChatBranches: `这是正在对话的这个角色的卡面设定（以下设定优先于背景资料里的信息）：
+
+<角色卡内容>
+{CARD_CONTENT}
+</角色卡内容>
+
+以下是目前为止的聊天记录和相关背景资料（最近的对话内容、当前生效的世界书条目，仅供参考）：
+
+<背景资料>
+{CONTEXT}
+</背景资料>
+
+# 任务
+如果从目前聊天记录的结尾继续往后发展，剧情接下来可能会怎么走？请按下面给出的 {COUNT} 个方向，逐条生成对应的走向，顺序要对应：
+
+<方向要求>
+{DIRECTIONS}
+</方向要求>
+
+标了具体方向的，就照着这个方向把走向写具体、写完整，结合角色设定和目前对话的实际情况重新展开，不要原样照抄方向提示里的文字；标"不限方向"的，由你自由发挥，但要和其他几条有明显区别（不要互为变体、不要只是程度不同）。所有走向都必须从对话目前的结尾处继续往后发展，不要重复、也不要推翻已经发生过的内容。不分先后、先不展开分阶段细节，停留在"整体方向"这一层就好。{INSTRUCTION_LINE}
+
+{WRITING_RULES}
+
+只输出一个 JSON 数组，按上面方向的顺序排列，每个元素是：
+{"title": "一句话走向标题（8-16字）", "summary": "100-200字，说明接下来可能会怎么发展、核心冲突或看点是什么"}
+
+数组长度必须正好是 {COUNT}，不要输出数组之外的任何文字、代码块标记或说明。`,
+
+    deduceChatStagesSystem: `你是经验丰富的互动小说/游戏剧情设计师，擅长把一个大致的剧情走向细化成接下来可以实际推进的分阶段发展。你只输出一个 JSON 数组，不要有任何其他文字、代码块标记或说明。`,
+
+    deduceChatStages: `这是正在对话的这个角色的卡面设定：
+
+<角色卡内容>
+{CARD_CONTENT}
+</角色卡内容>
+
+以下是目前为止的聊天记录和相关背景资料（仅供参考）：
+
+<背景资料>
+{CONTEXT}
+</背景资料>
+
+用户已经选定了下面这个（或这几个）接下来的发展走向：
+
+<已选走向>
+{BRANCHES}
+</已选走向>
+
+# 任务
+把上面选定的走向，从目前对话的结尾处继续往后推演成按时间顺序推进的分阶段剧情（如果选了不止一个，把它们融合成一条连贯的发展线，取各自看点、不要互相矛盾，不要分开各写一条）。阶段数你自己判断，通常 4-7 个，要形成一条有推进、有转折的发展线，不要只是泛泛罗列可能性，也不要重复已经发生过的对话内容。{INSTRUCTION_LINE}
+
+{WRITING_RULES}
+
+只输出一个 JSON 数组，每个元素是：
+{"title": "阶段标题（8-16字）", "content": "150-300字，具体描述这个阶段接下来会发生的事、关键转折或冲突，和上一阶段衔接、为下一阶段做铺垫"}
+
+不要输出数组之外的任何文字、代码块标记或说明。`,
+
     styleAnalyzeSystem: `你是文学编辑，擅长拆解小说的文风，并把它写成其他作者可以照着执行的规则。你只输出一个 JSON 对象。`,
 
     styleAnalyze: `# 任务
@@ -613,6 +675,10 @@ export const PROMPT_LABELS = {
     deduceBranches: '剧情推演 · 走向 · 主提示',
     deduceStagesSystem: '剧情推演 · 分阶段 · 系统提示',
     deduceStages: '剧情推演 · 分阶段 · 主提示',
+    deduceChatBranchesSystem: '剧情推演(当前对话) · 走向 · 系统提示',
+    deduceChatBranches: '剧情推演(当前对话) · 走向 · 主提示',
+    deduceChatStagesSystem: '剧情推演(当前对话) · 分阶段 · 系统提示',
+    deduceChatStages: '剧情推演(当前对话) · 分阶段 · 主提示',
     styleAnalyzeSystem: 'AI 提炼文风 · 系统提示',
     styleAnalyze: 'AI 提炼文风 · 主提示',
     styleFixSystem: '禁用词修正 · 系统提示',
@@ -635,6 +701,8 @@ export const PROMPT_PLACEHOLDERS = {
     cardFieldRegen: ['{CONTEXT}', '{FIELD_LABEL}', '{CURRENT}', '{FORMAT_NOTE}', '{INSTRUCTION_LINE}', '{WRITING_RULES}'],
     deduceBranches: ['{CARD_CONTENT}', '{CONTEXT}', '{COUNT}', '{DIRECTIONS}', '{INSTRUCTION_LINE}', '{WRITING_RULES}'],
     deduceStages: ['{CARD_CONTENT}', '{CONTEXT}', '{BRANCHES}', '{INSTRUCTION_LINE}', '{WRITING_RULES}'],
+    deduceChatBranches: ['{CARD_CONTENT}', '{CONTEXT}', '{COUNT}', '{DIRECTIONS}', '{INSTRUCTION_LINE}', '{WRITING_RULES}'],
+    deduceChatStages: ['{CARD_CONTENT}', '{CONTEXT}', '{BRANCHES}', '{INSTRUCTION_LINE}', '{WRITING_RULES}'],
     continue: ['{BOOK}', '{CHAPTER_TITLE}', '{WORDS}', '{STYLE}', '{OUTLINE}', '{WORLD}', '{DIRECTION}', '{PLAN}', '{TAIL}'],
     plan: ['{BOOK}', '{COUNT}', '{START_NO}', '{END_NO}', '{REQUIREMENT}', '{STYLE}', '{STORY}', '{CHARACTERS}', '{WORLD}', '{EXISTING}', '{ARCS}', '{TAIL}', '{DETAIL}', '{SCENE_GUIDE}'],
     planRevise: ['{BOOK}', '{NO}', '{INSTRUCTION}', '{STORY}', '{PREV}', '{CURRENT}', '{NEXT}', '{DETAIL}'],
