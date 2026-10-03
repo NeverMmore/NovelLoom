@@ -21,17 +21,28 @@ export function ctx() {
     return globalThis.SillyTavern?.getContext?.();
 }
 
+/** 酒馆的 characterId（即 this_chid）是**字符串**，例如 "3"，不是数字（见酒馆 setCharacterId）；
+ *  这里统一转成角色数组下标，没选中角色（undefined / null / 空串 / 非数字）返回 -1。
+ *  注意不能直接 Number(raw)：Number(null) 和 Number('') 都是 0，会把"没选角色"误当成第 0 号角色。 */
+function charIndex(c = ctx()) {
+    const raw = c?.characterId;
+    if (raw === undefined || raw === null || raw === '') return -1;
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= 0 ? n : -1;
+}
+
 /** 当前是否处于可以推演的单人角色对话（群聊/没有选中角色时不支持） */
 export function hasActiveChat() {
     const c = ctx();
     if (!c) return false;
     if (c.groupId) return false;
-    return Number.isInteger(c.characterId) && !!c.characters?.[c.characterId];
+    const i = charIndex(c);
+    return i >= 0 && !!c.characters?.[i];
 }
 
 export function activeCharacterName() {
     const c = ctx();
-    return c?.characters?.[c.characterId]?.name || c?.name2 || '';
+    return c?.characters?.[charIndex(c)]?.name || c?.name2 || '';
 }
 
 /** 确保当前对话的 chat_metadata[CHAT_META_KEY] 结构完整，返回它本身（可直接修改，修改后记得调用 persistChatProjection） */
@@ -58,15 +69,17 @@ export async function persistChatProjection() {
 
 function cardContentText() {
     const c = ctx();
-    const f = c.getCharacterCardFields({ chid: c.characterId });
+    const f = c.getCharacterCardFields({ chid: charIndex(c) });
     const greetings = [f.firstMessage, ...(f.alternateGreetings || [])].filter(Boolean);
+    // 真实酒馆里 mesExamples 是一整段字符串；这里兼容数组，避免不同版本的返回类型不一致
+    const examples = (Array.isArray(f.mesExamples) ? f.mesExamples.join('\n') : String(f.mesExamples || '')).trim();
     return [
         `姓名：${activeCharacterName()}`,
         f.description ? `描述：${f.description}` : '',
         f.personality ? `性格摘要：${f.personality}` : '',
         f.scenario ? `场景：${f.scenario}` : '',
         greetings[0] ? `开场白：${greetings[0]}` : '',
-        f.mesExamples?.length ? `示例对话：${f.mesExamples.join('\n')}` : '',
+        examples ? `示例对话：${examples}` : '',
         f.system ? `系统提示词：${f.system}` : '',
     ].filter(Boolean).join('\n\n');
 }
@@ -84,9 +97,13 @@ function chatHistoryText(limit = CHAT_HISTORY_MESSAGES) {
 async function worldInfoText() {
     const c = ctx();
     try {
-        const { worldInfoString } = await c.getWorldInfoPrompt(c.chat, c.maxContext, true);
+        // 酒馆自己调用时传的不是消息对象数组，而是"名字: 内容"字符串数组，且**最新的在最前面**（见酒馆 Generate 里的 chatForWI）；
+        // 直接传 c.chat 会让世界书扫描出错，被下面的 catch 吞掉后就变成"世界书永远没带上"
+        const chatForWI = (c.chat || []).filter((m) => !m.is_system).map((m) => `${m.name}: ${m.mes}`).reverse();
+        const { worldInfoString } = await c.getWorldInfoPrompt(chatForWI, c.maxContext, true);
         return String(worldInfoString || '').trim();
-    } catch {
+    } catch (e) {
+        console.warn('[NovelLoom] 读取世界书失败，这次推演不带世界书', e);
         return '';
     }
 }

@@ -25,7 +25,7 @@ function cardFields(overrides = {}) {
         scenario: '酒吧',
         firstMessage: '夜色降临，他推门而入，一眼就看到了你。',
         alternateGreetings: [],
-        mesExamples: [],
+        mesExamples: '',
         system: '',
         persona: '',
         jailbreak: '',
@@ -36,9 +36,10 @@ function cardFields(overrides = {}) {
     };
 }
 
-/** 搭一个最小可用的酒馆上下文 mock：chatMetadata 用闭包里的同一个对象，模拟真实酒馆里“跨次 getContext() 调用但是同一个对话”的效果 */
-function installLiveST({ mockFn, chat = [], groupId = null, characterId = 0, characters = [{ name: '江酒' }], worldInfo = '', fields } = {}) {
+/** 搭一个最小可用的酒馆上下文 mock（类型照真实酒馆来：characterId 是字符串 "0"，mesExamples 是字符串）：chatMetadata 用闭包里的同一个对象，模拟真实酒馆里“跨次 getContext() 调用但是同一个对话”的效果 */
+function installLiveST({ mockFn, chat = [], groupId = null, characterId = '0', characters = [{ name: '江酒' }], worldInfo = '', fields } = {}) {
     const chatMetadata = {};
+    const wiCalls = [];
     globalThis.SillyTavern = {
         getContext: () => ({
             chat,
@@ -53,7 +54,12 @@ function installLiveST({ mockFn, chat = [], groupId = null, characterId = 0, cha
             },
             async saveMetadata() {},
             getCharacterCardFields: () => fields || cardFields(),
-            getWorldInfoPrompt: async () => ({ worldInfoString: worldInfo }),
+            // 照真实酒馆的要求校验入参：必须是"名字: 内容"字符串数组，且最新的在最前面（对象数组会让真实的世界书扫描出错）
+            getWorldInfoPrompt: async (wiChat) => {
+                assert.ok(Array.isArray(wiChat) && wiChat.every((x) => typeof x === 'string'), '传给世界书扫描的必须是字符串数组');
+                wiCalls.push(wiChat);
+                return { worldInfoString: worldInfo };
+            },
             maxContext: 8192,
             async generateRaw({ prompt }) {
                 const text = Array.isArray(prompt) ? prompt.map((m) => m.content).join('\n') : prompt;
@@ -62,6 +68,7 @@ function installLiveST({ mockFn, chat = [], groupId = null, characterId = 0, cha
             stopGeneration() {},
         }),
     };
+    return { wiCalls };
 }
 
 test.afterEach(() => {
@@ -75,11 +82,47 @@ test('hasActiveChat / activeCharacterName：群聊、没选角色时不支持；
     assert.equal(hasActiveChat(), false, '群聊不支持');
 
     installLiveST({ mockFn: () => '', characterId: null });
-    assert.equal(hasActiveChat(), false, '没有选中角色时不支持');
+    assert.equal(hasActiveChat(), false, '没有选中角色（null）时不支持——不能把 Number(null)=0 当成第 0 号角色');
+    installLiveST({ mockFn: () => '', characterId: '' });
+    assert.equal(hasActiveChat(), false, '没有选中角色（空串）时不支持');
+    installLiveST({ mockFn: () => '', characterId: '5' });
+    assert.equal(hasActiveChat(), false, '角色编号指向不存在的角色时不支持');
 
     installLiveST({ mockFn: () => '' });
-    assert.equal(hasActiveChat(), true);
+    assert.equal(hasActiveChat(), true, '真实酒馆里 characterId 是字符串 "0"，必须能识别（这是之前一直提示没打开对话的 bug）');
     assert.equal(activeCharacterName(), '江酒');
+
+    installLiveST({ mockFn: () => '', characterId: 0 });
+    assert.equal(hasActiveChat(), true, '数字形式的编号也应该能识别');
+
+    installLiveST({ mockFn: () => '', characterId: '1', characters: [{ name: '甲' }, { name: '乙' }] });
+    assert.equal(hasActiveChat(), true);
+    assert.equal(activeCharacterName(), '乙', '字符串编号应按下标取到对应角色');
+});
+
+test('示例对话：真实酒馆里是字符串（不是数组），应原样带进提示词，不能因为类型不对而抛错', async () => {
+    installLiveST({
+        mockFn: (text) => {
+            if (text.includes('方向要求')) {
+                assert.match(text, /示例对话：/);
+                assert.match(text, /\{\{user\}\}: 你好/, '字符串形式的示例对话应该完整出现');
+                return JSON.stringify([{ title: 'A', summary: 'a' }, { title: 'B', summary: 'b' }]);
+            }
+            return '（不应该走到这里）';
+        },
+        fields: cardFields({ mesExamples: '<START>\n{{user}}: 你好\n{{char}}: 哟，来了。' }),
+    });
+    const branches = await generateChatBranches(settings(), { directions: ['', ''] });
+    assert.equal(branches.length, 2);
+
+    installLiveST({
+        mockFn: (text) => {
+            assert.match(text, /示例对话：/);
+            return JSON.stringify([{ title: 'A', summary: 'a' }, { title: 'B', summary: 'b' }]);
+        },
+        fields: cardFields({ mesExamples: ['<START>\n示例一', '<START>\n示例二'] }),
+    });
+    assert.equal((await generateChatBranches(settings(), { directions: ['', ''] })).length, 2, '数组形式也要兼容');
 });
 
 test('ensureChatProjection：首次访问自动补齐结构，且挂在 chat_metadata 的固定键名下，重复调用不覆盖已有数据', async () => {
@@ -222,4 +265,19 @@ test('chatDeductionMarkdown：标题带角色名，走向标注是否选中，�
     assert.doesNotMatch(md, /✅ \*\*走向二\*\*/);
     assert.match(md, /### 1\. 阶段一/);
     assert.match(md, /### 2\. 阶段二/);
+});
+
+test('世界书扫描的入参：传"名字: 内容"字符串数组、最新的在最前面、不含系统消息（和酒馆自己调用时一致）', async () => {
+    const { wiCalls } = installLiveST({
+        mockFn: () => JSON.stringify([{ title: 'A', summary: 'a' }, { title: 'B', summary: 'b' }]),
+        chat: [
+            { name: '江酒', mes: '第一句' },
+            { name: '系统', is_system: true, mes: '不该传' },
+            { name: '你', mes: '第二句' },
+        ],
+        worldInfo: '某条世界书',
+    });
+    await generateChatBranches(settings(), { directions: ['', ''] });
+    assert.equal(wiCalls.length, 1);
+    assert.deepEqual(wiCalls[0], ['你: 第二句', '江酒: 第一句']);
 });
