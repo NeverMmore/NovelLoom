@@ -230,7 +230,8 @@ export const worldbookTab = {
         };
 
         const onClick = async (e) => {
-            // 分类切换按钮只有 data-cat；条目上的
+            // 分类切换按钮只有 data-cat；条目上的「重新整理」按钮也带 data-cat，但它有 data-act，要交给下面的 switch
+            const tabBtn = e.target.closest('[data-cat]:not([data-act])');
             if (tabBtn) {
                 cat = tabBtn.dataset.cat;
                 return render();
