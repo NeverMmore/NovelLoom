@@ -2,8 +2,8 @@
 
 import { app } from '../app.js';
 import {
-    DETAIL_LEVELS, buildPlanPrompt, clearPlanned, deletePlanChapter, exportPlan, generatePlan,
-    insertPlanChapterAfter, nextChapterNo, planStartNo, reviseChapterPlan, sortedPlan,
+    DETAIL_LEVELS, buildPlanPreview, clearPlanned, deletePlanChapter, exportPlan, generatePlan,
+    insertPlanChapterAfter, MAX_PLAN_COUNT, nextChapterNo, planBatchSize, planStartNo, reviseChapterPlan, sortedPlan,
 } from '../planner.js';
 import { getStyleProfile } from '../style.js';
 import { uniq } from '../utils.js';
@@ -14,6 +14,13 @@ const REQUIREMENT_EXAMPLES = [
     '节奏放慢，多写日常与感情线；第 3 章左右让莉莉丝的过去揭露一部分',
     '最终走向 HE；本段剧情的高潮放在最后两章，并回收“魔女秘药”的伏笔',
 ];
+
+/** 分批提示：规划章数大于每批章数时显示“分 N 批” */
+function batchHint(settings) {
+    const count = Math.max(1, Math.min(MAX_PLAN_COUNT, Number(settings.planner.count) || 10));
+    const size = planBatchSize(settings);
+    return size && count > size ? `，分 ${Math.ceil(count / size)} 批生成（每批 ${size} 章）` : '';
+}
 
 export const planTab = {
     mount(el, { switchTab }) {
@@ -30,8 +37,9 @@ export const planTab = {
             <section class="nl-card">
                 <h3>写后续大纲</h3>
                 <div class="nl-muted nl-small">根据已提取的梗概、分卷梗概、章节概要、主要角色现状、世界设定和前文结尾，按你的要求规划接下来的章节。规划好的大纲会被「续写」按章使用。下一章是<b>第 ${next} 章</b>${pending.length ? `，已规划到第 ${Math.max(...pending.map((c) => c.no))} 章` : ''}。</div>
-                <div class="nl-grid3">
+                <div class="nl-grid2">
                     <div class="nl-field"><label>规划章数</label><input class="nl-input" type="number" min="1" max="60" data-setting="planner.count"></div>
+                    <div class="nl-field"><label>每批章数 <span class="nl-muted nl-small">（分几次请求，单次短、不容易被 API 中途断开；0 = 一次写完）</span></label><input class="nl-input" type="number" min="0" max="60" data-setting="planner.batchSize"></div>
                     <div class="nl-field"><label>每章详细程度</label><select class="nl-input" data-setting="planner.detail">${optionList(Object.entries(DETAIL_LEVELS).map(([value, d]) => ({ value, label: d.label })))}</select></div>
                     <div class="nl-field"><label>参考“故事至今”的字数上限</label><input class="nl-input" type="number" min="1000" step="1000" data-setting="planner.contextChars"></div>
                 </div>
@@ -42,7 +50,7 @@ export const planTab = {
                 <div class="nl-row nl-wrap">
                     ${Number.isFinite(fromNo)
                         ? `<span class="nl-tag">从第 ${fromNo} 章起重新规划（会覆盖第 ${fromNo} 章及之后尚未写的大纲） <a href="#" data-act="clear-from">✕</a></span>`
-                        : `<span class="nl-muted">将规划第 ${start}–${start + (Number(ps.count) || 10) - 1} 章</span>`}
+                        : `<span class="nl-muted">将规划第 ${start}–${start + (Number(ps.count) || 10) - 1} 章${batchHint(app.settings)}</span>`}
                     <span class="nl-spacer"></span>
                     <button class="nl-btn" data-act="preview">预览提示词</button>
                     <button class="nl-btn nl-primary" data-act="generate">${Number.isFinite(fromNo) ? '重新规划' : '生成后续大纲'}</button>
@@ -53,7 +61,7 @@ export const planTab = {
             <section class="nl-card">
                 <details>
                     <summary><b>规划记录（${p.plan.arcs.length}）</b></summary>
-                    ${p.plan.arcs.slice().reverse().map((a) => `<div class="nl-arc"><div class="nl-small"><b>第 ${a.fromNo}–${a.toNo} 章</b> · ${fmtTime(a.createdAt)}</div><div class="nl-small nl-muted">要求：${esc(a.requirement || '无')}</div><div class="nl-small">${esc(a.overview || '')}</div></div>`).join('')}
+                    ${p.plan.arcs.slice().reverse().map((a) => `<div class="nl-arc"><div class="nl-small"><b>第 ${a.fromNo}–${a.toNo} 章</b> · ${fmtTime(a.createdAt)}</div><div class="nl-small nl-muted">要求：${esc(a.requirement || '无')}</div><div class="nl-small" style="white-space: pre-line">${esc(a.overview || '')}</div></div>`).join('')}
                 </details>
             </section>` : ''}
 
@@ -143,15 +151,28 @@ export const planTab = {
                 case 'generate': {
                     if (app.isBusy()) return app.log('有任务正在运行，请稍后', 'warn');
                     if (Number.isFinite(fromNo) && !(await confirmDialog(`第 ${fromNo} 章及之后尚未写的大纲会被新规划替换。继续？`))) return;
-                    const r = await busy(btn, () => generatePlan(p, app.settings, { fromNo: Number.isFinite(fromNo) ? fromNo : undefined }, { onLog: (m, l) => app.log(m, l) }), 'AI 规划中…');
-                    if (!r) return;
+                    let partial = false;
+                    const r = await busy(btn, async () => {
+                        try {
+                            return await generatePlan(p, app.settings, { fromNo: Number.isFinite(fromNo) ? fromNo : undefined }, { onLog: (m, l) => app.log(m, l) });
+                        } catch (err) {
+                            // 分批规划中途失败：已完成的批次已经写进项目，先保存再报错
+                            if (err?.partial) {
+                                partial = true;
+                                await app.saveNow();
+                            }
+                            throw err;
+                        }
+                    }, 'AI 规划中…');
+                    if (!r && !partial) return;
                     fromNo = null;
-                    await app.saveNow();
+                    if (r) await app.saveNow();
                     return render();
                 }
                 case 'preview': {
-                    const { system, prompt } = buildPlanPrompt(p, app.settings, { fromNo: Number.isFinite(fromNo) ? fromNo : undefined });
-                    await openDialog({ title: '写大纲提示词预览', wide: true, body: chainPreviewHtml(app.settings, 'outline', { system, prompt, book: p.bookName }) });
+                    const { system, prompt, total } = buildPlanPreview(p, app.settings, { fromNo: Number.isFinite(fromNo) ? fromNo : undefined });
+                    const title = total > 1 ? `写大纲提示词预览（第 1/${total} 批；后面几批格式相同，会带上前几批已规划的章节）` : '写大纲提示词预览';
+                    await openDialog({ title, wide: true, body: chainPreviewHtml(app.settings, 'outline', { system, prompt, book: p.bookName }) });
                     return;
                 }
                 case 'goto-style':

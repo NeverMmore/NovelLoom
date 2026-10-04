@@ -2,7 +2,7 @@
 
 export const MODULE = 'novel_loom';
 export const PREFIX = 'nl';
-export const VERSION = '0.8.2';
+export const VERSION = '0.8.3';
 export const DB_NAME = 'NovelLoomDB';
 export const DB_VERSION = 1;
 
@@ -146,6 +146,7 @@ export const DEFAULT_SETTINGS = {
     },
     planner: {
         count: 10,
+        batchSize: 5, // 每批章数：章数多时分几次请求，单次请求短、不容易被 API/网络中途断开；0 = 不分批
         detail: 'standard', // brief | standard | detailed
         contextChars: 6000,
         requirement: '',

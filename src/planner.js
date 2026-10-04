@@ -121,29 +121,72 @@ function storyText(project, maxChars) {
     return parts.join('\n\n');
 }
 
+/** 单次规划的章数上限 */
+export const MAX_PLAN_COUNT = 60;
+
+/** 每批章数：0 = 不分批（一次请求规划全部章数） */
+export function planBatchSize(settings) {
+    const n = Number(settings.planner?.batchSize);
+    return Number.isFinite(n) && n > 0 ? Math.min(MAX_PLAN_COUNT, Math.floor(n)) : 0;
+}
+
+/** 分批时附在“用户要求”后面的说明（用 {REQUIREMENT} 带进去，自定义提示词模板也能生效） */
+function batchNote(b) {
+    return `【分批规划】本次总共规划第 ${b.fromNo}–${b.toNo} 章（共 ${b.toNo - b.fromNo + 1} 章），分 ${b.total} 批生成，这是第 ${b.index}/${b.total} 批，只写第 ${b.batchFrom}–${b.batchTo} 章。`
+        + '上面的用户要求是针对全部章节的整体安排。'
+        + (b.index > 1 ? '前几批已经规划好的章节见「已有的后续规划」，紧接着往下写，不要重复。' : '')
+        + (b.index < b.total
+            ? '只落实要求里属于这一批的部分，其余留给后续批次，不要把整体的高潮或结局提前塞进这一批。'
+            : '这是最后一批：要求里还没落实的部分（包括高潮、结局、要回收的伏笔）都要在这一批完成。');
+}
+
+/** 本次规划的分批情况：起止章号、每批章数、批数（不分批时 total = 1） */
+export function planBatches(project, settings, opt = {}) {
+    const { startNo, count } = buildPlanPrompt(project, settings, opt);
+    const size = planBatchSize(settings) || count;
+    return { startNo, count, endNo: startNo + count - 1, size, total: Math.ceil(count / size) };
+}
+
+/** 某一批的请求参数 */
+function batchOpt(opt, b, index, batchFrom) {
+    const count = Math.min(b.size, b.endNo - batchFrom + 1);
+    const batch = b.total > 1 ? { index, total: b.total, fromNo: b.startNo, toNo: b.endNo, batchFrom, batchTo: batchFrom + count - 1 } : undefined;
+    return { ...opt, count, fromNo: batchFrom, batch };
+}
+
+/** “预览提示词”：分批时给出第一批实际发送的提示词 */
+export function buildPlanPreview(project, settings, opt = {}) {
+    const b = planBatches(project, settings, opt);
+    const o = b.total > 1 ? batchOpt(opt, b, 1, b.startNo) : opt;
+    return { ...buildPlanPrompt(project, settings, o), total: b.total };
+}
+
 /**
  * 构建写大纲提示词
- * @param {{count?: number, requirement?: string, detail?: string, fromNo?: number}} opt fromNo：从该章起重新规划（覆盖该章及之后尚未写的规划）
+ * @param {{count?: number, requirement?: string, detail?: string, fromNo?: number,
+ *   batch?: {index:number, total:number, fromNo:number, toNo:number, batchFrom:number, batchTo:number}}} opt
+ *   fromNo：从该章起重新规划（覆盖该章及之后尚未写的规划）；batch：分批规划时本批在整体中的位置
  */
 export function buildPlanPrompt(project, settings, opt = {}) {
     const ps = settings.planner || {};
-    const count = Math.max(1, Math.min(60, Number(opt.count ?? ps.count) || 10));
+    const count = Math.max(1, Math.min(MAX_PLAN_COUNT, Number(opt.count ?? ps.count) || 10));
     const startNo = Number.isFinite(opt.fromNo) ? Math.max(nextChapterNo(project), opt.fromNo) : planStartNo(project);
     const detail = DETAIL_LEVELS[opt.detail || ps.detail] || DETAIL_LEVELS.standard;
     const existing = sortedPlan(project).filter((c) => c.status !== 'written' && c.no < startNo).slice(-10);
     const arcs = ensurePlan(project).arcs.slice(-3);
+    const requirement = (opt.requirement ?? ps.requirement ?? '').trim() || '（无特别要求：顺着现有剧情与伏笔自然发展，保持原著风格）';
     const vars = {
         BOOK: project.bookName,
         COUNT: count,
         START_NO: startNo,
         END_NO: startNo + count - 1,
-        REQUIREMENT: (opt.requirement ?? ps.requirement ?? '').trim() || '（无特别要求：顺着现有剧情与伏笔自然发展，保持原著风格）',
+        REQUIREMENT: opt.batch ? `${requirement}\n\n${batchNote(opt.batch)}` : requirement,
         STYLE: styleTextFor(project, settings, 'plan'),
         STORY: storyText(project, Number(ps.contextChars) || 6000) || '（尚未提取章节概要）',
         CHARACTERS: mainCharacters(project) || '（尚无角色资料）',
         WORLD: worldText(project, settings) || '（无）',
         EXISTING: existing.map((c) => formatPlanChapter(c)).join('\n\n') || '（无）',
-        ARCS: arcs.map((a) => `- 第${a.fromNo}–${a.toNo}章｜要求：${a.requirement || '无'}｜走向：${a.overview}`).join('\n') || '（无）',
+        ARCS: arcs.map((a) => `- 第${a.fromNo}–${a.toNo}章｜要求：${a.requirement || '无'}｜走向：${String(a.overview || '').replace(/\n+/g, '；')}`).join('\n') || '（无）',
         TAIL: getTailText(project, 1500),
         DETAIL: detail.text,
         SCENE_GUIDE: ps.useScenes
@@ -172,14 +215,9 @@ function normPlanChapter(c) {
     };
 }
 
-/**
- * 生成后续章节大纲并写入项目
- * @returns {Promise<{arc: object, chapters: object[]}>}
- */
-export async function generatePlan(project, settings, opt = {}, { signal, onLog } = {}) {
-    const plan = ensurePlan(project);
-    const { system, prompt, startNo, count } = buildPlanPrompt(project, settings, opt);
-    onLog?.(`📝 正在规划第 ${startNo}–${startNo + count - 1} 章的大纲…`);
+/** 请求一批大纲并解析（不改动项目） */
+async function requestPlanBatch(project, settings, opt, { signal, onLog }) {
+    const { system, prompt } = buildPlanPrompt(project, settings, opt);
     const res = await callLLM({
         api: settings.api, system, prompt, ...chainFor(settings, 'outline', project), expect: 'json', signal, maxTokens: Math.max(settings.api.maxTokens || 0, 8000),
         onNotice: (m, l) => onLog?.(m, l),
@@ -198,20 +236,65 @@ export async function generatePlan(project, settings, opt = {}, { signal, onLog 
         err.raw = raw;
         throw err;
     }
-    // 从某章起重新规划：先移除该章及之后尚未写的规划
-    plan.chapters = plan.chapters.filter((c) => c.status === 'written' || c.no < startNo);
-    const arc = {
-        id: uid('arc_'),
-        requirement: (opt.requirement ?? settings.planner?.requirement ?? '').trim(),
-        overview: String(json.overview || json.走向 || '').trim(),
-        fromNo: startNo,
-        toNo: startNo + list.length - 1,
-        createdAt: Date.now(),
-    };
-    const chapters = list.map((c, i) => ({ id: uid('pl_'), no: startNo + i, ...c, status: 'planned', writtenId: '', arcId: arc.id, createdAt: Date.now() }));
-    plan.chapters.push(...chapters);
-    plan.chapters.sort((a, b) => a.no - b.no);
-    plan.arcs.push(arc);
+    // 分批时只取本批要求的章数，AI 多写的部分丢弃，避免和下一批章号重叠
+    return { list: opt.batch ? list.slice(0, opt.count) : list, overview: String(json?.overview || json?.走向 || '').trim() };
+}
+
+/**
+ * 生成后续章节大纲并写入项目。
+ * 章数多时按 settings.planner.batchSize 分批请求：单次请求短，不容易被 API/网络中途断开；
+ * 某一批失败时，已完成的批次保留在项目里，抛出的错误带 partial（{arc, chapters}），调用方应保存。
+ * @returns {Promise<{arc: object, chapters: object[]}>}
+ */
+export async function generatePlan(project, settings, opt = {}, { signal, onLog } = {}) {
+    const plan = ensurePlan(project);
+    const ps = settings.planner || {};
+    // 起止章号与分批沿用 planBatches，和“预览提示词”（buildPlanPreview）一致
+    const b = planBatches(project, settings, opt);
+    const { startNo, count, endNo, total } = b;
+    const requirement = (opt.requirement ?? ps.requirement ?? '').trim();
+    let arc = null;
+    const chapters = [];
+    const overviews = [];
+    let nextNo = startNo;
+    for (let index = 1; index <= total; index++) {
+        const bo = batchOpt(opt, b, index, nextNo);
+        const batchTo = nextNo + bo.count - 1;
+        onLog?.(total > 1
+            ? `📝 正在规划第 ${nextNo}–${batchTo} 章的大纲（第 ${index}/${total} 批，共 ${count} 章）…`
+            : `📝 正在规划第 ${nextNo}–${batchTo} 章的大纲…`);
+        let got;
+        try {
+            got = await requestPlanBatch(project, settings, bo, { signal, onLog });
+        } catch (e) {
+            if (arc && e && typeof e === 'object') {
+                e.partial = { arc, chapters };
+                const done = `已完成并保存第 ${arc.fromNo}–${arc.toNo} 章（${chapters.length} 章）`;
+                if (e.name !== 'AbortError') {
+                    e.message = `${done}；第 ${index}/${total} 批（第 ${nextNo}–${batchTo} 章）失败：${e.message || e}\n\n再点「生成后续大纲」会从第 ${arc.toNo + 1} 章接着往后规划（可以把「规划章数」改成剩下的 ${endNo - arc.toNo} 章）。`;
+                }
+                onLog?.(`📝 ${done}，第 ${index}/${total} 批未完成`, 'warn');
+            }
+            throw e;
+        }
+        if (!arc) {
+            // 第一批成功后才移除旧规划：从某章起重新规划时，覆盖该章及之后尚未写的规划
+            plan.chapters = plan.chapters.filter((c) => c.status === 'written' || c.no < startNo);
+            arc = { id: uid('arc_'), requirement, overview: '', fromNo: startNo, toNo: startNo - 1, createdAt: Date.now() };
+            plan.arcs.push(arc);
+        }
+        const items = got.list.map((c, i) => ({ id: uid('pl_'), no: nextNo + i, ...c, status: 'planned', writtenId: '', arcId: arc.id, createdAt: Date.now() }));
+        plan.chapters.push(...items);
+        plan.chapters.sort((a, b) => a.no - b.no);
+        chapters.push(...items);
+        if (got.overview) overviews.push(total > 1 ? `第${nextNo}–${nextNo + items.length - 1}章：${got.overview}` : got.overview);
+        arc.overview = overviews.join('\n');
+        arc.toNo = nextNo + items.length - 1;
+        nextNo = arc.toNo + 1;
+        // AI 少写了章数时，剩下的章号顺延到下一批；已经到最后一批则就此结束
+        if (nextNo > endNo) break;
+        if (index === total && nextNo <= endNo) onLog?.(`⚠️ AI 只返回了 ${chapters.length}/${count} 章`, 'warn');
+    }
     onLog?.(`📝 已规划 ${chapters.length} 章（第 ${arc.fromNo}–${arc.toNo} 章）`, 'success');
     return { arc, chapters };
 }
@@ -275,7 +358,7 @@ export function insertPlanChapterAfter(project, afterNo) {
 export function planMarkdown(project) {
     const plan = ensurePlan(project);
     const lines = [`# 《${project.bookName}》后续大纲`, ''];
-    for (const a of plan.arcs) lines.push(`> 第${a.fromNo}–${a.toNo}章｜要求：${a.requirement || '无'}`, `> ${a.overview || ''}`, '');
+    for (const a of plan.arcs) lines.push(`> 第${a.fromNo}–${a.toNo}章｜要求：${a.requirement || '无'}`, ...String(a.overview || '').split('\n').map((l) => `> ${l}`), '');
     for (const c of sortedPlan(project)) {
         lines.push(`## 第${c.no}章 ${c.title}${c.status === 'written' ? '（已写）' : ''}`, '');
         if (c.summary) lines.push(c.summary, '');

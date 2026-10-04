@@ -61,6 +61,44 @@ export function errorText(e) {
     return String(e);
 }
 
+/** 酒馆后端只回了 {error: true}（没有原因）时，酒馆当前连接（generateRaw）给出的笼统报错，含中文界面的“未知错误” */
+const BARE_BACKEND_ERROR = /^(?:Unknown error|未知错误|An unknown error occurred|发生未知错误|\{"error":true\})$/i;
+/** 连接配置档模式下，酒馆后端回 {error: true} 或非 2xx 时的报错 */
+const PROFILE_NOT_OK = /^Response not OK$/i;
+/** 酒馆 throw new Error(对象) 得到的报错：常见于额度不足 / 内容审核，酒馆一般会同时弹窗 */
+const OBJECT_ERROR = /^\[object Object\]$/;
+
+const DROPPED_HINT = '最常见的是一次生成时间太长，连接被 API 或网络中途断开（命令行里是 Premature close / ECONNRESET / socket hang up 之类）。'
+    + '可以减少单次生成的内容（写大纲：把「每批章数」调小、降低每章详细程度），或在插件设置里改用「DeepSeek（官方接口）」等直连方式。';
+
+/** 连接配置档会把真正的错误包一层：new Error('API request failed', { cause }) */
+function unwrapTavernError(e) {
+    let cur = e;
+    for (let i = 0; i < 5 && cur && typeof cur === 'object' && cur.cause && /^API request failed$/i.test(String(cur.message || '').trim()); i++) cur = cur.cause;
+    return cur;
+}
+
+/**
+ * 把酒馆（generateRaw / 连接配置档）抛出的错误包装成 LLMError。
+ * 酒馆后端与 API 通信失败时（例如 DeepSeek 的 Premature close），只给前端回 {error: true}，
+ * 前端只能显示“未知错误”，这里补上原因说明，并当作可重试的错误（多为连接中途断开）。
+ */
+export function tavernError(prefix, e) {
+    const msg = errorText(e);
+    const inner = errorText(unwrapTavernError(e)).trim();
+    if (BARE_BACKEND_ERROR.test(inner)) {
+        return new LLMError(`${prefix}：酒馆后端调用 API 失败，但没有把具体原因传给插件（酒馆只显示“${inner}”，真正的原因在酒馆的命令行窗口里）。${DROPPED_HINT}`, { retryable: true });
+    }
+    if (PROFILE_NOT_OK.test(inner)) {
+        return new LLMError(`${prefix}：酒馆后端返回失败（Response not OK），没有把具体原因传给插件，真正的原因在酒馆的命令行窗口里。${DROPPED_HINT}`
+            + '如果每次都立刻失败，多半是这个连接配置档的接口地址、密钥或模型有误，可以先在酒馆里切到这个配置档正常聊一句试试。', { retryable: true });
+    }
+    if (OBJECT_ERROR.test(inner)) {
+        return new LLMError(`${prefix}：酒馆报告了 API 错误，但错误内容无法读取（[object Object]）。常见于额度不足、余额耗尽或内容审核拦截，酒馆一般会同时弹出提示；具体原因请看酒馆的弹窗或命令行窗口。重试通常无效。`);
+    }
+    return new LLMError(`${prefix}：${msg}`, { retryable: RETRYABLE_TEXT.test(msg) });
+}
+
 function uniqText(list) {
     const out = [];
     for (const s of list) if (s && !out.some((x) => x.includes(s))) out.push(s);
@@ -330,8 +368,7 @@ async function callTavern({ list, signal, userSignal }) {
             if (/is not a function|Cannot read|prompt\.map|substring|trim/i.test(String(e?.message))) {
                 result = await withAbort(c.generateRaw(flatten(list)), signal);
             } else {
-                const msg = errorText(e);
-                throw new LLMError(`酒馆生成失败：${msg}`, { retryable: RETRYABLE_TEXT.test(msg) });
+                throw tavernError('酒馆生成失败', e);
             }
         }
         return { text: String(result ?? '') };
@@ -357,8 +394,7 @@ async function callProfile({ list, maxTokens, signal, api }) {
         return { text: String(text), reasoning: res?.reasoning || '' };
     } catch (e) {
         if (isAbortError(e) || signal?.aborted) throw signal?.reason?.name === 'TimeoutError' ? new LLMError('请求超时', { retryable: true }) : abortError();
-        const msg = errorText(e);
-        throw new LLMError(`连接配置档请求失败：${msg}`, { retryable: RETRYABLE_TEXT.test(msg) });
+        throw tavernError('连接配置档请求失败', e);
     }
 }
 
