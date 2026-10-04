@@ -5,7 +5,7 @@ import { buildExtractPrompt, knownContextFor } from '../extract.js';
 import { getVolumes, projectStats, volumeOf } from '../project.js';
 import { API_MODES } from '../llm.js';
 import { formatDuration, formatNumber } from '../utils.js';
-import { bindSettings, chainPreviewHtml, esc, openDialog, optionList, qs } from './common.js';
+import { bindSettings, chainPreviewHtml, esc, icon, openDialog, optionList, qs } from './common.js';
 
 const MODES = [
     { value: 'serial', label: '串行 · 滚动累积（最连贯，推荐）' },
@@ -50,7 +50,9 @@ export const extractTab = {
             </section>
 
             <section class="nl-card">
-                <h3>提取设置</h3>
+                <div class="nl-card-head">
+                    <div><h3>提取设置</h3></div>
+                </div>
                 <div class="nl-grid2">
                     <div class="nl-field"><label>处理模式</label><select class="nl-input" data-setting="extraction.mode">${optionList(MODES)}</select></div>
                     <div class="nl-field"><label>并发数 / 每批段数（并行、分批模式）</label><input class="nl-input" type="number" min="1" max="10" data-setting="extraction.concurrency"></div>
@@ -63,13 +65,13 @@ export const extractTab = {
                     <label><input type="checkbox" data-setting="extraction.extractQuotes"> 角色原文台词</label>
                     <label title="引用必须能在原文中逐字找到，否则丢弃"><input type="checkbox" data-setting="extraction.verifyQuotes"> 引用逐字校验</label>
                 </div>
-                <div class="nl-field"><label>分类（勾选即提取；🔵常驻 / 🟢关键词触发，详细配置见设置页）</label>
+                <div class="nl-field"><label>分类（勾选即提取；<span class="nl-dot nl-info"></span> 常驻 / <span class="nl-dot nl-ok"></span> 关键词触发，详细配置见设置页）</label>
                     <div class="nl-row nl-wrap nl-checks">
-                        ${app.settings.categories.map((c, i) => `<label><input type="checkbox" data-cat="${i}" ${c.enabled ? 'checked' : ''}> ${c.constant ? '🔵' : '🟢'} ${esc(c.name)}</label>`).join('')}
+                        ${app.settings.categories.map((c, i) => `<label><input type="checkbox" data-cat="${i}" ${c.enabled ? 'checked' : ''}> ${c.constant ? '<span class="nl-dot nl-info" role="img" aria-label="常驻" title="常驻"></span>' : '<span class="nl-dot nl-ok" role="img" aria-label="关键词触发" title="关键词触发"></span>'} ${esc(c.name)}</label>`).join('')}
                     </div>
                 </div>
                 <details ${app.settings.extraction.volumeMode || getVolumes(p).some((v) => !v.implicit) ? 'open' : ''}>
-                    <summary>📦 分卷模式 ${app.settings.extraction.volumeMode ? `<span class="nl-tag nl-ok">已开启 · ${volInfo()}</span>` : ''}</summary>
+                    <summary>分卷模式 ${app.settings.extraction.volumeMode ? `<span class="nl-tag nl-ok">已开启 · ${volInfo()}</span>` : ''}</summary>
                     <div class="nl-muted nl-small">长篇小说推荐开启。开启后提取时只把<b>本卷</b>出现过的角色与条目列入“已知资料”，并附上前几卷的卷梗概作为前情提要，提示词不会随全书增长而失控；遇到上下文超限会自动从当前段开新卷并重试。分卷可在「分段」页按“第X卷”标题自动识别或手动设置。</div>
                     <div class="nl-row nl-wrap nl-checks">
                         <label><input type="checkbox" data-setting="extraction.volumeMode"> 开启分卷模式</label>
@@ -92,7 +94,7 @@ export const extractTab = {
                     <button class="nl-btn nl-danger" data-act="stop">停止</button>
                     <button class="nl-btn" data-act="retry" ${st.error ? '' : 'disabled'}>只重试失败段（${st.error}）</button>
                     <button class="nl-btn" data-act="preview">预览下一段提示词</button>
-                    ${Number.isFinite(start) ? `<span class="nl-tag">从第 ${start + 1} 段开始 <a href="#" data-act="clear-start">✕</a></span>` : ''}
+                    ${Number.isFinite(start) ? `<span class="nl-tag">从第 ${start + 1} 段开始 <a href="#" data-act="clear-start" title="取消" aria-label="取消">${icon('close', { size: 12 })}</a></span>` : ''}
                 </div>
                 <div class="nl-progress"><div class="nl-progress-bar" style="width:0%"></div><span class="nl-progress-text"></span></div>
                 <div class="nl-muted nl-small">提示：串行模式会把前文已提取的角色档案与条目注入后续段落，让资料“滚动累积”；随时可以暂停，进度自动保存，下次继续。</div>

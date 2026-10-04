@@ -2,6 +2,9 @@
 
 import { escapeHtml, estimateTokens } from '../utils.js';
 import { buildChainMessages, errorText, getChain } from '../llm.js';
+import { icon } from './icons.js';
+
+export { icon };
 
 export const esc = escapeHtml;
 
@@ -64,8 +67,8 @@ export function openDialog({ title, body, buttons = [{ label: '关闭', value: n
         overlay.className = 'nl-dialog-overlay';
         overlay.style.zIndex = String(++dialogZ);
         overlay.innerHTML = `
-            <div class="nl-dialog ${wide ? 'nl-dialog-wide' : ''}" role="dialog" aria-modal="true">
-                <div class="nl-dialog-head"><b>${esc(title)}</b><button class="nl-icon-btn" data-close title="关闭">✕</button></div>
+            <div class="nl-dialog ${wide ? 'nl-dialog-wide' : ''}" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+                <div class="nl-dialog-head"><b>${esc(title)}</b><button class="nl-icon-btn" data-close title="关闭" aria-label="关闭">${icon('close')}</button></div>
                 <div class="nl-dialog-body"></div>
                 <div class="nl-dialog-foot">${buttons.map((b, i) => `<button class="nl-btn ${b.primary ? 'nl-primary' : ''} ${b.danger ? 'nl-danger' : ''}" data-i="${i}">${esc(b.label)}</button>`).join('')}</div>
             </div>`;
@@ -136,7 +139,14 @@ export async function alertDialog(message, title = '提示') {
 }
 
 export function statusIcon(status) {
-    return { pending: '⏳', processing: '🔄', done: '✅', error: '❗' }[status] || '·';
+    const map = {
+        pending: ['nl-dot', '待处理'],
+        processing: ['nl-spin nl-accent-ink', '处理中'],
+        done: ['nl-dot nl-ok', '已完成'],
+        error: ['nl-dot nl-err', '出错'],
+    };
+    const [cls, label] = map[status] || ['nl-dot', String(status || '')];
+    return `<span class="${cls}" role="img" aria-label="${label}" title="${label}"></span>`;
 }
 
 export function importanceLabel(i) {
@@ -151,15 +161,15 @@ export function fmtTime(t) {
 }
 
 /**
- * 统一的“重roll”按钮：所有 AI 生成内容旁用于就地重新生成的按钮，统一用 🎲 图标 + nl-reroll 标记类，方便一眼认出。
+ * 统一的“重roll”按钮：所有 AI 生成内容旁用于就地重新生成的按钮，统一用骰子图标 + nl-reroll 标记类，方便一眼认出。
  * 具体的重新生成逻辑仍由调用方在各自的 onClick（data-act）里实现，这里只统一外观。
  * @param {string} act data-act 值
  * @param {string} attrs 额外拼进标签的属性字符串（例如 `data-id="${esc(c.id)}"`），调用方自行转义
  * @param {{label?:string, title?:string}} opt label 留空则只显示图标（适合紧凑的行内位置）
  */
 export function rerollBtn(act, attrs = '', { label = '', title = '重新生成' } = {}) {
-    if (!label) return `<button class="nl-icon-btn nl-reroll" data-act="${esc(act)}" ${attrs} title="${esc(title)}">🎲</button>`;
-    return `<button class="nl-btn nl-sm nl-reroll" data-act="${esc(act)}" ${attrs} title="${esc(title)}">🎲 ${esc(label)}</button>`;
+    if (!label) return `<button class="nl-icon-btn nl-reroll" data-act="${esc(act)}" ${attrs} title="${esc(title)}" aria-label="${esc(title)}">${icon('dice')}</button>`;
+    return `<button class="nl-btn nl-sm nl-reroll" data-act="${esc(act)}" ${attrs} title="${esc(title)}">${icon('dice')}${esc(label)}</button>`;
 }
 
 export function optionList(items, selected) {
@@ -173,10 +183,16 @@ export function optionList(items, selected) {
 /** 包装异步按钮：执行期间禁用并显示状态，出错弹提示 */
 export async function busy(btn, fn, label = '处理中…') {
     const old = btn?.innerHTML;
+    // 同一个操作可能同时出现在页面标题栏和空状态里：运行期间把相同 data-act（与 data-id）的按钮一起禁用，避免重复发起
+    const twins = btn?.dataset?.act
+        ? [...document.querySelectorAll('.nl-root button[data-act], .nl-dialog-overlay button[data-act]')]
+            .filter((b) => b !== btn && !b.disabled && b.dataset.act === btn.dataset.act && (b.dataset.id || '') === (btn.dataset.id || ''))
+        : [];
     if (btn) {
         btn.disabled = true;
         btn.innerHTML = `<span class="nl-spin"></span>${esc(label)}`;
     }
+    twins.forEach((b) => { b.disabled = true; });
     try {
         return await fn();
     } catch (e) {
@@ -190,20 +206,27 @@ export async function busy(btn, fn, label = '处理中…') {
             btn.disabled = false;
             btn.innerHTML = old;
         }
+        twins.forEach((b) => { b.disabled = false; });
     }
 }
 
-export function emptyState(text, action = '') {
-    return `<div class="nl-empty">${esc(text)}${action}</div>`;
+/**
+ * 空状态：说明这里会出现什么、下一步做什么
+ * @param {string} text 说明文字
+ * @param {string} action 按钮等 HTML（调用方转义）
+ * @param {{title?: string, ico?: string}} opt
+ */
+export function emptyState(text, action = '', { title = '', ico = '' } = {}) {
+    return `<div class="nl-empty">${ico ? icon(ico, { size: 28 }) : ''}${title ? `<div class="nl-empty-title">${esc(title)}</div>` : ''}<div>${esc(text)}</div>${action}</div>`;
 }
 
-const ROLE_LABEL = { system: '🔷 系统', user: '🟢 用户', assistant: '🟡 AI' };
+const ROLE_LABEL = { system: '系统', user: '用户', assistant: 'AI' };
 
 /** 按消息链渲染提示词预览 */
 export function chainPreviewHtml(settings, task, { system = '', prompt = '', book = '' } = {}) {
     const msgs = buildChainMessages(getChain(settings, task), { SYSTEM: system, PROMPT: prompt, BOOK: book, TASK: task });
     const tokens = msgs.reduce((n, m) => n + estimateTokens(m.content), 0);
     return `<div class="nl-muted nl-small">共 ${msgs.length} 条消息，约 ${tokens} tokens（消息链可在设置页修改）</div>${msgs
-        .map((m) => `<h4 class="nl-role-${m.role}">${ROLE_LABEL[m.role] || m.role}</h4><div class="nl-pre nl-small">${esc(m.content)}</div>`)
+        .map((m) => `<h4 class="nl-role-${m.role}"><span class="nl-dot" style="background: currentColor"></span>${ROLE_LABEL[m.role] || m.role}</h4><div class="nl-pre nl-small">${esc(m.content)}</div>`)
         .join('')}`;
 }

@@ -7,7 +7,7 @@ import {
     parseBanned, parseStyleJson, pickSamples, removeStylePreset, resolveStyleId, saveStylePreset, styleOptions, styleTextFor,
 } from '../style.js';
 import { downloadFile, estimateTokens, formatNumber, pickFile, readFileAsText, safeFileName, truncate, uniq } from '../utils.js';
-import { busy, confirmDialog, esc, openDialog, optionList, promptDialog, qs } from './common.js';
+import { busy, confirmDialog, emptyState, esc, icon, openDialog, optionList, promptDialog, qs, rerollBtn } from './common.js';
 
 const FIX_MODES = [
     { value: 'none', label: '只提示，不修改' },
@@ -16,7 +16,7 @@ const FIX_MODES = [
 ];
 
 export const styleTab = {
-    mount(el) {
+    mount(el, { setActions } = {}) {
         // 导入的项目可能引用了本机没有的预设：改回默认
         fixStyleUse(app.project, app.settings);
         let editId = resolveStyleId(app.project, 'default');
@@ -60,12 +60,12 @@ export const styleTab = {
                         <span class="nl-muted nl-small">${esc(s.source || '手动添加')} · ${formatNumber(s.text.length)} 字</span>
                         <span class="nl-spacer"></span>
                         <button class="nl-btn nl-sm" data-act="sample-edit" data-i="${i}">编辑</button>
-                        <button class="nl-btn nl-sm" data-act="sample-up" data-i="${i}" ${i ? '' : 'disabled'}>↑</button>
+                        <button class="nl-btn nl-sm" data-act="sample-up" data-i="${i}" title="上移" aria-label="上移" ${i ? '' : 'disabled'}>${icon('arrowUp')}</button>
                         <button class="nl-btn nl-sm nl-danger" data-act="sample-del" data-i="${i}">删除</button>
                     </div>
                     <div class="nl-small nl-sample-text">${esc(truncate(s.text, 240))}</div>
                 </div>`).join('')
-            : '<div class="nl-muted nl-small">还没有范文。范文会原样放进续写/角色卡提示词，让 AI 模仿句式、节奏和对话写法（不会照搬内容）。</div>');
+            : emptyState('范文会原样放进续写/角色卡提示词，让 AI 模仿句式、节奏和对话写法（不会照搬内容）。可以粘贴、从原文选取或自动挑选。', '', { title: '还没有范文', ico: 'file' }));
 
         const render = () => {
             const p = app.project;
@@ -78,8 +78,12 @@ export const styleTab = {
             const bannedCount = parseBanned(prof.banned).length;
             el.innerHTML = `
             <section class="nl-card">
-                <h3>各任务使用的文风</h3>
-                <div class="nl-muted nl-small">“本书原著文风”保存在当前项目里（提取时自动填写，可手动修改）；预设保存在插件设置里，所有项目通用。某个任务选“跟随默认”时使用默认文风。</div>
+                <div class="nl-card-head">
+                    <div>
+                        <h3>各任务使用的文风</h3>
+                        <div class="nl-card-desc">“本书原著文风”保存在当前项目里（提取时自动填写，可手动修改）；预设保存在插件设置里，所有项目通用。某个任务选“跟随默认”时使用默认文风。</div>
+                    </div>
+                </div>
                 <div class="nl-grid2">
                     <div class="nl-field"><label>默认</label>${taskSelect('default')}</div>
                     ${STYLE_TASKS.map((t) => `<div class="nl-field"><label>${esc(t.label)} <span class="nl-muted nl-small">${esc(t.hint)}</span></label>${taskSelect(t.key)}</div>`).join('')}
@@ -102,14 +106,16 @@ export const styleTab = {
                             <span class="nl-small" style="min-width:110px">${esc(name)}</span>
                             <select class="nl-input nl-inline" data-pov-char="${esc(name)}">${optionList([{ value: '', label: '不映射（跟随默认）' }, ...listStyleChoices(p, app.settings).map((c) => ({ value: c.id, label: c.name }))], p.povStyles?.[name] || '')}</select>
                         </div>`).join('')}
-                    </div>` : '<div class="nl-muted nl-small">还没有角色档案。</div>'}
+                    </div>` : emptyState('在「提取」页提取资料，或在「角色」页新建角色后，可以在这里给角色映射文风。', '', { title: '还没有角色档案', ico: 'characters' })}
                 </details>
             </section>
 
             <section class="nl-card">
+                <div class="nl-card-head">
+                    <div><h3>编辑文风</h3></div>
+                </div>
                 <div class="nl-row nl-wrap">
-                    <h3>编辑文风</h3>
-                    <select class="nl-input nl-inline" data-edit-id>
+                    <select class="nl-input nl-inline" data-edit-id aria-label="要编辑的文风">
                         ${optionList([
                             { value: PROJECT_STYLE_ID, label: '本书原著文风（当前项目）' },
                             ...presets.map((x) => ({ value: x.id, label: `${x.name}${x.builtin ? '（内置）' : ''}` })),
@@ -117,17 +123,14 @@ export const styleTab = {
                     </select>
                     <span class="nl-tag nl-warn" data-modified ${prof.modified ? '' : 'hidden'}>已修改</span>
                     <span class="nl-spacer"></span>
-                    <button class="nl-btn nl-sm" data-act="new">新建预设</button>
                     <button class="nl-btn nl-sm" data-act="copy">另存为新预设</button>
                     ${!isProject() && !prof.builtin ? '<button class="nl-btn nl-sm" data-act="rename">重命名</button><button class="nl-btn nl-sm nl-danger" data-act="delete">删除</button>' : ''}
                     ${prof.builtin ? '<button class="nl-btn nl-sm" data-act="reset">恢复默认</button>' : ''}
                     ${!isProject() ? '<button class="nl-btn nl-sm" data-act="to-project" title="把这个预设的内容复制到本书原著文风">复制到本书文风</button>' : ''}
                 </div>
                 <div class="nl-row nl-wrap">
-                    <button class="nl-btn nl-sm nl-primary nl-reroll" data-act="analyze" title="从原文挑选片段，让 AI 总结视角、语言、基调和写法规则">🎲 AI 从原文提炼</button>
-                    <button class="nl-btn nl-sm" data-act="import">导入 JSON</button>
+                    ${rerollBtn('analyze', '', { label: 'AI 从原文提炼', title: '从原文挑选片段，让 AI 总结视角、语言、基调和写法规则' })}
                     <button class="nl-btn nl-sm" data-act="export">导出 JSON</button>
-                    <button class="nl-btn nl-sm" data-act="export-all">导出全部预设</button>
                 </div>
                 <div class="nl-grid3">
                     ${STYLE_FIELDS.map((f) => `<div class="nl-field"><label>${esc(f.label)}</label><input class="nl-input" data-sf="${f.key}" value="${esc(prof[f.key])}" placeholder="${esc(f.placeholder)}"></div>`).join('')}
@@ -141,27 +144,33 @@ export const styleTab = {
             </section>
 
             <section class="nl-card">
+                <div class="nl-card-head">
+                    <div>
+                        <h3>范文片段（${prof.samples.length} 段，${formatNumber(sampleChars)} 字）</h3>
+                        <div class="nl-card-desc">注入提示词时最多使用 ${formatNumber(Number(o.sampleMaxChars) || 0)} 字（下方“全局选项”可调），超出部分按顺序截掉。</div>
+                    </div>
+                </div>
                 <div class="nl-row nl-wrap">
-                    <h3>范文片段（${prof.samples.length} 段，${formatNumber(sampleChars)} 字）</h3>
-                    <span class="nl-spacer"></span>
                     <button class="nl-btn nl-sm" data-act="sample-paste">粘贴范文</button>
                     <button class="nl-btn nl-sm" data-act="sample-pick">从原文选取</button>
                     <button class="nl-btn nl-sm" data-act="sample-auto">自动挑选</button>
-                    ${prof.samples.length ? '<button class="nl-btn nl-sm nl-danger" data-act="sample-clear">清空</button>' : ''}
+                    ${prof.samples.length ? '<span class="nl-spacer"></span><button class="nl-btn nl-sm nl-danger" data-act="sample-clear">清空</button>' : ''}
                 </div>
-                <div class="nl-muted nl-small">注入提示词时最多使用 ${formatNumber(Number(o.sampleMaxChars) || 0)} 字（下方“全局选项”可调），超出部分按顺序截掉。</div>
                 <div class="nl-sample-list">${sampleHtml(prof)}</div>
             </section>
 
             <section class="nl-card">
+                <div class="nl-card-head">
+                    <div>
+                        <h3>禁用词（<span data-banned-count>${bannedCount}</span>）</h3>
+                        <div class="nl-card-desc">每行一个，也可以用逗号、顿号分隔多个；<code>词=>建议</code> 给出替换建议；<code>/正则/</code> 匹配句式；<code>#</code> 开头为注释。禁用词会写进提示词让 AI 提前避开，续写完成后自动扫描，角色卡审稿也会检查。</div>
+                    </div>
+                </div>
                 <div class="nl-row nl-wrap">
-                    <h3>禁用词（<span data-banned-count>${bannedCount}</span>）</h3>
-                    <span class="nl-spacer"></span>
                     <button class="nl-btn nl-sm" data-act="banned-common">导入常见 AI 腔</button>
                     <button class="nl-btn nl-sm" data-act="banned-count" title="统计每个禁用词在原文里出现的次数；原文常用的词不适合禁用">在原文中统计</button>
                 </div>
-                <div class="nl-muted nl-small">每行一个，也可以用逗号、顿号分隔多个；<code>词=>建议</code> 给出替换建议；<code>/正则/</code> 匹配句式；<code>#</code> 开头为注释。禁用词会写进提示词让 AI 提前避开，续写完成后自动扫描，角色卡审稿也会检查。</div>
-                <textarea class="nl-input nl-textarea" rows="7" data-sf="banned" placeholder="仿佛, 宛如&#10;嘴角上扬=>笑了&#10;/一丝[^，。]{0,4}笑意/">${esc(prof.banned)}</textarea>
+                <div class="nl-field"><textarea class="nl-input nl-textarea" rows="7" data-sf="banned" aria-label="禁用词" placeholder="仿佛, 宛如&#10;嘴角上扬=>笑了&#10;/一丝[^，。]{0,4}笑意/">${esc(prof.banned)}</textarea></div>
             </section>
 
             <section class="nl-card">
@@ -181,6 +190,13 @@ export const styleTab = {
                     </div>
                 </details>
             </section>`;
+            // 页面级操作（导入/导出全部预设、新建预设）放进标题栏；切走后迟到的渲染不能改写别的页面的标题栏
+            if (el.isConnected) {
+                setActions?.(`
+                    <button class="nl-btn" data-act="import" title="从 JSON 文件导入文风预设">${icon('upload')}导入预设</button>
+                    <button class="nl-btn" data-act="export-all">${icon('download')}导出全部预设</button>
+                    <button class="nl-btn" data-act="new">${icon('plus')}新建预设</button>`, onClick);
+            }
         };
 
         // ---------- 范文 ----------
@@ -202,7 +218,7 @@ export const styleTab = {
                     <div class="nl-muted nl-small">在下方用鼠标选中一段（建议 300-800 字，对话与叙述都有），再点“添加选中部分”。<b data-pick-count></b></div>
                     <div class="nl-small nl-ok" data-pick-info></div>
                     <textarea class="nl-input nl-textarea nl-tall" readonly data-pick-text></textarea>`,
-                buttons: [{ label: '完成', value: null, primary: true }],
+                buttons: [{ label: '完成', value: null }],
                 onMount: (b) => {
                     const sel = b.querySelector('[data-pick-chunk]');
                     const ta = b.querySelector('[data-pick-text]');
@@ -228,7 +244,7 @@ export const styleTab = {
                         const prof = target();
                         setSamples([...prof.samples, makeSample(truncate(text, 3000), `原文·${headingBefore(ta.value, ta.selectionStart) || chunk?.title || ''}`)]);
                         added++;
-                        info.textContent = `✔ 已添加（${text.length} 字）。本次共添加 ${added} 段，可继续选取。`;
+                        info.innerHTML = `${icon('check')} 已添加（${text.length} 字）。本次共添加 ${added} 段，可继续选取。`;
                     });
                     load();
                 },
@@ -288,7 +304,7 @@ export const styleTab = {
                     return render();
                 }
                 case 'to-project': {
-                    if (!(await confirmDialog(`用「${prof.name}」的内容覆盖本书原著文风（视角、语言、基调、规则、备注、范文、禁用词）？`))) return;
+                    if (!(await confirmDialog(`用「${prof.name}」的内容覆盖本书原著文风（视角、语言、基调、规则、备注、范文、禁用词）？`, { danger: true }))) return;
                     const { perspective, tone, mood, rules, notes, banned } = prof;
                     Object.assign(p.style, { perspective, tone, mood, rules, notes, banned, samples: prof.samples.map((s) => makeSample(s.text, s.source)) });
                     await app.saveNow();

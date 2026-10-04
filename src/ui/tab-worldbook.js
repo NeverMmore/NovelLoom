@@ -11,7 +11,14 @@ import { consolidateEntry, countMatches, findReplace } from '../tools.js';
 import { buildWorldbookEntries } from '../worldbook.js';
 import { estimateTokens, pickFile, readFileAsText, truncate, uniq } from '../utils.js';
 import { aliasMergeFlow } from './tab-characters.js';
-import { bindSettings, busy, confirmDialog, esc, fmtTime, openDialog, optionList, promptDialog, qs, rerollBtn } from './common.js';
+import { bindSettings, busy, confirmDialog, emptyState, esc, fmtTime, icon, openDialog, optionList, promptDialog, qs, rerollBtn } from './common.js';
+
+/** 激活方式标记：常驻 / 关键词触发 / 未分类 */
+const activationDot = (constant) => (constant === undefined
+    ? '<span class="nl-dot" role="img" aria-label="未分类" title="未分类"></span>'
+    : constant
+        ? '<span class="nl-dot nl-info" role="img" aria-label="常驻" title="常驻"></span>'
+        : '<span class="nl-dot nl-ok" role="img" aria-label="关键词触发" title="关键词触发"></span>');
 
 export async function snapshotsDialog() {
     const p = app.project;
@@ -22,12 +29,12 @@ export async function snapshotsDialog() {
                 <div class="nl-grow"><b>${esc(s.label)}</b><div class="nl-muted nl-small">${fmtTime(s.createdAt)} · ${s.stats?.characters ?? '?'} 角色 · ${s.stats?.entries ?? '?'} 条目</div></div>
                 <button class="nl-btn nl-sm" data-snap-restore="${esc(s.id)}">回退到此</button>
                 <button class="nl-btn nl-sm nl-danger" data-snap-del="${esc(s.id)}">删除</button>
-            </div>`).join('') || '<div class="nl-muted">暂无快照</div>';
+            </div>`).join('') || emptyState('快照会列在这里，可以随时回退到其中任何一个。', '', { title: '暂无快照', ico: 'history' });
     };
     await openDialog({
         title: '修改历史（快照）',
         wide: true,
-        body: '<div class="nl-row"><button class="nl-btn nl-primary" data-snap-new>创建快照</button><span class="nl-muted">批量操作前会自动创建快照；每个项目保留最近 50 个。</span></div><div class="nl-snaps nl-list"></div>',
+        body: '<div class="nl-row nl-wrap"><button class="nl-btn nl-primary" data-snap-new>创建快照</button><span class="nl-muted nl-small">批量操作前会自动创建快照；每个项目保留最近 50 个。</span></div><div class="nl-snaps nl-list"></div>',
         onMount: (root) => {
             draw(root);
             root.addEventListener('click', async (e) => {
@@ -55,7 +62,7 @@ export async function snapshotsDialog() {
 }
 
 export const worldbookTab = {
-    mount(el, { switchTab }) {
+    mount(el, { switchTab, setActions }) {
         let cat = null;
         let search = '';
         let volFilter = '';
@@ -81,44 +88,48 @@ export const worldbookTab = {
             const total = buildWorldbookEntries(p, app.settings, currentVol() ? { volume: currentVol() } : {}).length;
             el.innerHTML = `
             <section class="nl-card">
+                <div class="nl-card-desc">「角色」条目由角色档案自动生成，请在「角色」页编辑。写入酒馆时同名世界书会被覆盖。${vols.length ? '选中某一卷时，条目列表只显示该卷出现过的条目，“预览”显示该卷世界书的最终内容（截至卷末）。' : ''}</div>
                 <div class="nl-row nl-wrap">
-                    <button class="nl-btn nl-primary" data-act="publish">写入酒馆世界书</button>
-                    <button class="nl-btn" data-act="export">导出 JSON</button>
-                    <button class="nl-btn" data-act="export-diff" title="只导出上次导出之后新增或修改的条目">导出变更</button>
-                    <button class="nl-btn" data-act="import">合并导入外部世界书</button>
                     <button class="nl-btn" data-act="preview">预览最终条目（${total}）</button>
+                    <button class="nl-btn" data-act="export-diff" title="只导出上次导出之后新增或修改的条目">导出变更</button>
                     <span class="nl-spacer"></span>
                     <button class="nl-btn nl-sm" data-act="replace">查找替换</button>
                     <button class="nl-btn nl-sm" data-act="snapshots">修改历史</button>
                 </div>
                 ${vols.length ? `
                 <div class="nl-row nl-wrap nl-vol-bar">
-                    <span>📦 查看</span>
+                    <span class="nl-muted nl-small">${icon('filter', { size: 14 })} 查看</span>
                     <select class="nl-input nl-inline" data-vol-filter>${optionList([{ value: '', label: `全书（${vols.length} 卷合并）` }, ...vols.map((v) => ({ value: v.id, label: `${v.name}（${volumeRangeLabel(v)}）` }))], volFilter)}</select>
                     <select class="nl-input nl-inline" data-setting="worldbook.volumeScope" title="分卷世界书包含哪些条目">${optionList([{ value: 'volume', label: '分卷：只含本卷出场的角色与条目' }, { value: 'cumulative', label: '分卷：截至卷末的全部资料' }])}</select>
                     <button class="nl-btn nl-sm" data-act="publish-volumes">分卷写入酒馆</button>
                     <button class="nl-btn nl-sm" data-act="export-volumes">分卷导出</button>
                 </div>` : ''}
-                <div class="nl-muted nl-small">「角色」条目由角色档案自动生成，请在「角色」页编辑。写入酒馆时同名世界书会被覆盖。${vols.length ? '选中某一卷时，条目列表只显示该卷出现过的条目，“预览”显示该卷世界书的最终内容（截至卷末）。' : ''}</div>
             </section>
             <div class="nl-seg nl-cat-tabs">
-                <button class="nl-seg-btn" data-goto="characters">👤 角色（${Object.keys(p.characters).length}）</button>
+                <button class="nl-seg-btn" data-goto="characters">${icon('characters', { size: 14 })}角色（${Object.keys(p.characters).length}）</button>
                 ${cats.map((c) => {
                     const conf = app.settings.categories.find((x) => x.name === c);
-                    return `<button class="nl-seg-btn ${c === cat ? 'active' : ''}" data-cat="${esc(c)}">${conf ? (conf.constant ? '🔵' : '🟢') : '📁'} ${esc(c)}（${countIn(c)}）</button>`;
+                    return `<button class="nl-seg-btn ${c === cat ? 'active' : ''}" data-cat="${esc(c)}">${activationDot(conf ? !!conf.constant : undefined)}${esc(c)}（${countIn(c)}）</button>`;
                 }).join('')}
             </div>
             <section class="nl-card">
                 <div class="nl-row nl-wrap">
                     <input class="nl-input nl-inline" placeholder="搜索" data-search value="${esc(search)}">
                     <span class="nl-spacer"></span>
-                    <button class="nl-btn nl-sm" data-act="add">新建条目</button>
+                    <button class="nl-btn nl-sm" data-act="add">${icon('plus', { size: 14 })}新建条目</button>
                     <button class="nl-btn nl-sm" data-act="alias">AI 别名检测</button>
                     <button class="nl-btn nl-sm" data-act="consolidate-all">AI 整理本分类长条目</button>
                 </div>
                 <div class="nl-entry-list">${entriesHtml()}</div>
             </section>`;
             bindSettings(el, app.settings, () => app.saveSettings());
+            // 页面级操作：整本世界书的导入、导出、写入酒馆。
+            // 只在本页仍挂载时设置：AI 整理、回退快照等异步操作结束后的 render() 可能落在已脱离的旧容器上，
+            // 不能把标题栏换成旧闭包的按钮（或覆盖其他页面的按钮）
+            if (el.isConnected) setActions?.(`
+                <button class="nl-btn" data-act="import" title="合并导入外部世界书（JSON），导入的条目默认锁定">${icon('upload')}合并导入</button>
+                <button class="nl-btn" data-act="export">${icon('download')}导出 JSON</button>
+                <button class="nl-btn nl-primary" data-act="publish">写入酒馆世界书</button>`, onClick);
         };
 
         const entriesHtml = () => {
@@ -126,10 +137,12 @@ export const worldbookTab = {
             const entries = Object.values(p.worldbook[cat] || {}).filter(inVol).filter((e) => !search || e.name.includes(search) || e.content.includes(search) || e.keywords.some((k) => k.includes(search)));
             return entries.map((e) => `
                     <div class="nl-entry" data-name="${esc(e.name)}">
-                        <div class="nl-row"><b>${esc(e.name)}</b>${e.locked ? ' 🔒' : ''}${e.config?.disable ? ' <span class="nl-tag">不写入</span>' : ''}<span class="nl-spacer"></span><span class="nl-muted nl-small">${estimateTokens(e.content)} tokens · ${(e.sourceChunks || []).length} 段</span>${rerollBtn('reroll-entry', `data-cat="${esc(cat)}" data-name="${esc(e.name)}"`, { title: 'AI 重新整理这条' })}</div>
-                        <div class="nl-muted nl-small">🔑 ${esc(e.keywords.join('、'))}</div>
+                        <div class="nl-row"><b>${esc(e.name)}</b>${e.locked ? icon('lock', { size: 14, label: '已锁定', cls: 'nl-muted' }) : ''}${e.config?.disable ? '<span class="nl-tag">不写入</span>' : ''}<span class="nl-spacer"></span><span class="nl-muted nl-small">${estimateTokens(e.content)} tokens · ${(e.sourceChunks || []).length} 段</span>${rerollBtn('reroll-entry', `data-cat="${esc(cat)}" data-name="${esc(e.name)}"`, { title: 'AI 重新整理这条' })}</div>
+                        <div class="nl-muted nl-small">${icon('zap', { size: 14, label: '关键词' })} ${esc(e.keywords.join('、'))}</div>
                         <div class="nl-small nl-clamp">${esc(truncate(e.content, 200))}</div>
-                    </div>`).join('') || '<div class="nl-muted">这个分类还没有条目</div>';
+                    </div>`).join('') || `<div style="grid-column: 1 / -1">${search
+                ? emptyState(`没有名称、关键词或内容包含“${search}”的条目。`, '', { title: '没有匹配的条目', ico: 'search' })
+                : emptyState('提取时会自动生成本分类的条目，也可以点“新建条目”手动添加。', '', { title: '这个分类还没有条目', ico: 'worldbook' })}</div>`;
         };
 
         const editEntry = async (name) => {
@@ -149,7 +162,7 @@ export const worldbookTab = {
                     <div class="nl-field"><label>关键词（逗号分隔）</label><input class="nl-input" data-f="keywords" value="${esc(e.keywords.join('，'))}"></div>
                     <div class="nl-field"><label>内容 <span class="nl-muted" data-tokens>${estimateTokens(e.content)} tokens</span></label><textarea class="nl-input nl-textarea nl-tall" data-f="content">${esc(e.content)}</textarea></div>
                     <div class="nl-grid3">
-                        <div class="nl-field"><label>激活</label><select class="nl-input" data-cfg="constant">${optionList([{ value: '', label: '跟随分类' }, { value: 'true', label: '🔵 常驻' }, { value: 'false', label: '🟢 关键词' }], cfg.constant === undefined ? '' : String(cfg.constant))}</select></div>
+                        <div class="nl-field"><label>激活</label><select class="nl-input" data-cfg="constant">${optionList([{ value: '', label: '跟随分类' }, { value: 'true', label: '常驻' }, { value: 'false', label: '关键词' }], cfg.constant === undefined ? '' : String(cfg.constant))}</select></div>
                         <div class="nl-field"><label>位置</label><select class="nl-input" data-cfg="position">${optionList([{ value: '', label: '跟随分类' }, ...WI_POSITIONS], cfg.position ?? '')}</select></div>
                         <div class="nl-field"><label>深度 / 顺序</label><div class="nl-row"><input class="nl-input" type="number" data-cfg="depth" value="${cfg.depth ?? ''}" placeholder="深度"><input class="nl-input" type="number" data-cfg="order" value="${cfg.order ?? ''}" placeholder="顺序"></div></div>
                     </div>
@@ -217,7 +230,7 @@ export const worldbookTab = {
         };
 
         const onClick = async (e) => {
-            const tabBtn = e.target.closest('[data-cat]');
+            // 分类切换按钮只有 data-cat；条目上的
             if (tabBtn) {
                 cat = tabBtn.dataset.cat;
                 return render();
@@ -323,7 +336,7 @@ export const worldbookTab = {
                         title: `${currentVol() ? `「${currentVol().name}」` : '最终'}世界书预览：${entries.length} 条，约 ${tokens} tokens`,
                         wide: true,
                         body: `<table class="nl-table"><thead><tr><th>分类</th><th>名称</th><th>激活</th><th>位置</th><th>顺序</th><th>tokens</th></tr></thead><tbody>
-                            ${entries.map((x) => `<tr class="${x.disable ? 'nl-dim' : ''}"><td>${esc(x.category)}</td><td title="${esc(x.keywords.join('、'))}">${esc(x.name)}</td><td>${x.constant ? '🔵' : '🟢'}</td><td>${esc(WI_POSITIONS.find((w) => w.value === x.position)?.label || x.position)}</td><td>${x.order}</td><td>${estimateTokens(x.content)}</td></tr>`).join('')}
+                            ${entries.map((x) => `<tr class="${x.disable ? 'nl-dim' : ''}"><td>${esc(x.category)}</td><td title="${esc(x.keywords.join('、'))}">${esc(x.name)}</td><td>${x.constant ? '<span class="nl-dot nl-info"></span> 常驻' : '<span class="nl-dot nl-ok"></span> 关键词'}</td><td>${esc(WI_POSITIONS.find((w) => w.value === x.position)?.label || x.position)}</td><td>${x.order}</td><td>${estimateTokens(x.content)}</td></tr>`).join('')}
                             </tbody></table>`,
                     });
                     return;

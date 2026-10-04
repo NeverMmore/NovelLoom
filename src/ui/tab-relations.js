@@ -16,18 +16,19 @@ import {
     relationTypeLabel,
     removeCustomRelationType,
     removeRelationship,
+    updateCustomRelationType,
     updateRelationship,
 } from '../relations.js';
 import { createSnapshot } from '../store.js';
 import { downloadFile, pickFile, readFileAsText, safeFileName, truncate } from '../utils.js';
-import { alertDialog, busy, confirmDialog, esc, openDialog, optionList } from './common.js';
+import { alertDialog, busy, confirmDialog, emptyState, esc, icon, openDialog, optionList } from './common.js';
 
 function timeOptions(project) {
     const vols = getVolumes(project).filter((v) => !v.implicit);
     const opts = [{ value: '', label: '全书结束时（使用全部资料）' }];
     for (const c of project.chunks) {
         const v = vols.find((x) => x.startChunk === c.index);
-        if (v) opts.push({ value: String(v.endChunk), label: `📦 ${v.name} 卷末（第 ${v.endChunk + 1} 段）` });
+        if (v) opts.push({ value: String(v.endChunk), label: `${v.name} 卷末（第 ${v.endChunk + 1} 段）` });
         opts.push({ value: String(c.index), label: `　第 ${c.index + 1} 段结束时：${truncate(c.title, 30)}` });
     }
     return opts;
@@ -45,7 +46,10 @@ function layoutNodes(names, w, h) {
 
 /** 圆形关系图：节点按名称环形排布，边按类型着色，非双向的边带箭头 */
 function buildSvg(edges, names, focus, settings) {
-    if (!names.length) return '<div class="nl-empty">还没有可展示的关系。用「+ 添加关系」手动添加，或点「🤖 AI 分析关系」自动提取。</div>';
+    if (!names.length) {
+        // 操作入口只保留一处：“添加关系”在下方关系列表的标题栏，“AI 分析关系”在页面标题栏
+        return emptyState('在下方「关系列表」里点“添加关系”手动添加，或点右上角的“AI 分析关系”自动提取。', '', { title: '还没有可展示的关系', ico: 'relations' });
+    }
     const W = 640;
     const H = 420;
     const nodes = layoutNodes(names, W, H);
@@ -79,7 +83,7 @@ function buildSvg(edges, names, focus, settings) {
 }
 
 export const relationsTab = {
-    mount(el) {
+    mount(el, { setActions } = {}) {
         let upto = '';
         let typeFilter = 'all';
         let focus = null;
@@ -162,12 +166,12 @@ export const relationsTab = {
                         ${custom.map((t) => `<tr data-ctype="${esc(t.value)}">
                             <td><input type="color" data-ct-color value="${esc(t.color)}"></td>
                             <td><input class="nl-input" data-ct-label value="${esc(t.label)}"></td>
-                            <td><button class="nl-icon-btn" data-ct-del title="删除">✕</button></td>
+                            <td><button class="nl-btn nl-sm nl-danger" data-ct-del title="删除">删除</button></td>
                         </tr>`).join('') || '<tr><td colspan="3" class="nl-muted">还没有自定义类型</td></tr>'}
                         <tr>
-                            <td><input type="color" data-ct-new-color value="#3fb6c9"></td>
+                            <td><input type="color" data-ct-new-color value="#3fb6c9" aria-label="新类型颜色"></td>
                             <td><input class="nl-input" data-ct-new-label placeholder="新类型名称，例如「养父女」"></td>
-                            <td><button class="nl-btn nl-sm" data-ct-add>+ 添加</button></td>
+                            <td><button class="nl-btn nl-sm" data-ct-add>添加</button></td>
                         </tr>
                     </tbody>
                 </table>`;
@@ -219,34 +223,32 @@ export const relationsTab = {
             const graphEdges = focus ? edgesAll().filter((r) => typeFilter === 'all' || r.type === typeFilter) : edges;
             const names = [...new Set(graphEdges.flatMap((r) => [r.from, r.to]))].sort((a, b) => a.localeCompare(b, 'zh'));
             el.innerHTML = `
-            <section class="nl-card">
-                <div class="nl-row nl-wrap">
-                    <div class="nl-field"><label>故事时间点（防剧透：只显示此前已建立的关系）</label><select class="nl-input nl-inline" data-act-input="upto">${optionList(timeOptions(p), upto)}</select></div>
-                    <div class="nl-field"><label>类型筛选</label><select class="nl-input nl-inline" data-act-input="type">${optionList([{ value: 'all', label: '全部类型' }, ...allRelationTypes(app.settings)], typeFilter)}</select></div>
-                    <span class="nl-spacer"></span>
-                    <button class="nl-btn nl-sm" data-act="manage-types">⚙️ 自定义类型</button>
-                    <button class="nl-btn nl-sm" data-act="export">导出</button>
-                    <button class="nl-btn nl-sm" data-act="import">导入</button>
-                    <button class="nl-btn nl-sm" data-act="analyze">🤖 AI 分析关系</button>
-                    <button class="nl-btn nl-sm nl-primary" data-act="add">+ 添加关系</button>
-                </div>
-                ${focus ? `<div class="nl-row nl-muted nl-small">只看「${esc(focus)}」的关系 <button class="nl-icon-btn" data-act="clear-focus" title="清除">✕</button></div>` : ''}
-            </section>
+            <div class="nl-row nl-wrap">
+                <div class="nl-field"><label>故事时间点（防剧透：只显示此前已建立的关系）</label><select class="nl-input nl-inline" data-act-input="upto">${optionList(timeOptions(p), upto)}</select></div>
+                <div class="nl-field"><label>类型筛选</label><div class="nl-row"><select class="nl-input nl-inline" data-act-input="type">${optionList([{ value: 'all', label: '全部类型' }, ...allRelationTypes(app.settings)], typeFilter)}</select><button class="nl-btn nl-sm" data-act="manage-types">${icon('settings', { size: 14 })}自定义类型</button></div></div>
+            </div>
+            ${focus ? `<div class="nl-row nl-muted nl-small">${icon('filter', { size: 14 })}只看「${esc(focus)}」的关系 <button class="nl-icon-btn" data-act="clear-focus" title="清除" aria-label="清除">${icon('close', { size: 14 })}</button></div>` : ''}
             <section class="nl-card nl-rel-graph">${buildSvg(graphEdges, names, focus, app.settings)}</section>
             <section class="nl-card">
-                <h3>关系列表（${edges.length}）</h3>
+                <div class="nl-card-head"><div><h3>关系列表（${edges.length}）</h3></div><button class="nl-btn nl-sm nl-primary" data-act="add">${icon('plus', { size: 14 })}添加关系</button></div>
                 ${edges.length ? `<table class="nl-table"><thead><tr><th>角色</th><th></th><th>角色</th><th>类型</th><th>说明</th><th>建立于</th><th></th></tr></thead><tbody>
                     ${edges.map((r) => `<tr data-id="${esc(r.id)}">
                         <td><a data-act="focus-name" data-name="${esc(r.from)}">${esc(r.from)}</a></td>
                         <td>${r.mutual ? '↔' : '→'}</td>
                         <td><a data-act="focus-name" data-name="${esc(r.to)}">${esc(r.to)}</a></td>
-                        <td><span class="nl-tag" style="border-color:${relationTypeColor(r.type, app.settings)};color:${relationTypeColor(r.type, app.settings)}">${esc(relationTypeLabel(r.type, app.settings))}</span>${r.auto ? ' <span class="nl-muted nl-small" title="AI 自动分析得出">🤖</span>' : ''}</td>
+                        <td><span class="nl-tag" style="border-color:${relationTypeColor(r.type, app.settings)};color:${relationTypeColor(r.type, app.settings)}">${esc(relationTypeLabel(r.type, app.settings))}</span>${r.auto ? `<span class="nl-muted" title="AI 自动分析得出">${icon('wand', { size: 14, label: 'AI 自动分析得出' })}</span>` : ''}</td>
                         <td>${esc(r.label || '')}</td>
                         <td class="nl-muted nl-small">第 ${r.chunk + 1} 段</td>
-                        <td class="nl-row"><button class="nl-icon-btn" data-act="edit" data-id="${esc(r.id)}" title="编辑">✏️</button><button class="nl-icon-btn" data-act="del" data-id="${esc(r.id)}" title="删除">✕</button></td>
+                        <td><div class="nl-row"><button class="nl-icon-btn" data-act="edit" data-id="${esc(r.id)}" title="编辑" aria-label="编辑">${icon('edit')}</button><button class="nl-icon-btn nl-danger" data-act="del" data-id="${esc(r.id)}" title="删除" aria-label="删除">${icon('trash')}</button></div></td>
                     </tr>`).join('')}
-                </tbody></table>` : `<div class="nl-empty">${p.relationships?.length ? '没有符合筛选条件的关系。' : '还没有任何关系数据。'}</div>`}
+                </tbody></table>` : emptyState(p.relationships?.length ? '没有符合筛选条件的关系。' : '还没有任何关系数据。')}
             </section>`;
+            // 页面已被切走时（例如 AI 分析关系结束后 render）不再改动标题栏，免得覆盖其他页面的按钮
+            if (el.isConnected) {
+                setActions?.(`<button class="nl-btn" data-act="export">${icon('download')}导出</button>`
+                    + `<button class="nl-btn" data-act="import">${icon('upload')}导入</button>`
+                    + `<button class="nl-btn" data-act="analyze" title="只使用所选故事时间点之前的资料">${icon('wand')}AI 分析关系</button>`, onClick);
+            }
         };
 
         const onClick = async (e) => {

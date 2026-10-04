@@ -8,7 +8,7 @@ import {
 import { nextChapterNo } from '../planner.js';
 import { createSnapshot } from '../store.js';
 import { downloadFile, pickFile, readFileAsText, safeFileName } from '../utils.js';
-import { busy, confirmDialog, esc, openDialog, optionList } from './common.js';
+import { busy, confirmDialog, emptyState, esc, icon, openDialog, optionList } from './common.js';
 
 const FILTERS = [
     { value: 'open', label: '未回收' },
@@ -17,7 +17,7 @@ const FILTERS = [
 ];
 
 export const foreshadowTab = {
-    mount(el) {
+    mount(el, { setActions } = {}) {
         let filter = 'open';
 
         const openEditDialog = async (existing) => {
@@ -72,42 +72,47 @@ export const foreshadowTab = {
                 .filter((n) => Number.isFinite(n))
                 .sort((a, b) => b - a)[0];
             el.innerHTML = `
-            <section class="nl-card">
-                <div class="nl-row nl-wrap">
-                    <h3>伏笔看板</h3>
-                    <span class="nl-spacer"></span>
-                    <button class="nl-btn nl-sm" data-act="export" ${all.length ? '' : 'disabled'}>导出</button>
-                    <button class="nl-btn nl-sm" data-act="import">导入</button>
-                    <button class="nl-btn nl-sm" data-act="export-md" ${all.length ? '' : 'disabled'}>导出 Markdown</button>
-                    <button class="nl-btn nl-sm nl-primary" data-act="analyze">🤖 从大纲整理</button>
-                    <button class="nl-btn nl-sm" data-act="add">+ 添加伏笔</button>
-                </div>
-                <div class="nl-muted nl-small">读取「写大纲」里各章的「伏笔」字段，让 AI 识别哪些是新埋下的、哪些已经在后续章节回收，整理成这张总表；也可以手动增删改。${all.length ? `现在挂着 <b>${openCount}</b> 条未回收${Number.isFinite(oldestOpen) ? `，最久的一条已经埋了 <b>${oldestOpen}</b> 章` : ''}。` : ''}</div>
-                <div class="nl-row nl-wrap">
-                    <select class="nl-input nl-inline" data-act-input="filter">${optionList(FILTERS, filter)}</select>
-                </div>
-            </section>
+            <div class="nl-row nl-wrap">
+                <select class="nl-input nl-inline" data-act-input="filter" aria-label="按状态筛选">${optionList(FILTERS, filter)}</select>
+                ${all.length ? `<span class="nl-muted nl-small">现在挂着 <b>${openCount}</b> 条未回收${Number.isFinite(oldestOpen) ? `，最久的一条已经埋了 <b>${oldestOpen}</b> 章` : ''}</span>` : ''}
+                <span class="nl-spacer"></span>
+                <button class="nl-btn nl-sm" data-act="export" ${all.length ? '' : 'disabled'}>${icon('download', { size: 14 })}导出</button>
+                <button class="nl-btn nl-sm" data-act="import">${icon('upload', { size: 14 })}导入</button>
+                <button class="nl-btn nl-sm" data-act="export-md" ${all.length ? '' : 'disabled'}>导出 Markdown</button>
+            </div>
             <section class="nl-card">
                 ${list.length ? `<table class="nl-table"><thead><tr><th>伏笔</th><th>状态</th><th>埋下</th><th>回收</th><th>挂了几章</th><th></th></tr></thead><tbody>
                     ${list.map((f) => {
                         const openN = chaptersOpenFor(p, f);
                         return `<tr data-id="${esc(f.id)}">
-                        <td>${esc(f.text)}${f.auto ? ' <span class="nl-muted nl-small" title="AI 整理得出">🤖</span>' : ''}${f.notes ? `<div class="nl-muted nl-small">${esc(f.notes)}</div>` : ''}</td>
+                        <td>${esc(f.text)}${f.auto ? ` <span class="nl-muted nl-small" title="AI 整理得出">${icon('wand', { size: 14, label: 'AI 整理得出' })}</span>` : ''}${f.notes ? `<div class="nl-muted nl-small">${esc(f.notes)}</div>` : ''}</td>
                         <td>${f.status === 'resolved' ? '<span class="nl-tag nl-ok">已回收</span>' : '<span class="nl-tag nl-warn">未回收</span>'}</td>
                         <td class="nl-small">${Number.isFinite(f.plantedNo) ? `第${f.plantedNo}章` : '未知'}</td>
                         <td class="nl-small">${Number.isFinite(f.resolvedNo) ? `第${f.resolvedNo}章` : '—'}</td>
                         <td class="nl-small">${Number.isFinite(openN) ? openN : '—'}</td>
-                        <td class="nl-row">
+                        <td><div class="nl-row">
                             ${f.status === 'open'
-                                ? `<button class="nl-icon-btn" data-act="resolve" data-id="${esc(f.id)}" title="标记为已回收">✅</button>`
-                                : `<button class="nl-icon-btn" data-act="reopen" data-id="${esc(f.id)}" title="改回未回收">↩️</button>`}
-                            <button class="nl-icon-btn" data-act="edit" data-id="${esc(f.id)}" title="编辑">✏️</button>
-                            <button class="nl-icon-btn" data-act="del" data-id="${esc(f.id)}" title="删除">✕</button>
-                        </td>
+                                ? `<button class="nl-icon-btn" data-act="resolve" data-id="${esc(f.id)}" title="标记为已回收" aria-label="标记为已回收">${icon('check')}</button>`
+                                : `<button class="nl-icon-btn" data-act="reopen" data-id="${esc(f.id)}" title="改回未回收" aria-label="改回未回收">${icon('undo')}</button>`}
+                            <button class="nl-icon-btn" data-act="edit" data-id="${esc(f.id)}" title="编辑" aria-label="编辑">${icon('edit')}</button>
+                            <button class="nl-icon-btn nl-danger" data-act="del" data-id="${esc(f.id)}" title="删除" aria-label="删除">${icon('trash')}</button>
+                        </div></td>
                     </tr>`;
                     }).join('')}
-                </tbody></table>` : `<div class="nl-empty">${all.length ? '没有符合筛选条件的伏笔。' : '还没有伏笔数据。先在「写大纲」里给章节填写「伏笔」字段，再点“从大纲整理”。'}</div>`}
+                </tbody></table>` : all.length
+                    ? emptyState('没有符合筛选条件的伏笔。', '', { ico: 'filter' })
+                    : emptyState(
+                        '先在「写大纲」里给章节填写「伏笔」字段，再点右上角的“从大纲整理”：AI 会识别哪些是新埋下的、哪些已经在后续章节回收，整理成这张总表。',
+                        '',
+                        { title: '还没有伏笔数据', ico: 'foreshadow' },
+                    )}
             </section>`;
+            // 页面级操作：手动添加、AI 从大纲整理全书伏笔（页面已被切走时不再改动标题栏）
+            if (el.parentNode) {
+                setActions?.(`
+                    <button class="nl-btn" data-act="add">${icon('plus')}添加伏笔</button>
+                    <button class="nl-btn nl-primary" data-act="analyze" title="读取「写大纲」里各章的「伏笔」字段，让 AI 识别哪些是新埋下的、哪些已经在后续章节回收">${icon('wand')}从大纲整理</button>`, onClick);
+            }
         };
 
         const onClick = async (e) => {

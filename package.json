@@ -1,6 +1,6 @@
 {
   "name": "novel-loom",
-  "version": "0.8.3",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "description": "SillyTavern 扩展：导入小说，分段提取大纲/角色/世界书/人物关系，生成角色卡并写入酒馆，可选续写与局部重写",

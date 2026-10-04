@@ -115,7 +115,7 @@ try:
         wait_log(page, 'AI 分析关系')
         rows_text = page.inner_text('.nl-table')
         print('after analyze:', rows_text.replace('\n', ' | '))
-        assert '姜小白' in rows_text and '🤖' in page.inner_html('.nl-table')
+        assert '姜小白' in rows_text and 'AI 自动分析得出' in page.inner_html('.nl-table')
         shot(page, '03-ai-analyze')
 
         # 类型筛选：只看 romantic

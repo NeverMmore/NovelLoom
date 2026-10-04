@@ -8,7 +8,7 @@ import { buildVolumeSummary } from '../tools.js';
 import { rewriteSelection } from '../rewrite.js';
 import { createSnapshot } from '../store.js';
 import { formatNumber, truncate } from '../utils.js';
-import { bindSettings, busy, confirmDialog, esc, openDialog, optionList, promptDialog, qs, qsa, rerollBtn, statusIcon } from './common.js';
+import { bindSettings, busy, confirmDialog, emptyState, esc, icon, openDialog, optionList, promptDialog, qs, qsa, rerollBtn, statusIcon } from './common.js';
 
 const ORIGIN = { source: '原文', generated: '续写', chat: '聊天', mixed: '混合' };
 
@@ -27,7 +27,7 @@ export const chunksTab = {
                 if (!v) return '';
                 const cs = p.chunks.slice(v.startChunk, v.endChunk + 1);
                 return `<div class="nl-vol-head" data-vol="${esc(v.id)}">
-                    <span>📦 <b>${esc(v.name)}</b></span>
+                    <span>${icon('overview', { size: 14 })} <b>${esc(v.name)}</b></span>
                     <span class="nl-muted nl-small">${volumeRangeLabel(v)} · 已提取 ${cs.filter((x) => x.status === 'done').length}/${cs.length}${v.auto === 'overflow' ? ' · 超限自动分卷' : ''}</span>
                     ${v.summary ? '<span class="nl-tag nl-ok">有卷梗概</span>' : ''}
                     <span class="nl-spacer"></span>
@@ -49,14 +49,15 @@ export const chunksTab = {
                 </details>
             </section>
             <section class="nl-card">
-                <div class="nl-row nl-wrap">
-                    <b>分卷</b>
-                    <span class="nl-muted">${vols.length ? `共 ${vols.length} 卷` : '未分卷'}${app.settings.extraction.volumeMode ? ' · 分卷模式已开启' : ' · 分卷模式未开启（在提取页开启）'}</span>
-                    <span class="nl-spacer"></span>
+                <div class="nl-card-head">
+                    <div>
+                        <h3>分卷</h3>
+                        <div class="nl-card-desc">${vols.length ? `共 ${vols.length} 卷` : '未分卷'}${app.settings.extraction.volumeMode ? ' · 分卷模式已开启' : ' · 分卷模式未开启（在提取页开启）'}</div>
+                        <div class="nl-card-desc">也可以在任意一段点“分卷”，从这一段开始新的一卷。分卷后可以按卷导出世界书、按卷生成梗概；开启分卷模式后，提取时只把本卷资料注入提示词，并附上前几卷的梗概。</div>
+                    </div>
                     <button class="nl-btn nl-sm" data-act="vol-detect" title="按章节标题中的「第X卷 / 第X部」分卷">按标题自动分卷</button>
                     ${vols.length ? '<button class="nl-btn nl-sm" data-act="vol-clear">清除分卷</button>' : ''}
                 </div>
-                <div class="nl-muted nl-small">也可以在任意一段点“分卷↑”，从这一段开始新的一卷。分卷后可以按卷导出世界书、按卷生成梗概；开启分卷模式后，提取时只把本卷资料注入提示词，并附上前几卷的梗概。</div>
             </section>
             <section class="nl-card">
                 <div class="nl-row nl-wrap">
@@ -84,10 +85,12 @@ export const chunksTab = {
                         <div class="nl-chunk-actions">
                             ${rerollBtn('reextract', `data-id="${esc(c.id)}"`, { label: '重提', title: '清除本段贡献后重新提取' })}
                             <button class="nl-btn nl-sm" data-act="start-here" data-id="${esc(c.id)}" title="从这一段开始提取">从此提取</button>
-                            <button class="nl-btn nl-sm" data-act="merge-next" data-id="${esc(c.id)}" title="与下一段合并">合并↓</button>
-                            ${c.index > 0 && !vols.some((v) => v.startChunk === c.index) ? `<button class="nl-btn nl-sm" data-act="split-here" data-id="${esc(c.id)}" title="从这一段开始新的一卷">分卷↑</button>` : ''}
+                            <button class="nl-btn nl-sm" data-act="merge-next" data-id="${esc(c.id)}" title="与下一段合并">${icon('merge')}合并</button>
+                            ${c.index > 0 && !vols.some((v) => v.startChunk === c.index) ? `<button class="nl-btn nl-sm" data-act="split-here" data-id="${esc(c.id)}" title="从这一段开始新的一卷">${icon('split')}分卷</button>` : ''}
                         </div>
-                    </div>`).join('') || '<div class="nl-muted">没有符合条件的分段</div>'}
+                    </div>`).join('') || (filter === 'all'
+                        ? emptyState('导入小说或按上方设置重新分段后，分段会出现在这里。', '', { title: '还没有分段', ico: 'chunks' })
+                        : emptyState('换一个筛选条件，或查看全部分段。', '<button class="nl-btn nl-sm" data-filter="all">查看全部</button>', { title: '没有符合条件的分段', ico: 'filter' }))}
                 </div>
             </section>`;
             bindSettings(el, app.settings, () => app.saveSettings());
@@ -96,7 +99,7 @@ export const chunksTab = {
         const find = (id) => app.project.chunks.find((c) => c.id === id);
 
         const viewChunk = async (chunk) => {
-            const imp = (chunk.important || []).map((i) => `<li><b>${esc(i.chapter || '')}</b> ${esc(i.reason)}${(i.quotes || []).map((q) => `<blockquote>${q.verified === false ? '⚠️' : ''}「${esc(q.text)}」</blockquote>`).join('')}</li>`).join('');
+            const imp = (chunk.important || []).map((i) => `<li><b>${esc(i.chapter || '')}</b> ${esc(i.reason)}${(i.quotes || []).map((q) => `<blockquote>${q.verified === false ? `<span class="nl-warn" title="未能在原文中逐字找到">${icon('alert', { size: 14, label: '未能在原文中逐字找到' })}</span>` : ''}「${esc(q.text)}」</blockquote>`).join('')}</li>`).join('');
             const body = `
                 <div class="nl-muted">状态：${statusIcon(chunk.status)} ${esc(chunk.status)} · ${formatNumber(chunk.charCount)} 字 · 来源：${ORIGIN[chunk.origin] || chunk.origin}</div>
                 ${chunk.error ? `<div class="nl-err">错误：${esc(chunk.error)}</div>` : ''}
@@ -106,7 +109,7 @@ export const chunksTab = {
                 <h4>正文（可编辑）</h4>
                 <textarea class="nl-input nl-textarea nl-tall" id="nl-chunk-content">${esc(chunk.content)}</textarea>
                 <div class="nl-row nl-wrap" style="margin-top:6px">
-                    <button class="nl-btn nl-sm" data-act="rewrite-sel">✏️ AI 重写选中部分</button>
+                    <button class="nl-btn nl-sm" data-act="rewrite-sel">${icon('edit')}AI 重写选中部分</button>
                     <span class="nl-muted nl-small">先在上面的正文里选中要重写的一段，再点这个按钮</span>
                 </div>`;
             const { value, root } = await openDialog({
@@ -327,7 +330,7 @@ export const chunksTab = {
             if (row) {
                 row.className = `nl-chunk ${c.status}`;
                 const s = row.querySelector('.nl-chunk-status');
-                if (s) s.textContent = statusIcon(c.status);
+                if (s) s.innerHTML = statusIcon(c.status);
             }
         });
         render();

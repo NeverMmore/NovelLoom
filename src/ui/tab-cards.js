@@ -14,15 +14,21 @@ import { characterExistsInST, openCharacterInST } from '../stio.js';
 import { bannedRulesFor, getStyleProfile } from '../style.js';
 import { greetingText, testChatReply } from '../testchat.js';
 import { downloadFile, estimateTokens, pickFile, safeFileName, truncate, uniq } from '../utils.js';
-import { alertDialog, bindSettings, busy, chainPreviewHtml, confirmDialog, esc, fmtTime, importanceLabel, openDialog, optionList, promptDialog, rerollBtn } from './common.js';
+import { alertDialog, bindSettings, busy, chainPreviewHtml, confirmDialog, emptyState, esc, fmtTime, icon, importanceLabel, openDialog, optionList, promptDialog, rerollBtn } from './common.js';
 
 const GREETING_SEP = '\n\n=====\n\n';
+
+/** 没有封面/头像时的占位（attrs 由调用方拼好，例如 data-avatar-img） */
+const avatarEmpty = (attrs = '', ico = 'cards') => `<div class="nl-avatar nl-avatar-empty" ${attrs}>${icon(ico, { size: 24 })}</div>`;
 
 function lintSummary(lint = []) {
     const err = lint.filter((i) => i.level === 'error').length;
     const warn = lint.filter((i) => i.level === 'warn').length;
-    if (!err && !warn) return '<span class="nl-ok">✔ 审稿通过</span>';
-    return `<span class="${err ? 'nl-err' : 'nl-warn'}">${err ? `❗${err} 处问题 ` : ''}${warn ? `⚠️${warn} 处提醒` : ''}</span>`;
+    if (!err && !warn) return `<span class="nl-ok">${icon('check', { size: 14 })} 审稿通过</span>`;
+    return [
+        err ? `<span class="nl-err">${icon('alert', { size: 14 })} ${err} 处问题</span>` : '',
+        warn ? `<span class="nl-warn">${icon('alert', { size: 14 })} ${warn} 处提醒</span>` : '',
+    ].filter(Boolean).join(' ');
 }
 
 export const cardsTab = {
@@ -46,7 +52,7 @@ export const cardsTab = {
             const opts = [{ value: '', label: '全书结束时（使用全部资料）' }];
             for (const c of app.project.chunks) {
                 const v = vols.find((x) => x.startChunk === c.index);
-                if (v) opts.push({ value: String(v.endChunk), label: `📦 ${v.name} 卷末（第 ${v.endChunk + 1} 段）` });
+                if (v) opts.push({ value: String(v.endChunk), label: `${v.name} 卷末（第 ${v.endChunk + 1} 段）` });
                 opts.push({ value: String(c.index), label: `　第 ${c.index + 1} 段结束时：${truncate(c.title, 30)}` });
             }
             return opts;
@@ -58,12 +64,14 @@ export const cardsTab = {
             if (!form.charName && chars.length) form.charName = chars[0].value;
             el.innerHTML = `
             <section class="nl-card">
-                <h3>生成角色卡</h3>
+                <div class="nl-card-head">
+                    <div><h3>新建角色卡</h3></div>
+                </div>
                 <div class="nl-row nl-wrap">
-                    ${form.avatarDataUrl ? `<img class="nl-avatar" src="${form.avatarDataUrl}" data-form-avatar-img>` : '<div class="nl-avatar nl-avatar-empty" data-form-avatar-img>🎴</div>'}
+                    ${form.avatarDataUrl ? `<img class="nl-avatar" src="${form.avatarDataUrl}" data-form-avatar-img>` : avatarEmpty('data-form-avatar-img')}
                     <div class="nl-field nl-grow">
                         <label>封面（可选，先选好再生成；也可以生成后在编辑里改）</label>
-                        <div class="nl-row"><button class="nl-btn nl-sm" data-act="form-avatar">上传封面</button>${form.avatarDataUrl ? '<button class="nl-btn nl-sm" data-act="form-avatar-clear">清除封面</button>' : ''}</div>
+                        <div class="nl-row"><button class="nl-btn nl-sm" data-act="form-avatar">${icon('upload', { size: 14 })}上传封面</button>${form.avatarDataUrl ? '<button class="nl-btn nl-sm" data-act="form-avatar-clear">清除封面</button>' : ''}</div>
                     </div>
                 </div>
                 <div class="nl-grid2">
@@ -99,11 +107,13 @@ export const cardsTab = {
             </section>
 
             <section class="nl-card">
-                <h3>已生成的角色卡（${p.cards.length}）</h3>
+                <div class="nl-card-head">
+                    <div><h3>已生成的角色卡（${p.cards.length}）</h3></div>
+                </div>
                 <div class="nl-cards">
                     ${p.cards.slice().reverse().map((c) => `
                     <div class="nl-cardbox" data-id="${esc(c.id)}">
-                        ${c.avatarDataUrl ? `<img class="nl-avatar" src="${c.avatarDataUrl}" alt="">` : '<div class="nl-avatar nl-avatar-empty">🎴</div>'}
+                        ${c.avatarDataUrl ? `<img class="nl-avatar" src="${c.avatarDataUrl}" alt="">` : avatarEmpty()}
                         <div class="nl-grow">
                             <div><b>${esc(c.data.name)}</b> <span class="nl-tag">${c.kind === 'world' ? '世界卡' : '角色卡'}</span> ${c.stAvatar ? (characterExistsInST(c.stAvatar) ? '<span class="nl-tag nl-ok">已在酒馆</span>' : '<span class="nl-tag">酒馆中已删除</span>') : ''}</div>
                             <div class="nl-muted nl-small">${esc(timepointLabel(p, Number.isFinite(c.timepoint) ? c.timepoint : Infinity))} · ${fmtTime(c.updatedAt)} · 约 ${estimateTokens(c.data.description + c.data.first_mes)} tokens</div>
@@ -112,22 +122,26 @@ export const cardsTab = {
                         </div>
                         <div class="nl-card-actions">
                             <button class="nl-btn nl-sm" data-act="edit" data-id="${esc(c.id)}">编辑</button>
-                            <button class="nl-btn nl-sm" data-act="testchat" data-id="${esc(c.id)}" title="写入酒馆前先在这里聊两句，看看开场白和回复怎么样">💬 试聊</button>
-                            <button class="nl-btn nl-sm" data-act="deduce" data-id="${esc(c.id)}" title="根据这张卡当前的设定和相关世界书，推演剧情走向">🔮 剧情推演</button>
-                            <button class="nl-btn nl-sm nl-primary" data-act="publish" data-id="${esc(c.id)}">${c.stAvatar ? '更新到酒馆' : '写入酒馆'}</button>
+                            <button class="nl-btn nl-sm" data-act="testchat" data-id="${esc(c.id)}" title="写入酒馆前先在这里聊两句，看看开场白和回复怎么样">${icon('message', { size: 14 })}试聊</button>
+                            <button class="nl-btn nl-sm" data-act="deduce" data-id="${esc(c.id)}" title="根据这张卡当前的设定和相关世界书，推演剧情走向">${icon('crystal', { size: 14 })}剧情推演</button>
+                            <button class="nl-btn nl-sm" data-act="publish" data-id="${esc(c.id)}">${icon('upload', { size: 14 })}${c.stAvatar ? '更新到酒馆' : '写入酒馆'}</button>
                             ${c.stAvatar && characterExistsInST(c.stAvatar) ? `<button class="nl-btn nl-sm" data-act="open-st" data-id="${esc(c.id)}">在酒馆打开</button>` : ''}
                             <button class="nl-btn nl-sm" data-act="json" data-id="${esc(c.id)}">导出 JSON</button>
                             <button class="nl-btn nl-sm" data-act="png" data-id="${esc(c.id)}">导出 PNG</button>
                             ${rerollBtn('regen', `data-id="${esc(c.id)}"`, { label: '重新生成', title: '整张卡重新生成' })}
                             <button class="nl-btn nl-sm nl-danger" data-act="delete" data-id="${esc(c.id)}">删除</button>
                         </div>
-                    </div>`).join('') || '<div class="nl-muted">还没有角色卡</div>'}
+                    </div>`).join('') || emptyState('在上面选好角色和故事时间点后点「生成」，生成的角色卡会出现在这里，可以审稿、试聊后写入酒馆。', '', { title: '还没有角色卡', ico: 'cards' })}
                 </div>
             </section>
 
             <section class="nl-card">
-                <h3>群聊场景卡</h3>
-                <div class="nl-muted nl-small">挑几个已经确立关系的角色，AI 设计一个可以把他们放进同一个酒馆群聊的开场情境；写入酒馆时会把这些角色已发布的卡拉进一个新建的群聊（每个角色需要先在上面写入酒馆）。</div>
+                <div class="nl-card-head">
+                    <div>
+                        <h3>群聊场景卡</h3>
+                        <div class="nl-card-desc">挑几个已经确立关系的角色，AI 设计一个可以把他们放进同一个酒馆群聊的开场情境；写入酒馆时会把这些角色已发布的卡拉进一个新建的群聊（每个角色需要先在上面写入酒馆）。</div>
+                    </div>
+                </div>
                 <div class="nl-grid2">
                     <div class="nl-field"><label>参与角色（至少两个）</label>
                         <div class="nl-row nl-wrap nl-checks">
@@ -141,7 +155,7 @@ export const cardsTab = {
                 <div class="nl-cards" style="margin-top:8px">
                     ${p.groupCards.map((g) => `
                     <div class="nl-cardbox" data-gid="${esc(g.id)}">
-                        <div class="nl-avatar nl-avatar-empty">👥</div>
+                        ${avatarEmpty('', 'users')}
                         <div class="nl-grow">
                             <div><b>${esc(g.name)}</b> ${g.stGroupId ? '<span class="nl-tag nl-ok">已在酒馆</span>' : ''}</div>
                             <div class="nl-muted nl-small">${esc(g.members.join('、'))} · ${fmtTime(g.updatedAt)}</div>
@@ -149,11 +163,11 @@ export const cardsTab = {
                         </div>
                         <div class="nl-card-actions">
                             <button class="nl-btn nl-sm" data-act="group-edit" data-gid="${esc(g.id)}">查看/编辑</button>
-                            <button class="nl-btn nl-sm nl-primary" data-act="group-publish" data-gid="${esc(g.id)}">${g.stGroupId ? '更新群聊' : '创建群聊'}</button>
-                            <button class="nl-btn nl-sm" data-act="group-md" data-gid="${esc(g.id)}">复制 Markdown</button>
+                            <button class="nl-btn nl-sm" data-act="group-publish" data-gid="${esc(g.id)}">${icon('upload', { size: 14 })}${g.stGroupId ? '更新群聊' : '创建群聊'}</button>
+                            <button class="nl-btn nl-sm" data-act="group-md" data-gid="${esc(g.id)}">${icon('copy', { size: 14 })}复制 Markdown</button>
                             <button class="nl-btn nl-sm nl-danger" data-act="group-delete" data-gid="${esc(g.id)}">删除</button>
                         </div>
-                    </div>`).join('') || '<div class="nl-muted">还没有群聊场景卡</div>'}
+                    </div>`).join('') || emptyState('勾选至少两个角色后点「生成群聊场景」，生成的群聊场景卡会出现在这里。', '', { title: '还没有群聊场景卡', ico: 'users' })}
                 </div>
             </section>`;
             bindSettings(el, app.settings, () => app.saveSettings());
@@ -171,14 +185,14 @@ export const cardsTab = {
         const editCard = async (card) => {
             const d = card.data;
             const field = (k, label, rows = 4, val = d[k]) => `<div class="nl-field"><label>${label} <span class="nl-muted nl-small" data-tok="${k}">${estimateTokens(val)} tokens</span> ${rerollBtn('reroll-field', `data-field="${k}"`, { title: '只重新生成这一个字段，其余部分不变' })}</label><textarea class="nl-input nl-textarea" rows="${rows}" data-card="${k}">${esc(val)}</textarea></div>`;
-            const lintHtml = (lint) => (lint?.length ? lint.map((i) => `<div class="nl-lint nl-lint-${i.level}"><b>[${esc(i.fieldLabel)}] ${esc(i.type)}</b>：${esc(i.context)} <span class="nl-muted">→ ${esc(i.tip)}</span></div>`).join('') : '<div class="nl-ok">✔ 没有发现问题</div>');
+            const lintHtml = (lint) => (lint?.length ? lint.map((i) => `<div class="nl-lint nl-lint-${i.level}"><b>[${esc(i.fieldLabel)}] ${esc(i.type)}</b>：${esc(i.context)} <span class="nl-muted">→ ${esc(i.tip)}</span></div>`).join('') : `<div class="nl-ok">${icon('check', { size: 14 })} 没有发现问题</div>`);
             const { value, root } = await openDialog({
                 title: `编辑角色卡：${d.name}`,
                 wide: true,
                 body: `
                     <div class="nl-row nl-wrap">
-                        ${card.avatarDataUrl ? `<img class="nl-avatar" src="${card.avatarDataUrl}" data-avatar-img>` : '<div class="nl-avatar nl-avatar-empty" data-avatar-img>🎴</div>'}
-                        <button class="nl-btn nl-sm" data-card-act="avatar">上传头像</button>
+                        ${card.avatarDataUrl ? `<img class="nl-avatar" src="${card.avatarDataUrl}" data-avatar-img>` : avatarEmpty('data-avatar-img')}
+                        <button class="nl-btn nl-sm" data-card-act="avatar">${icon('upload', { size: 14 })}上传头像</button>
                         <button class="nl-btn nl-sm" data-card-act="avatar-clear">清除头像</button>
                         <div class="nl-field nl-grow"><label>名称</label><input class="nl-input" data-card="name" value="${esc(d.name)}"></div>
                         <div class="nl-field nl-grow"><label>绑定世界书名称</label><input class="nl-input" data-card-world value="${esc(card.worldName || defaultWorldName(app.project, app.settings, card.timepoint))}"></div>
@@ -235,7 +249,7 @@ export const cardsTab = {
                             img.outerHTML = `<img class="nl-avatar" src="${card.avatarDataUrl}" data-avatar-img>`;
                         } else if (act === 'avatar-clear') {
                             card.avatarDataUrl = '';
-                            r.querySelector('[data-avatar-img]').outerHTML = '<div class="nl-avatar nl-avatar-empty" data-avatar-img>🎴</div>';
+                            r.querySelector('[data-avatar-img]').outerHTML = avatarEmpty('data-avatar-img');
                         } else if (act === 'lint') {
                             const data = collect();
                             card.lint = lintCardFor(app.project, app.settings, data);
@@ -402,12 +416,12 @@ export const cardsTab = {
                         ${tpls.map((t) => `<tr data-tplid="${esc(t.id)}">
                             <td><input class="nl-input" data-tpl-label value="${esc(t.label)}"></td>
                             <td><input class="nl-input" data-tpl-hint value="${esc(t.hint)}"></td>
-                            <td><button class="nl-icon-btn" data-tpl-del title="删除">✕</button></td>
+                            <td><button class="nl-icon-btn nl-danger" data-tpl-del title="删除" aria-label="删除">${icon('trash')}</button></td>
                         </tr>`).join('') || '<tr><td colspan="3" class="nl-muted">还没有保存的模板</td></tr>'}
                         <tr>
                             <td><input class="nl-input" data-tpl-new-label placeholder="名称，例如「反目成仇」"></td>
                             <td><input class="nl-input" data-tpl-new-hint placeholder="方向提示，例如「两人因为一个误会彻底决裂」"></td>
-                            <td><button class="nl-btn nl-sm" data-tpl-add>+ 添加</button></td>
+                            <td><button class="nl-btn nl-sm" data-tpl-add>${icon('plus', { size: 14 })}添加</button></td>
                         </tr>
                     </tbody>
                 </table>`;
@@ -426,14 +440,15 @@ export const cardsTab = {
                         app.saveSettings();
                     });
                     r.addEventListener('click', async (e) => {
-                        if (e.target.matches('[data-tpl-del]')) {
+                        // 按钮里是 SVG 图标，点到图标时 e.target 是 svg/path，所以用 closest 找按钮
+                        if (e.target.closest('[data-tpl-del]')) {
                             const tr = e.target.closest('[data-tplid]');
                             const t = tpls.find((x) => x.id === tr.dataset.tplid);
                             if (!(await confirmDialog(`删除模板「${t?.label}」？`, { danger: true, okLabel: '删除' }))) return;
                             removeBranchTemplate(app.settings, tr.dataset.tplid);
                             app.saveSettings();
                             close('refresh');
-                        } else if (e.target.matches('[data-tpl-add]')) {
+                        } else if (e.target.closest('[data-tpl-add]')) {
                             const labelInput = r.querySelector('[data-tpl-new-label]');
                             const hintInput = r.querySelector('[data-tpl-new-hint]');
                             try {
@@ -456,25 +471,25 @@ export const cardsTab = {
             const hints = pp.branches.length ? pp.branches.map((b) => b.title) : new Array(DEFAULT_BRANCH_COUNT).fill('');
             const box = document.createElement('div');
             const slotRow = (hint, i) => `
-                <div class="nl-row nl-wrap" data-slot-idx="${i}" style="align-items:center">
+                <div class="nl-row nl-wrap" data-slot-idx="${i}">
                     <span class="nl-muted nl-small" style="width:1.6em">${i + 1}.</span>
                     <input class="nl-input nl-grow" data-slot-hint placeholder="不限方向，由 AI 自由发挥" value="${esc(hint)}">
-                    <button class="nl-icon-btn" data-act="pick-tpl" title="套用已保存的模板">📑</button>
-                    <button class="nl-icon-btn" data-act="save-tpl" title="把这条方向存成模板">💾</button>
-                    <button class="nl-icon-btn" data-act="del-slot" title="删除这一条">✕</button>
+                    <button class="nl-icon-btn" data-act="pick-tpl" title="套用已保存的模板" aria-label="套用已保存的模板">${icon('file')}</button>
+                    <button class="nl-icon-btn" data-act="save-tpl" title="把这条方向存成模板" aria-label="把这条方向存成模板">${icon('save')}</button>
+                    <button class="nl-icon-btn" data-act="del-slot" title="删除这一条" aria-label="删除这一条">${icon('close')}</button>
                 </div>`;
             const renderSlots = () => {
                 box.querySelector('[data-slots]').innerHTML = hints.map(slotRow).join('');
             };
             box.innerHTML = `
                 <div class="nl-muted nl-small">可以不干预，直接点下面「生成」；也可以给某一条单独写方向提示，或套用保存的模板——留空的条目不限方向，由 AI 自由发挥，但会和其他几条有明显区别。</div>
-                <div data-slots style="margin:8px 0"></div>
+                <div class="nl-list" data-slots style="margin-bottom:8px"></div>
                 <div class="nl-row">
-                    <button class="nl-btn nl-sm" data-act="add-slot">+ 加一条走向</button>
+                    <button class="nl-btn nl-sm" data-act="add-slot">${icon('plus', { size: 14 })}加一条走向</button>
                     <span class="nl-spacer"></span>
-                    <button class="nl-btn nl-sm" data-act="manage-tpl">⚙️ 管理模板</button>
+                    <button class="nl-btn nl-sm" data-act="manage-tpl">${icon('settings', { size: 14 })}管理模板</button>
                 </div>
-                <div class="nl-field" style="margin-top:8px"><label>整体额外要求（可选，对每条走向都适用）</label><textarea class="nl-input nl-textarea" rows="3" data-instruction></textarea></div>`;
+                <div class="nl-field"><label>整体额外要求（可选，对每条走向都适用）</label><textarea class="nl-input nl-textarea" rows="3" data-instruction></textarea></div>`;
             renderSlots();
 
             box.addEventListener('input', (e) => {
@@ -541,6 +556,7 @@ export const cardsTab = {
         const deduceDialog = async (card) => {
             const pp = ensureProjection(card);
             const box = document.createElement('div');
+            box.className = 'nl-tab-body'; // 竖排并留出版块间距，两个版块不贴在一起
 
             const branchItem = (b) => `
                 <div class="nl-cardbox" data-bid="${esc(b.id)}">
@@ -552,8 +568,8 @@ export const cardsTab = {
                         <div class="nl-small">${esc(b.summary)}</div>
                     </div>
                     <div class="nl-card-actions">
-                        <button class="nl-icon-btn" data-act="edit-branch" data-bid="${esc(b.id)}" title="编辑">✏️</button>
-                        <button class="nl-icon-btn" data-act="del-branch" data-bid="${esc(b.id)}" title="删除">✕</button>
+                        <button class="nl-icon-btn" data-act="edit-branch" data-bid="${esc(b.id)}" title="编辑" aria-label="编辑">${icon('edit')}</button>
+                        <button class="nl-icon-btn nl-danger" data-act="del-branch" data-bid="${esc(b.id)}" title="删除" aria-label="删除">${icon('trash')}</button>
                     </div>
                 </div>`;
             const stageItem = (s, i) => `
@@ -563,34 +579,35 @@ export const cardsTab = {
                         <div class="nl-small nl-pre">${esc(s.content)}</div>
                     </div>
                     <div class="nl-card-actions">
-                        <button class="nl-icon-btn" data-act="edit-stage" data-sid="${esc(s.id)}" title="编辑">✏️</button>
-                        <button class="nl-icon-btn" data-act="del-stage" data-sid="${esc(s.id)}" title="删除">✕</button>
+                        <button class="nl-icon-btn" data-act="edit-stage" data-sid="${esc(s.id)}" title="编辑" aria-label="编辑">${icon('edit')}</button>
+                        <button class="nl-icon-btn nl-danger" data-act="del-stage" data-sid="${esc(s.id)}" title="删除" aria-label="删除">${icon('trash')}</button>
                     </div>
                 </div>`;
 
+            // 版块标题栏里按钮多：nl-wrap 让按钮在窄屏换行；标题用 flex-basis auto，否则 card-head 默认的 flex:1（basis 0）会把标题挤成一字一行
             const renderBody = () => {
                 box.innerHTML = `
                     <div class="nl-muted nl-small">基于这张卡<b>当前</b>的实际设定（不是原著后续大纲）和相关世界书，先给出几个并列的可能走向；勾选其中一个或几个后，再推演出具体的分阶段发展。不会自动写回卡片字段或项目大纲，只挂在这张卡自己身上，可以随时编辑、删除、导出。</div>
                     <section class="nl-card">
-                        <div class="nl-row nl-wrap">
-                            <h4>可能的走向</h4>
-                            <span class="nl-spacer"></span>
+                        <div class="nl-card-head nl-wrap">
+                            <div style="flex: 1 1 auto"><h3>可能的走向</h3></div>
                             ${rerollBtn('gen-branches', '', { label: pp.branches.length ? '重新生成走向' : '生成走向' })}
-                            <button class="nl-btn nl-sm" data-act="add-branch">+ 手动添加</button>
-                            <button class="nl-btn nl-sm" data-act="manage-tpl" title="管理走向模板：保存的大方向点子，跨项目共用">📑 走向模板</button>
+                            <button class="nl-btn nl-sm" data-act="add-branch">${icon('plus', { size: 14 })}手动添加</button>
+                            <button class="nl-btn nl-sm" data-act="manage-tpl" title="管理走向模板：保存的大方向点子，跨项目共用">${icon('file', { size: 14 })}走向模板</button>
                         </div>
-                        <div class="nl-cards">${pp.branches.length ? pp.branches.map(branchItem).join('') : '<div class="nl-muted nl-small">还没有走向，点上面生成，或者手动添加。</div>'}</div>
+                        <div class="nl-cards">${pp.branches.length ? pp.branches.map(branchItem).join('') : emptyState('还没有走向，点上面生成，或者手动添加。', '', { ico: 'crystal' })}</div>
                     </section>
                     <section class="nl-card">
-                        <div class="nl-row nl-wrap">
-                            <h4>分阶段推演</h4>
-                            <span class="nl-spacer"></span>
+                        <div class="nl-card-head nl-wrap">
+                            <div style="flex: 1 1 auto">
+                                <h3>分阶段推演</h3>
+                                ${pp.selectedBranchIds.length ? '' : '<div class="nl-card-desc">先在上面勾选至少一个走向，再来推演具体的分阶段发展。</div>'}
+                            </div>
                             ${rerollBtn('gen-stages', '', { label: pp.stages.length ? '重新推演' : '开始推演' })}
-                            <button class="nl-btn nl-sm" data-act="add-stage">+ 手动添加</button>
-                            <button class="nl-btn nl-sm" data-act="export-md" ${pp.branches.length || pp.stages.length ? '' : 'disabled'}>复制 Markdown</button>
+                            <button class="nl-btn nl-sm" data-act="add-stage">${icon('plus', { size: 14 })}手动添加</button>
+                            <button class="nl-btn nl-sm" data-act="export-md" ${pp.branches.length || pp.stages.length ? '' : 'disabled'}>${icon('copy', { size: 14 })}复制 Markdown</button>
                         </div>
-                        ${pp.selectedBranchIds.length ? '' : '<div class="nl-muted nl-small">先在上面勾选至少一个走向，再来推演具体的分阶段发展。</div>'}
-                        <div class="nl-cards">${pp.stages.length ? pp.stages.map(stageItem).join('') : '<div class="nl-muted nl-small">还没有分阶段推演。</div>'}</div>
+                        <div class="nl-cards">${pp.stages.length ? pp.stages.map(stageItem).join('') : emptyState('勾选上面的走向后点「开始推演」，分阶段发展会出现在这里；也可以手动添加。', '', { title: '还没有分阶段推演', ico: 'plan' })}</div>
                     </section>`;
             };
             renderBody();

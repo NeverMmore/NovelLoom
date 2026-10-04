@@ -123,7 +123,7 @@ try:
         scenes_n = ev(page, 'NovelLoom.app.project.plan.chapters[0].scenes.length')
         print('scenes on chapter 1:', scenes_n)
         assert scenes_n >= 1
-        assert '🎬' in page.locator('.nl-plan').first.inner_text()
+        assert page.locator('.nl-plan').first.locator('[title="场次"]').count() == 1
         shot(page, '05-plan-scenes')
 
         # ---------------- 多视角管理 ----------------

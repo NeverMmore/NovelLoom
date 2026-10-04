@@ -10,13 +10,13 @@ import { bannedListFor, checkBanned, fixBannedInText, getStyleProfile, replaceBa
 import { rewriteSelection } from '../rewrite.js';
 import { checkContinuity, issueTypeLabel } from '../continuity.js';
 import { createSnapshot } from '../store.js';
-import { bindSettings, busy, chainPreviewHtml, confirmDialog, esc, fmtTime, openDialog, promptDialog, qs, rerollBtn } from './common.js';
+import { bindSettings, busy, chainPreviewHtml, confirmDialog, emptyState, esc, fmtTime, icon, openDialog, promptDialog, qs, rerollBtn } from './common.js';
 
 /** 连续性检查结果区域的 HTML */
 function continuityBoxHtml(check) {
     if (!check) return '<div class="nl-muted nl-small" data-continuity-empty>还没有做过连续性检查。</div>';
-    if (!check.issues.length) return `<div class="nl-small nl-ok">✅ 未发现明显矛盾（${fmtTime(check.checkedAt)}）</div>`;
-    return `<div class="nl-small nl-warn">⚠️ ${check.issues.length} 处疑似矛盾（${fmtTime(check.checkedAt)}）</div>${check.issues.map((i) => `
+    if (!check.issues.length) return `<div class="nl-small nl-ok">${icon('check', { size: 14 })} 未发现明显矛盾（${fmtTime(check.checkedAt)}）</div>`;
+    return `<div class="nl-small nl-warn">${icon('alert', { size: 14 })} ${check.issues.length} 处疑似矛盾（${fmtTime(check.checkedAt)}）</div>${check.issues.map((i) => `
         <div class="nl-lint nl-lint-error">
             <b>${esc(issueTypeLabel(i.type))}</b>${i.severity === 'high' ? ' <span class="nl-tag nl-warn">高</span>' : ''}：${esc(i.problem)}
             ${i.quote ? `<div class="nl-muted nl-small">原文：「${esc(truncate(i.quote, 100))}」</div>` : ''}
@@ -25,7 +25,7 @@ function continuityBoxHtml(check) {
 }
 
 export const continueTab = {
-    mount(el, { switchTab }) {
+    mount(el, { switchTab, setActions }) {
         let apiProgress = null;
         let chatProgress = null;
 
@@ -61,8 +61,12 @@ export const continueTab = {
             el.innerHTML = `
             ${p ? `
             <section class="nl-card">
-                <h3>AI 续写（基于资料库）</h3>
-                <div class="nl-muted nl-small">用提取出的大纲、角色档案、世界书和前文结尾，逐章续写《${esc(p.bookName)}》。开启“回灌”后，每写完一章会立刻提取资料并合并进角色与世界书，后续章节和角色卡都能用上。</div>
+                <div class="nl-card-head">
+                    <div>
+                        <h3>AI 续写（基于资料库）</h3>
+                        <div class="nl-card-desc">用提取出的大纲、角色档案、世界书和前文结尾，逐章续写《${esc(p.bookName)}》。开启“回灌”后，每写完一章会立刻提取资料并合并进角色与世界书，后续章节和角色卡都能用上。</div>
+                    </div>
+                </div>
                 <div class="nl-grid3">
                     <div class="nl-field"><label>续写章数</label><input class="nl-input" type="number" min="1" max="200" data-setting="continuation.chapters"></div>
                     <div class="nl-field"><label>每章字数</label><input class="nl-input" type="number" min="300" step="500" data-setting="continuation.wordsPerChapter"></div>
@@ -76,13 +80,10 @@ export const continueTab = {
                     <label><input type="checkbox" data-setting="continueApi.enabled"> 续写使用单独 API（在设置页配置）</label>
                 </div>
                 <div class="nl-row nl-wrap">
-                    <button class="nl-btn nl-primary" data-act="api-start">开始续写</button>
-                    <button class="nl-btn" data-act="api-pause">暂停</button>
-                    <button class="nl-btn nl-danger" data-act="api-stop">停止</button>
-                    <button class="nl-btn" data-act="api-preview">预览提示词</button>
-                    <span class="nl-spacer"></span>
-                    <button class="nl-btn nl-sm" data-act="export-gen">导出续写 TXT</button>
-                    <button class="nl-btn nl-sm" data-act="export-all">导出原文+续写 TXT</button>
+                    <button class="nl-btn nl-primary" data-act="api-start">${icon('play')}开始续写</button>
+                    <button class="nl-btn" data-act="api-pause">${icon('pause')}暂停</button>
+                    <button class="nl-btn nl-danger" data-act="api-stop">${icon('stop')}停止</button>
+                    <button class="nl-btn" data-act="api-preview">${icon('eye')}预览提示词</button>
                 </div>
                 <div class="nl-progress"><div class="nl-progress-bar" data-bar="api" style="width:0%"></div><span class="nl-progress-text" data-text="api"></span></div>
                 <div class="nl-muted nl-small">原文共 ${countSourceChapters(p)} 章 · 已续写 ${p.continuation.chapters.length} 章 · ${nextPlanText(p)}</div>
@@ -94,8 +95,8 @@ export const continueTab = {
                         return `
                     <div class="nl-list-item">
                         <div class="nl-grow" data-act="view-gen" data-id="${esc(c.id)}"><b>${esc(c.title)}</b><div class="nl-muted nl-small">${formatNumber(c.content.length)} 字 · ${c.chunkId ? '已回灌' : '未回灌'}${c.direction ? ` · 方向：${esc(truncate(c.direction, 30))}` : ''}</div>
-                            ${hits.length ? `<div class="nl-small nl-warn" data-ban-hits>🚫 ${hits.length} 处禁用词：${esc(words.slice(0, 6).join('、'))}${words.length > 6 ? '…' : ''}</div>` : ''}
-                            ${c.continuityCheck ? (c.continuityCheck.issues.length ? `<div class="nl-small nl-warn">🔍 ${c.continuityCheck.issues.length} 处疑似连续性矛盾</div>` : '<div class="nl-small nl-ok">🔍 连续性核对通过</div>') : ''}</div>
+                            ${hits.length ? `<div class="nl-small nl-warn" data-ban-hits>${icon('alert', { size: 14 })} ${hits.length} 处禁用词：${esc(words.slice(0, 6).join('、'))}${words.length > 6 ? '…' : ''}</div>` : ''}
+                            ${c.continuityCheck ? (c.continuityCheck.issues.length ? `<div class="nl-small nl-warn">${icon('alert', { size: 14 })} ${c.continuityCheck.issues.length} 处疑似连续性矛盾</div>` : `<div class="nl-small nl-ok">${icon('check', { size: 14 })} 连续性核对通过</div>`) : ''}</div>
                         ${hits.length ? `<button class="nl-btn nl-sm" data-act="ban-replace" data-id="${esc(c.id)}" title="按“词=>建议”替换">按建议替换</button><button class="nl-btn nl-sm" data-act="ban-fix" data-id="${esc(c.id)}">AI 修正</button>` : ''}
                         <button class="nl-btn nl-sm" data-act="view-gen" data-id="${esc(c.id)}">查看/编辑</button>
                         ${rerollBtn('reroll-chapter', `data-id="${esc(c.id)}"`, { label: '重新生成', title: '整章重新生成（沿用原编号/大纲/方向）' })}
@@ -103,20 +104,24 @@ export const continueTab = {
                     </div>`;
                     }).join('')}
                 </div>
-            </section>` : `<section class="nl-card"><div class="nl-muted">AI 续写需要先在「项目」页导入小说。下方的聊天挂机续写可以直接使用。</div></section>`}
+            </section>` : `<section class="nl-card">${emptyState('AI 续写需要先在「项目」页导入小说。下方的聊天挂机续写可以直接使用。', '<button class="nl-btn" data-goto="project">去项目页</button>', { title: '还没有打开项目', ico: 'continue' })}</section>`}
 
             <section class="nl-card">
-                <h3>聊天挂机续写</h3>
-                <div class="nl-muted nl-small">在当前打开的酒馆聊天里自动发送提示词、等待回复、失败重试，支持断点续传（兼容 novel-auto-generator 的用法）。适合已经有角色卡/预设的续写方式。</div>
+                <div class="nl-card-head">
+                    <div>
+                        <h3>聊天挂机续写</h3>
+                        <div class="nl-card-desc">在当前打开的酒馆聊天里自动发送提示词、等待回复、失败重试，支持断点续传（兼容 novel-auto-generator 的用法）。适合已经有角色卡/预设的续写方式。</div>
+                    </div>
+                </div>
                 <div class="nl-grid3">
                     <div class="nl-field"><label>目标章数</label><input class="nl-input" type="number" min="1" data-setting="chatgen.totalChapters"></div>
                     <div class="nl-field"><label>当前进度</label><div class="nl-row"><b data-cg-progress>${cg.currentChapter} / ${cg.totalChapters}</b></div></div>
                     <div class="nl-field"><label>发送的提示词</label><input class="nl-input" data-setting="chatgen.prompt"></div>
                 </div>
                 <div class="nl-row nl-wrap">
-                    <button class="nl-btn nl-primary" data-act="cg-start">${cg.currentChapter > 0 ? '继续' : '开始'}</button>
-                    <button class="nl-btn" data-act="cg-pause">暂停</button>
-                    <button class="nl-btn nl-danger" data-act="cg-stop">停止</button>
+                    <button class="nl-btn nl-primary" data-act="cg-start">${icon('play')}${cg.currentChapter > 0 ? '继续' : '开始'}</button>
+                    <button class="nl-btn" data-act="cg-pause">${icon('pause')}暂停</button>
+                    <button class="nl-btn nl-danger" data-act="cg-stop">${icon('stop')}停止</button>
                     <button class="nl-btn" data-act="cg-reset">重置进度</button>
                 </div>
                 <div class="nl-progress"><div class="nl-progress-bar" data-bar="chat" style="width:0%"></div><span class="nl-progress-text" data-text="chat"></span></div>
@@ -149,15 +154,21 @@ export const continueTab = {
                         <div class="nl-field"><label>移除标签（黑名单）</label><input class="nl-input" data-setting="chatgen.excludeTags" placeholder="thinking think"></div>
                     </div>
                     <div class="nl-row nl-wrap">
-                        <button class="nl-btn" data-act="chat-preview">预览</button>
-                        <button class="nl-btn" data-act="chat-txt">导出 TXT</button>
-                        <button class="nl-btn" data-act="chat-json">导出 JSON</button>
+                        <button class="nl-btn" data-act="chat-preview">${icon('eye')}预览</button>
+                        <button class="nl-btn" data-act="chat-txt">${icon('download')}导出 TXT</button>
+                        <button class="nl-btn" data-act="chat-json">${icon('download')}导出 JSON</button>
                         ${p ? '<button class="nl-btn" data-act="chat-to-project">把聊天内容加入当前项目</button>' : ''}
                     </div>
                 </details>
             </section>`;
             bindSettings(el, app.settings, () => app.saveSettings());
             updateBars();
+            // 页面级操作（导出整本续写）放进标题栏；切走后迟到的渲染不能改写别的页面的标题栏
+            if (el.isConnected) {
+                setActions?.(p ? `
+                    <button class="nl-btn" data-act="export-gen">${icon('download')}导出续写 TXT</button>
+                    <button class="nl-btn" data-act="export-all">${icon('download')}导出原文+续写 TXT</button>` : '', onClick);
+            }
         };
 
         const updateBars = () => {
@@ -192,6 +203,8 @@ export const continueTab = {
 
 
         const onClick = async (e) => {
+            const go = e.target.closest('[data-goto]');
+            if (go) return switchTab(go.dataset.goto);
             const btn = e.target.closest('[data-act]');
             if (!btn) return;
             const p = app.project;
@@ -226,15 +239,15 @@ export const continueTab = {
                         wide: true,
                         body: `${(() => {
                             const hits = checkBanned(ch.content, p, app.settings, 'continue', povChar);
-                            return hits.length ? `<details class="nl-lint-box"><summary class="nl-warn">🚫 ${hits.length} 处禁用词</summary>${hits.map((h) => `<div class="nl-lint nl-lint-error"><b>${esc(h.match)}</b>：${esc(h.context)} <span class="nl-muted">→ ${esc(h.tip)}</span></div>`).join('')}</details>` : '';
+                            return hits.length ? `<details class="nl-lint-box"><summary class="nl-warn">${icon('alert', { size: 14 })} ${hits.length} 处禁用词</summary>${hits.map((h) => `<div class="nl-lint nl-lint-error"><b>${esc(h.match)}</b>：${esc(h.context)} <span class="nl-muted">→ ${esc(h.tip)}</span></div>`).join('')}</details>` : '';
                         })()}<textarea class="nl-input nl-textarea nl-tall">${esc(ch.content)}</textarea>
                         <div class="nl-row nl-wrap" style="margin-top:6px">
-                            <button class="nl-btn nl-sm" data-act="rewrite-sel">✏️ AI 重写选中部分</button>
+                            <button class="nl-btn nl-sm" data-act="rewrite-sel">${icon('edit', { size: 14 })}AI 重写选中部分</button>
                             <span class="nl-muted nl-small">先在上面的正文里选中要重写的一段，再点这个按钮</span>
                         </div>
                         <div class="nl-muted nl-small">修改后如已回灌，请到「分段」页对对应分段点“重提”。</div>
                         <div class="nl-row nl-wrap" style="margin-top:10px">
-                            <button class="nl-btn nl-sm" data-act="check-continuity">🔍 连续性检查</button>
+                            <button class="nl-btn nl-sm" data-act="check-continuity">${icon('search', { size: 14 })}连续性检查</button>
                             <span class="nl-muted nl-small">核对已保存的正文有没有和已建立的角色档案、世界设定打架；如果改了上面的文本，先点“保存”再检查</span>
                         </div>
                         <div data-continuity-box style="margin-top:6px">${continuityBoxHtml(ch.continuityCheck)}</div>`,

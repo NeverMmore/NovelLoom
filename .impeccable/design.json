@@ -1,0 +1,626 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-04T11:43:34Z",
+  "title": "Design System: NovelLoom 小说织卡",
+  "extensions": {
+    "colorMeta": {
+      "ink": {
+        "role": "neutral",
+        "displayName": "Theme Ink",
+        "canonical": "var(--SmartThemeBodyColor, #dcdcd2)",
+        "defaultThemeValue": "#dcdcd2",
+        "tonalRamp": [
+          "#0c0c06",
+          "#27271f",
+          "#46463d",
+          "#67675e",
+          "#8a8a81",
+          "#afafa5",
+          "#d2d2c8",
+          "#efefe5"
+        ]
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Theme Accent",
+        "canonical": "var(--SmartThemeQuoteColor, #e18a24)",
+        "defaultThemeValue": "#e18a24",
+        "tonalRamp": [
+          "#190500",
+          "#3b1e00",
+          "#653800",
+          "#935500",
+          "#c37302",
+          "#ef9736",
+          "#fdc48f",
+          "#ffead9"
+        ]
+      },
+      "tint": {
+        "role": "neutral",
+        "displayName": "Theme Glass",
+        "canonical": "var(--SmartThemeBlurTintColor, rgba(23, 23, 28, 0.96))",
+        "defaultThemeValue": "rgba(23, 23, 28, 0.96)",
+        "tonalRamp": [
+          "#0b0b0f",
+          "#26262b",
+          "#44444a",
+          "#65656c",
+          "#88888f",
+          "#adadb4",
+          "#d0d0d7",
+          "#eeeef5"
+        ]
+      },
+      "text-2": {
+        "role": "neutral",
+        "displayName": "Quiet Ink",
+        "canonical": "color-mix(in srgb, var(--nl-ink) 72%, transparent)",
+        "defaultThemeValue": "#a5a59f (over default glass)",
+        "tonalRamp": [
+          "#0c0c06",
+          "#27271f",
+          "#46463d",
+          "#67675e",
+          "#8a8a81",
+          "#afafa5",
+          "#d2d2c8",
+          "#efefe5"
+        ]
+      },
+      "text-3": {
+        "role": "neutral",
+        "displayName": "Faint Ink",
+        "canonical": "color-mix(in srgb, var(--nl-ink) 58%, transparent)",
+        "defaultThemeValue": "#898986 (over default glass)",
+        "tonalRamp": [
+          "#0c0c06",
+          "#27271f",
+          "#46463d",
+          "#67675e",
+          "#8a8a81",
+          "#afafa5",
+          "#d2d2c8",
+          "#efefe5"
+        ]
+      },
+      "surface-1": {
+        "role": "neutral",
+        "displayName": "First Veil",
+        "canonical": "color-mix(in srgb, var(--nl-ink) 3%, transparent)",
+        "defaultThemeValue": "#1d1d21 (over default glass)",
+        "tonalRamp": [
+          "#0c0c06",
+          "#27271f",
+          "#46463d",
+          "#67675e",
+          "#8a8a81",
+          "#afafa5",
+          "#d2d2c8",
+          "#efefe5"
+        ]
+      },
+      "surface-2": {
+        "role": "neutral",
+        "displayName": "Second Veil",
+        "canonical": "color-mix(in srgb, var(--nl-ink) 6%, transparent)",
+        "defaultThemeValue": "#232327 (over default glass)",
+        "tonalRamp": [
+          "#0c0c06",
+          "#27271f",
+          "#46463d",
+          "#67675e",
+          "#8a8a81",
+          "#afafa5",
+          "#d2d2c8",
+          "#efefe5"
+        ]
+      },
+      "field": {
+        "role": "neutral",
+        "displayName": "Field Veil",
+        "canonical": "color-mix(in srgb, var(--nl-ink) 4%, transparent)",
+        "defaultThemeValue": "#1f1f23 (over default glass)",
+        "tonalRamp": [
+          "#0c0c06",
+          "#27271f",
+          "#46463d",
+          "#67675e",
+          "#8a8a81",
+          "#afafa5",
+          "#d2d2c8",
+          "#efefe5"
+        ]
+      },
+      "hover": {
+        "role": "neutral",
+        "displayName": "Hover Veil",
+        "canonical": "color-mix(in srgb, var(--nl-ink) 7%, transparent)",
+        "defaultThemeValue": "#252529 (over default glass)",
+        "tonalRamp": [
+          "#0c0c06",
+          "#27271f",
+          "#46463d",
+          "#67675e",
+          "#8a8a81",
+          "#afafa5",
+          "#d2d2c8",
+          "#efefe5"
+        ]
+      },
+      "pressed": {
+        "role": "neutral",
+        "displayName": "Pressed Veil",
+        "canonical": "color-mix(in srgb, var(--nl-ink) 11%, transparent)",
+        "defaultThemeValue": "#2d2d30 (over default glass)",
+        "tonalRamp": [
+          "#0c0c06",
+          "#27271f",
+          "#46463d",
+          "#67675e",
+          "#8a8a81",
+          "#afafa5",
+          "#d2d2c8",
+          "#efefe5"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "color-mix(in srgb, var(--nl-ink) 11%, transparent)",
+        "defaultThemeValue": "#2d2d30 (over default glass)",
+        "tonalRamp": [
+          "#0c0c06",
+          "#27271f",
+          "#46463d",
+          "#67675e",
+          "#8a8a81",
+          "#afafa5",
+          "#d2d2c8",
+          "#efefe5"
+        ]
+      },
+      "line-strong": {
+        "role": "neutral",
+        "displayName": "Strong Hairline",
+        "canonical": "color-mix(in srgb, var(--nl-ink) 20%, transparent)",
+        "defaultThemeValue": "#3e3e40 (over default glass)",
+        "tonalRamp": [
+          "#0c0c06",
+          "#27271f",
+          "#46463d",
+          "#67675e",
+          "#8a8a81",
+          "#afafa5",
+          "#d2d2c8",
+          "#efefe5"
+        ]
+      },
+      "accent-soft": {
+        "role": "primary",
+        "displayName": "Accent Wash",
+        "canonical": "color-mix(in srgb, var(--nl-accent) 15%, transparent)",
+        "defaultThemeValue": "#35281d (over default glass)",
+        "tonalRamp": [
+          "#190500",
+          "#3b1e00",
+          "#653800",
+          "#935500",
+          "#c37302",
+          "#ef9736",
+          "#fdc48f",
+          "#ffead9"
+        ]
+      },
+      "accent-line": {
+        "role": "primary",
+        "displayName": "Accent Edge",
+        "canonical": "color-mix(in srgb, var(--nl-accent) 45%, transparent)",
+        "defaultThemeValue": "#724b20 (over default glass)",
+        "tonalRamp": [
+          "#190500",
+          "#3b1e00",
+          "#653800",
+          "#935500",
+          "#c37302",
+          "#ef9736",
+          "#fdc48f",
+          "#ffead9"
+        ]
+      },
+      "accent-ink": {
+        "role": "primary",
+        "displayName": "Accent Ink",
+        "canonical": "color-mix(in oklab, var(--nl-accent) 78%, var(--nl-ink))",
+        "defaultThemeValue": "#e29d57",
+        "tonalRamp": [
+          "#190500",
+          "#3b1e00",
+          "#653900",
+          "#925603",
+          "#ba782f",
+          "#e29d57",
+          "#fec48d",
+          "#ffead8"
+        ]
+      },
+      "accent-solid": {
+        "role": "primary",
+        "displayName": "Accent Solid",
+        "canonical": "color-mix(in oklab, var(--nl-accent) 62%, #000)",
+        "defaultThemeValue": "#75460d",
+        "tonalRamp": [
+          "#190500",
+          "#3b1e00",
+          "#653900",
+          "#8a5a26",
+          "#b07d4a",
+          "#d7a26e",
+          "#fcc590",
+          "#ffead8"
+        ]
+      },
+      "on-accent": {
+        "role": "neutral",
+        "displayName": "White on Accent",
+        "canonical": "#ffffff",
+        "defaultThemeValue": "#ffffff",
+        "tonalRamp": [
+          "#151515",
+          "#2b2b2b",
+          "#454545",
+          "#626262",
+          "#808080",
+          "#a1a1a1",
+          "#c4c4c4",
+          "#ececec"
+        ]
+      },
+      "ok": {
+        "role": "status",
+        "displayName": "Leaf Green",
+        "canonical": "color-mix(in oklab, #3fb27f 82%, var(--nl-ink))",
+        "defaultThemeValue": "#64ba8e",
+        "tonalRamp": [
+          "#001005",
+          "#00301b",
+          "#045334",
+          "#197850",
+          "#469d72",
+          "#6dc396",
+          "#90e7b9",
+          "#c4ffdd"
+        ]
+      },
+      "warn": {
+        "role": "status",
+        "displayName": "Amber",
+        "canonical": "color-mix(in oklab, #d99a2b 82%, var(--nl-ink))",
+        "defaultThemeValue": "#daa754",
+        "tonalRamp": [
+          "#160800",
+          "#362200",
+          "#5d3e00",
+          "#875d03",
+          "#b07f27",
+          "#d7a451",
+          "#fcc775",
+          "#ffecd0"
+        ]
+      },
+      "err": {
+        "role": "status",
+        "displayName": "Brick Red",
+        "canonical": "color-mix(in oklab, #e5534b 82%, var(--nl-ink))",
+        "defaultThemeValue": "#e77064",
+        "tonalRamp": [
+          "#220000",
+          "#500002",
+          "#830d0e",
+          "#ab3a32",
+          "#d55f54",
+          "#ff8578",
+          "#febfb7",
+          "#ffe9e5"
+        ]
+      },
+      "info": {
+        "role": "status",
+        "displayName": "Cornflower Blue",
+        "canonical": "color-mix(in oklab, #4a8fe0 82%, var(--nl-ink))",
+        "defaultThemeValue": "#669edf",
+        "tonalRamp": [
+          "#000a25",
+          "#00264f",
+          "#09457f",
+          "#3168a5",
+          "#558ccc",
+          "#79b2f4",
+          "#b2d4fd",
+          "#e3f0ff"
+        ]
+      },
+      "scrim": {
+        "role": "neutral",
+        "displayName": "Scrim",
+        "canonical": "rgba(0, 0, 0, 0.42)",
+        "defaultThemeValue": "rgba(0, 0, 0, 0.42)",
+        "tonalRamp": [
+          "#151515",
+          "#2b2b2b",
+          "#454545",
+          "#626262",
+          "#808080",
+          "#a1a1a1",
+          "#c4c4c4",
+          "#ececec"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Page title in the header; one per page, single line, 16px on narrow screens."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Card, dialog and empty-state titles."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Base text: nav items, list and pipeline rows, inputs."
+      },
+      "prose": {
+        "displayName": "Prose",
+        "purpose": "Long source and generated text: textareas, outline chunks, style samples, quotes."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Field labels, button text, summaries, card and page descriptions (400)."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Nav group labels, counts, tags, log strip, small buttons, table headers."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Expanded log lines and inline code."
+      }
+    },
+    "shadows": [
+      {
+        "name": "pop",
+        "value": "0 16px 40px -12px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.18)",
+        "purpose": "Main window and every dialog; nothing inside the window."
+      },
+      {
+        "name": "floating-button",
+        "value": "0 6px 18px rgba(0, 0, 0, 0.35)",
+        "purpose": "Minimized-window button over the SillyTavern page."
+      },
+      {
+        "name": "field-focus-halo",
+        "value": "0 0 0 3px color-mix(in srgb, var(--nl-accent) 28%, transparent)",
+        "purpose": "Inputs, selects and textareas on focus, with an Accent Edge border."
+      },
+      {
+        "name": "busy-pulse",
+        "value": "0 0 0 8px color-mix(in srgb, var(--nl-accent) 30%, transparent)",
+        "purpose": "Keyframe peak of the floating-button pulse (1.6s ease-in-out loop) while a job runs minimized."
+      },
+      {
+        "name": "glass-blur",
+        "value": "backdrop-filter: blur(var(--SmartThemeBlurStrength, 10px))",
+        "purpose": "Window, dialogs and floating button blur what is behind them at the theme blur strength."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-standard",
+        "value": "cubic-bezier(0.2, 0.8, 0.2, 1)",
+        "purpose": "Every state transition and dialog entrance."
+      },
+      {
+        "name": "duration-state",
+        "value": "120ms",
+        "purpose": "Hover, press, border, color and opacity changes."
+      },
+      {
+        "name": "dialog-fade",
+        "value": "140ms, opacity 0 to 1",
+        "purpose": "Dialog overlay entrance."
+      },
+      {
+        "name": "dialog-pop",
+        "value": "160ms, from opacity 0, translateY(6px) scale(0.985)",
+        "purpose": "Dialog panel entrance."
+      },
+      {
+        "name": "spinner",
+        "value": "0.8s linear infinite rotation",
+        "purpose": "Running work: busy buttons, nav counts, log status, processing chunks."
+      },
+      {
+        "name": "busy-pulse",
+        "value": "1.6s ease-in-out infinite",
+        "purpose": "Floating button while a job runs minimized."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "transitions and animations 0.01ms; spinner 1.6s",
+        "purpose": "Under prefers-reduced-motion everything settles instantly except the spinner, which slows so running work still reads."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "narrow",
+        "value": "800px"
+      },
+      {
+        "name": "content-max",
+        "value": "1120px"
+      },
+      {
+        "name": "window-max",
+        "value": "1320px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "The everyday 32px action: Second Veil fill, Strong Hairline border, 13px 500 label, optional 16px line icon.",
+      "html": "<div class=\"ds-nl-btn-canvas\"><button class=\"ds-btn\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 21V9M7 14l5-5 5 5M5 3h14\"/></svg>选择 TXT 文件</button><button class=\"ds-btn\">粘贴文本</button><button class=\"ds-btn\" disabled>只重试失败段（0）</button></div>",
+      "css": ".ds-nl-btn-canvas { --nl-ink: var(--SmartThemeBodyColor, #dcdcd2); --nl-accent: var(--SmartThemeQuoteColor, #e18a24); --nl-tint: var(--SmartThemeBlurTintColor, rgba(23, 23, 28, 0.96)); background: var(--nl-tint); color: var(--nl-ink); font-family: var(--mainFontFamily, system-ui, -apple-system, \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif); font-size: 14px; line-height: 1.5; padding: 16px; border-radius: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; } .ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--nl-ink) 20%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--nl-ink) 6%, transparent); color: var(--nl-ink); font: inherit; font-size: 13px; font-weight: 500; line-height: 1; white-space: nowrap; cursor: pointer; transition: background-color 0.12s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.12s cubic-bezier(0.2, 0.8, 0.2, 1); } .ds-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--nl-ink) 11%, transparent); border-color: color-mix(in srgb, var(--nl-ink) 28%, transparent); } .ds-btn:active:not(:disabled) { background: color-mix(in srgb, var(--nl-ink) 15%, transparent); } .ds-btn:focus-visible { outline: 2px solid var(--nl-accent); outline-offset: 1px; } .ds-btn:disabled { opacity: 0.5; cursor: not-allowed; }"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one action per region that advances the pipeline: Accent Solid fill, white label, brightens on hover; sits last in a header or dialog foot.",
+      "html": "<div class=\"ds-nl-primary-canvas\"><button class=\"ds-btn-quiet\">预览提示词</button><button class=\"ds-btn-primary\">生成</button></div>",
+      "css": ".ds-nl-primary-canvas { --nl-ink: var(--SmartThemeBodyColor, #dcdcd2); --nl-accent: var(--SmartThemeQuoteColor, #e18a24); --nl-tint: var(--SmartThemeBlurTintColor, rgba(23, 23, 28, 0.96)); background: var(--nl-tint); color: var(--nl-ink); font-family: var(--mainFontFamily, system-ui, -apple-system, \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif); font-size: 14px; line-height: 1.5; padding: 16px; border-radius: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; } .ds-btn-quiet { display: inline-flex; align-items: center; height: 32px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--nl-ink) 20%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--nl-ink) 6%, transparent); color: var(--nl-ink); font: inherit; font-size: 13px; font-weight: 500; line-height: 1; cursor: pointer; } .ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid transparent; border-radius: 6px; background: color-mix(in oklab, var(--nl-accent) 62%, #000); color: #fff; font: inherit; font-size: 13px; font-weight: 500; line-height: 1; white-space: nowrap; cursor: pointer; transition: filter 0.12s cubic-bezier(0.2, 0.8, 0.2, 1); } .ds-btn-primary:hover:not(:disabled) { filter: brightness(1.12); } .ds-btn-quiet:focus-visible, .ds-btn-primary:focus-visible { outline: 2px solid var(--nl-accent); outline-offset: 1px; } .ds-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Delete and stop: transparent, Brick Red label and 35% red border, 12% red wash on hover. The icon-button form hovers red.",
+      "html": "<div class=\"ds-nl-danger-canvas\"><button class=\"ds-btn-danger\">停止</button><button class=\"ds-btn-danger\">删除</button><button class=\"ds-icon-btn-danger\" title=\"删除\" aria-label=\"删除\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6\"/></svg></button></div>",
+      "css": ".ds-nl-danger-canvas { --nl-ink: var(--SmartThemeBodyColor, #dcdcd2); --nl-accent: var(--SmartThemeQuoteColor, #e18a24); --nl-tint: var(--SmartThemeBlurTintColor, rgba(23, 23, 28, 0.96)); background: var(--nl-tint); color: var(--nl-ink); font-family: var(--mainFontFamily, system-ui, -apple-system, \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif); font-size: 14px; line-height: 1.5; padding: 16px; border-radius: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; --nl-err: color-mix(in oklab, #e5534b 82%, var(--nl-ink)); } .ds-btn-danger { display: inline-flex; align-items: center; height: 32px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--nl-err) 35%, transparent); border-radius: 6px; background: transparent; color: var(--nl-err); font: inherit; font-size: 13px; font-weight: 500; line-height: 1; cursor: pointer; transition: background-color 0.12s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.12s cubic-bezier(0.2, 0.8, 0.2, 1); } .ds-btn-danger:hover { background: color-mix(in srgb, var(--nl-err) 12%, transparent); border-color: color-mix(in srgb, var(--nl-err) 55%, transparent); } .ds-icon-btn-danger { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 28px; padding: 0 6px; border: none; border-radius: 6px; background: transparent; color: color-mix(in srgb, var(--nl-ink) 72%, transparent); cursor: pointer; transition: background-color 0.12s cubic-bezier(0.2, 0.8, 0.2, 1), color 0.12s cubic-bezier(0.2, 0.8, 0.2, 1); } .ds-icon-btn-danger:hover { color: var(--nl-err); background: color-mix(in srgb, var(--nl-err) 12%, transparent); } .ds-btn-danger:focus-visible, .ds-icon-btn-danger:focus-visible { outline: 2px solid var(--nl-accent); outline-offset: 1px; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Label above, Field Veil well with Strong Hairline border; focus swaps to Accent Edge plus a 3px accent halo. The custom checkbox fills with Accent Solid.",
+      "html": "<div class=\"ds-nl-field-canvas\"><div class=\"ds-field\"><label class=\"ds-field-label\" for=\"ds-book\">书名 <span>用于提示词与世界书命名</span></label><input id=\"ds-book\" class=\"ds-input\" value=\"魔女\"></div><div class=\"ds-field\"><label class=\"ds-field-label\" for=\"ds-mode\">处理模式</label><select id=\"ds-mode\" class=\"ds-input ds-select\"><option>串行 · 滚动累积（最连贯，推荐）</option></select></div><label class=\"ds-check\"><input type=\"checkbox\" class=\"ds-checkbox\" checked>章节概要与重要章节</label></div>",
+      "css": ".ds-nl-field-canvas { --nl-ink: var(--SmartThemeBodyColor, #dcdcd2); --nl-accent: var(--SmartThemeQuoteColor, #e18a24); --nl-tint: var(--SmartThemeBlurTintColor, rgba(23, 23, 28, 0.96)); background: var(--nl-tint); color: var(--nl-ink); font-family: var(--mainFontFamily, system-ui, -apple-system, \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif); font-size: 14px; line-height: 1.5; padding: 16px; border-radius: 10px; display: flex; flex-direction: column; gap: 12px; max-width: 380px; } .ds-field { display: flex; flex-direction: column; gap: 6px; } .ds-field-label { font-size: 13px; font-weight: 500; color: color-mix(in srgb, var(--nl-ink) 72%, transparent); } .ds-field-label span { font-weight: 400; } .ds-input { width: 100%; min-height: 32px; padding: 5px 10px; border: 1px solid color-mix(in srgb, var(--nl-ink) 20%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--nl-ink) 4%, transparent); color: var(--nl-ink); font: inherit; font-size: 14px; line-height: 1.5; transition: border-color 0.12s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.12s cubic-bezier(0.2, 0.8, 0.2, 1); } .ds-input::placeholder { color: color-mix(in srgb, var(--nl-ink) 58%, transparent); } .ds-input:hover:not(:focus) { border-color: color-mix(in srgb, var(--nl-ink) 30%, transparent); } .ds-input:focus { outline: none; border-color: color-mix(in srgb, var(--nl-accent) 45%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--nl-accent) 28%, transparent); } .ds-select { appearance: none; padding-right: 30px; cursor: pointer; background-image: linear-gradient(45deg, transparent calc(50% - 0.8px), currentColor calc(50% - 0.8px), currentColor calc(50% + 0.8px), transparent calc(50% + 0.8px)), linear-gradient(135deg, transparent calc(50% - 0.8px), currentColor calc(50% - 0.8px), currentColor calc(50% + 0.8px), transparent calc(50% + 0.8px)); background-position: calc(100% - 16px) 52%, calc(100% - 11px) 52%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; } .ds-select option { background: var(--nl-tint); color: var(--nl-ink); } .ds-check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; } .ds-checkbox { appearance: none; width: 16px; height: 16px; margin: 0; border: 1.5px solid color-mix(in srgb, var(--nl-ink) 20%, transparent); border-radius: 4px; background: color-mix(in srgb, var(--nl-ink) 4%, transparent) center / 12px 12px no-repeat; cursor: pointer; transition: background-color 0.12s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.12s cubic-bezier(0.2, 0.8, 0.2, 1); } .ds-checkbox:hover { border-color: color-mix(in srgb, var(--nl-ink) 40%, transparent); } .ds-checkbox:checked { background-color: color-mix(in oklab, var(--nl-accent) 62%, #000); border-color: transparent; background-image: url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E\"); } .ds-checkbox:focus-visible { outline: 2px solid var(--nl-accent); outline-offset: 2px; }"
+    },
+    {
+      "name": "Sidebar Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "The sidebar is the pipeline: grouped 32px items with right-aligned tabular counts, a green check when done and a 下一步 pill on the next step; the active item sits on Pressed Veil with its icon in Accent Ink.",
+      "html": "<nav class=\"ds-nl-nav-canvas\" aria-label=\"流程\"><button class=\"ds-nav-item ds-nav-active\" aria-current=\"page\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20\"/></svg><em>项目</em><span class=\"ds-nav-count\"></span></button><div class=\"ds-nav-label\">准备</div><button class=\"ds-nav-item\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"6\" cy=\"6\" r=\"3\"/><circle cx=\"6\" cy=\"18\" r=\"3\"/><path d=\"M8.12 8.12 12 12M20 4 8.12 15.88M14.8 14.8 20 20\"/></svg><em>分段</em><span class=\"ds-nav-count\">4<svg class=\"ds-nav-done\" width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M20 6 9 17l-5-5\"/></svg></span></button><button class=\"ds-nav-item\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z\"/><path d=\"M19 15v4M17 17h4\"/></svg><em>提取</em><span class=\"ds-nav-count\">4/4<svg class=\"ds-nav-done\" width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M20 6 9 17l-5-5\"/></svg></span></button><div class=\"ds-nav-label\">生成</div><button class=\"ds-nav-item\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"16\" rx=\"2\"/><circle cx=\"9\" cy=\"11\" r=\"2\"/><path d=\"M5.8 16.5c.6-1.4 1.8-2.2 3.2-2.2s2.6.8 3.2 2.2M15 10h3M15 14h3\"/></svg><em>角色卡</em><span class=\"ds-nav-count\"><span class=\"ds-nav-next\">下一步</span></span></button></nav>",
+      "css": ".ds-nl-nav-canvas { --nl-ink: var(--SmartThemeBodyColor, #dcdcd2); --nl-accent: var(--SmartThemeQuoteColor, #e18a24); --nl-tint: var(--SmartThemeBlurTintColor, rgba(23, 23, 28, 0.96)); background: var(--nl-tint); color: var(--nl-ink); font-family: var(--mainFontFamily, system-ui, -apple-system, \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif); font-size: 14px; line-height: 1.5; padding: 16px; border-radius: 10px; display: flex; flex-direction: column; gap: 1px; width: 232px; padding: 8px; background: linear-gradient(color-mix(in srgb, var(--nl-ink) 3%, transparent), color-mix(in srgb, var(--nl-ink) 3%, transparent)), var(--nl-tint); } .ds-nav-label { padding: 12px 8px 2px; font-size: 12px; font-weight: 500; color: color-mix(in srgb, var(--nl-ink) 58%, transparent); } .ds-nav-item { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 8px; border: none; border-radius: 6px; background: transparent; color: color-mix(in srgb, var(--nl-ink) 72%, transparent); font: inherit; font-size: 14px; text-align: left; cursor: pointer; transition: background-color 0.12s cubic-bezier(0.2, 0.8, 0.2, 1), color 0.12s cubic-bezier(0.2, 0.8, 0.2, 1); } .ds-nav-item > svg { flex-shrink: 0; opacity: 0.85; } .ds-nav-item em { font-style: normal; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-nav-item:hover { background: color-mix(in srgb, var(--nl-ink) 7%, transparent); color: var(--nl-ink); } .ds-nav-item:focus-visible { outline: 2px solid var(--nl-accent); outline-offset: 1px; } .ds-nav-active { background: color-mix(in srgb, var(--nl-ink) 11%, transparent); color: var(--nl-ink); font-weight: 600; } .ds-nav-active > svg { color: color-mix(in oklab, var(--nl-accent) 78%, var(--nl-ink)); opacity: 1; } .ds-nav-count { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; font-size: 12px; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--nl-ink) 58%, transparent); } .ds-nav-done { color: color-mix(in oklab, #3fb27f 82%, var(--nl-ink)); } .ds-nav-next { padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--nl-accent) 15%, transparent); color: color-mix(in oklab, var(--nl-accent) 78%, var(--nl-ink)); font-size: 11px; font-weight: 600; }"
+    },
+    {
+      "name": "Tag and Status Dot",
+      "kind": "chip",
+      "refersTo": "tag",
+      "description": "20px pills in 12px 500 type; status tags put their hue over a 14% wash, importance tags use ink level only; 7px dots mark item state.",
+      "html": "<div class=\"ds-nl-tag-canvas\"><span class=\"ds-tag ds-tag-main\">当前</span><span class=\"ds-tag\">重要</span><span class=\"ds-tag ds-tag-ok\">已写入</span><span class=\"ds-tag ds-tag-warn\">待校对</span><span class=\"ds-tag ds-tag-err\">出错</span><span class=\"ds-dot\" title=\"待处理\"></span><span class=\"ds-dot ds-dot-ok\" title=\"已完成\"></span><span class=\"ds-dot ds-dot-err\" title=\"出错\"></span><span class=\"ds-dot ds-dot-info\" title=\"常驻\"></span></div>",
+      "css": ".ds-nl-tag-canvas { --nl-ink: var(--SmartThemeBodyColor, #dcdcd2); --nl-accent: var(--SmartThemeQuoteColor, #e18a24); --nl-tint: var(--SmartThemeBlurTintColor, rgba(23, 23, 28, 0.96)); background: var(--nl-tint); color: var(--nl-ink); font-family: var(--mainFontFamily, system-ui, -apple-system, \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif); font-size: 14px; line-height: 1.5; padding: 16px; border-radius: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; --nl-ok: color-mix(in oklab, #3fb27f 82%, var(--nl-ink)); --nl-warn: color-mix(in oklab, #d99a2b 82%, var(--nl-ink)); --nl-err: color-mix(in oklab, #e5534b 82%, var(--nl-ink)); --nl-info: color-mix(in oklab, #4a8fe0 82%, var(--nl-ink)); } .ds-tag { display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 7px; border: 1px solid transparent; border-radius: 999px; font-size: 12px; font-weight: 500; line-height: 1; white-space: nowrap; background: color-mix(in srgb, var(--nl-ink) 6%, transparent); color: color-mix(in srgb, var(--nl-ink) 72%, transparent); } .ds-tag-main { background: color-mix(in srgb, var(--nl-ink) 11%, transparent); color: var(--nl-ink); } .ds-tag-ok { color: var(--nl-ok); background: color-mix(in srgb, var(--nl-ok) 14%, transparent); } .ds-tag-warn { color: var(--nl-warn); background: color-mix(in srgb, var(--nl-warn) 14%, transparent); } .ds-tag-err { color: var(--nl-err); background: color-mix(in srgb, var(--nl-err) 14%, transparent); } .ds-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--nl-ink) 58%, transparent); } .ds-dot-ok { background: var(--nl-ok); } .ds-dot-err { background: var(--nl-err); } .ds-dot-info { background: var(--nl-info); }"
+    },
+    {
+      "name": "Segmented Filter",
+      "kind": "chip",
+      "refersTo": "segment",
+      "description": "28px pill filters with a Hairline border; the active one takes Accent Wash and Accent Edge. Category filters lead with a status dot and a count.",
+      "html": "<div class=\"ds-nl-seg-canvas\"><button class=\"ds-seg\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"8\" r=\"4\"/><path d=\"M4 21a8 8 0 0 1 16 0\"/></svg>角色（3）</button><button class=\"ds-seg ds-seg-active\"><span class=\"ds-seg-dot ds-seg-dot-info\"></span>世界观（1）</button><button class=\"ds-seg\"><span class=\"ds-seg-dot ds-seg-dot-ok\"></span>地点（1）</button><button class=\"ds-seg\"><span class=\"ds-seg-dot ds-seg-dot-ok\"></span>物品（0）</button></div>",
+      "css": ".ds-nl-seg-canvas { --nl-ink: var(--SmartThemeBodyColor, #dcdcd2); --nl-accent: var(--SmartThemeQuoteColor, #e18a24); --nl-tint: var(--SmartThemeBlurTintColor, rgba(23, 23, 28, 0.96)); background: var(--nl-tint); color: var(--nl-ink); font-family: var(--mainFontFamily, system-ui, -apple-system, \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif); font-size: 14px; line-height: 1.5; padding: 16px; border-radius: 10px; display: flex; flex-wrap: wrap; gap: 6px; } .ds-seg { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--nl-ink) 11%, transparent); border-radius: 999px; background: transparent; color: color-mix(in srgb, var(--nl-ink) 72%, transparent); font: inherit; font-size: 13px; cursor: pointer; transition: background-color 0.12s cubic-bezier(0.2, 0.8, 0.2, 1), color 0.12s cubic-bezier(0.2, 0.8, 0.2, 1); } .ds-seg:hover { background: color-mix(in srgb, var(--nl-ink) 7%, transparent); color: var(--nl-ink); } .ds-seg:focus-visible { outline: 2px solid var(--nl-accent); outline-offset: 1px; } .ds-seg-active { background: color-mix(in srgb, var(--nl-accent) 15%, transparent); border-color: color-mix(in srgb, var(--nl-accent) 45%, transparent); color: var(--nl-ink); font-weight: 500; } .ds-seg-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; } .ds-seg-dot-info { background: color-mix(in oklab, #4a8fe0 82%, var(--nl-ink)); } .ds-seg-dot-ok { background: color-mix(in oklab, #3fb27f 82%, var(--nl-ink)); }"
+    },
+    {
+      "name": "Card with Row List",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "A flat First Veil section with a 10px radius and Hairline border; the head is a 16px title over a Quiet Ink description with actions to the right; lists inside are hairline rows, the active one on Accent Wash.",
+      "html": "<div class=\"ds-nl-card-canvas\"><section class=\"ds-card\"><div class=\"ds-card-head\"><div class=\"ds-card-titles\"><h3>全部项目</h3><div class=\"ds-card-desc\">项目保存在浏览器里；导出的任务文件可以在别的设备上导入继续。</div></div><button class=\"ds-card-btn\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 3v12M7 10l5 5 5-5M5 21h14\"/></svg>导入任务文件</button></div><div class=\"ds-rows\"><div class=\"ds-row ds-row-active\"><div class=\"ds-row-main\"><b>魔女</b><div class=\"ds-row-meta\">4/4 段已提取 · 3 个角色 · 更新于 2026-10-04 22:37</div></div><span class=\"ds-row-tag\">当前</span></div><div class=\"ds-row\"><div class=\"ds-row-main\"><b>示例小说</b><div class=\"ds-row-meta\">12/40 段已提取 · 8 个角色 · 更新于 2026-10-02 19:05</div></div><button class=\"ds-card-btn\">打开</button></div><div class=\"ds-row\"><div class=\"ds-row-main\"><b>粘贴的小说</b><div class=\"ds-row-meta\">0/6 段已提取 · 0 个角色 · 更新于 2026-09-30 08:12</div></div><button class=\"ds-card-btn\">打开</button></div></div></section></div>",
+      "css": ".ds-nl-card-canvas { --nl-ink: var(--SmartThemeBodyColor, #dcdcd2); --nl-accent: var(--SmartThemeQuoteColor, #e18a24); --nl-tint: var(--SmartThemeBlurTintColor, rgba(23, 23, 28, 0.96)); background: var(--nl-tint); color: var(--nl-ink); font-family: var(--mainFontFamily, system-ui, -apple-system, \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif); font-size: 14px; line-height: 1.5; padding: 16px; border-radius: 10px; padding: 20px; } .ds-card { background: color-mix(in srgb, var(--nl-ink) 3%, transparent); border: 1px solid color-mix(in srgb, var(--nl-ink) 11%, transparent); border-radius: 10px; padding: 16px 20px; } .ds-card-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 12px; margin-bottom: 12px; } .ds-card-titles { flex: 1 1 240px; min-width: 0; } .ds-card h3 { margin: 0; font-size: 16px; line-height: 1.4; font-weight: 600; } .ds-card-desc { margin: 2px 0 0; font-size: 13px; color: color-mix(in srgb, var(--nl-ink) 72%, transparent); } .ds-card-btn { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--nl-ink) 20%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--nl-ink) 6%, transparent); color: var(--nl-ink); font: inherit; font-size: 12px; font-weight: 500; line-height: 1; white-space: nowrap; cursor: pointer; transition: background-color 0.12s cubic-bezier(0.2, 0.8, 0.2, 1); } .ds-card-btn:hover { background: color-mix(in srgb, var(--nl-ink) 11%, transparent); } .ds-card-btn:focus-visible { outline: 2px solid var(--nl-accent); outline-offset: 1px; } .ds-rows { display: flex; flex-direction: column; margin-top: 8px; } .ds-row { display: flex; align-items: center; gap: 12px; padding: 10px 8px; border-radius: 6px; transition: background-color 0.12s cubic-bezier(0.2, 0.8, 0.2, 1); } .ds-row + .ds-row { border-top: 1px solid color-mix(in srgb, var(--nl-ink) 11%, transparent); border-radius: 0; } .ds-row:hover { background: color-mix(in srgb, var(--nl-ink) 7%, transparent); } .ds-row-active, .ds-row-active:hover { background: color-mix(in srgb, var(--nl-accent) 15%, transparent); } .ds-row-active + .ds-row { border-top-color: transparent; } .ds-row-main { flex: 1; min-width: 0; } .ds-row-meta { font-size: 13px; color: color-mix(in srgb, var(--nl-ink) 72%, transparent); font-variant-numeric: tabular-nums; } .ds-row-tag { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 999px; font-size: 12px; font-weight: 500; background: color-mix(in srgb, var(--nl-ink) 11%, transparent); }"
+    },
+    {
+      "name": "Pipeline List",
+      "kind": "custom",
+      "refersTo": "pipeline-row",
+      "description": "Signature: the project-page checklist, sharing state with the sidebar. A numbered ring when pending, a filled green check when done, an Accent Wash row with an accent ring for the next required step.",
+      "html": "<div class=\"ds-nl-pipe-canvas\"><div class=\"ds-pipeline\"><button class=\"ds-pipe-row ds-pipe-ok\"><span class=\"ds-pipe-mark\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M20 6 9 17l-5-5\"/></svg></span><span class=\"ds-pipe-name\">检查分段</span><span class=\"ds-pipe-note\">4 段</span><svg class=\"ds-pipe-go\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m9 6 6 6-6 6\"/></svg></button><button class=\"ds-pipe-row ds-pipe-ok\"><span class=\"ds-pipe-mark\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M20 6 9 17l-5-5\"/></svg></span><span class=\"ds-pipe-name\">提取资料</span><span class=\"ds-pipe-note\">4/4 段</span><svg class=\"ds-pipe-go\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m9 6 6 6-6 6\"/></svg></button><button class=\"ds-pipe-row\"><span class=\"ds-pipe-mark\">4</span><span class=\"ds-pipe-name\">梳理关系<small>可选</small></span><span class=\"ds-pipe-note\"></span><svg class=\"ds-pipe-go\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m9 6 6 6-6 6\"/></svg></button><button class=\"ds-pipe-row ds-pipe-next\"><span class=\"ds-pipe-mark\">7</span><span class=\"ds-pipe-name\">生成角色卡并写入酒馆<small>下一步</small></span><span class=\"ds-pipe-note\"></span><svg class=\"ds-pipe-go\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m9 6 6 6-6 6\"/></svg></button><button class=\"ds-pipe-row\"><span class=\"ds-pipe-mark\">9</span><span class=\"ds-pipe-name\">按大纲续写<small>可选</small></span><span class=\"ds-pipe-note\"></span><svg class=\"ds-pipe-go\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m9 6 6 6-6 6\"/></svg></button></div></div>",
+      "css": ".ds-nl-pipe-canvas { --nl-ink: var(--SmartThemeBodyColor, #dcdcd2); --nl-accent: var(--SmartThemeQuoteColor, #e18a24); --nl-tint: var(--SmartThemeBlurTintColor, rgba(23, 23, 28, 0.96)); background: var(--nl-tint); color: var(--nl-ink); font-family: var(--mainFontFamily, system-ui, -apple-system, \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif); font-size: 14px; line-height: 1.5; padding: 16px; border-radius: 10px; max-width: 640px; } .ds-pipeline { display: flex; flex-direction: column; } .ds-pipe-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 8px; border: none; border-radius: 6px; background: transparent; color: var(--nl-ink); font: inherit; text-align: left; cursor: pointer; transition: background-color 0.12s cubic-bezier(0.2, 0.8, 0.2, 1); } .ds-pipe-row + .ds-pipe-row { border-top: 1px solid color-mix(in srgb, var(--nl-ink) 11%, transparent); border-radius: 0; } .ds-pipe-row:hover { background: color-mix(in srgb, var(--nl-ink) 7%, transparent); } .ds-pipe-row:focus-visible { outline: 2px solid var(--nl-accent); outline-offset: 1px; } .ds-pipe-mark { width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid color-mix(in srgb, var(--nl-ink) 20%, transparent); display: inline-flex; align-items: center; justify-content: center; color: color-mix(in srgb, var(--nl-ink) 58%, transparent); font-size: 11px; font-variant-numeric: tabular-nums; } .ds-pipe-ok .ds-pipe-mark { background: color-mix(in oklab, #3fb27f 82%, var(--nl-ink)); border-color: color-mix(in oklab, #3fb27f 82%, var(--nl-ink)); color: #fff; } .ds-pipe-next, .ds-pipe-next:hover { background: color-mix(in srgb, var(--nl-accent) 15%, transparent); border-radius: 6px; } .ds-pipe-next + .ds-pipe-row { border-top-color: transparent; } .ds-pipe-next .ds-pipe-mark { border-color: var(--nl-accent); color: color-mix(in oklab, var(--nl-accent) 78%, var(--nl-ink)); } .ds-pipe-name { font-weight: 500; } .ds-pipe-name small { margin-left: 8px; font-weight: 400; font-size: 12px; color: color-mix(in srgb, var(--nl-ink) 58%, transparent); } .ds-pipe-note { font-size: 13px; color: color-mix(in srgb, var(--nl-ink) 72%, transparent); font-variant-numeric: tabular-nums; } .ds-pipe-go { color: color-mix(in srgb, var(--nl-ink) 58%, transparent); }"
+    },
+    {
+      "name": "Log Strip",
+      "kind": "custom",
+      "refersTo": "log-strip",
+      "description": "Signature: pinned under every page. Log icon and 日志, the running status with a spinner in Accent Ink, the latest line in its level color with a drawn icon, ghost 清空 / 展开 buttons.",
+      "html": "<div class=\"ds-nl-log-canvas\"><footer class=\"ds-logbar\"><b><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M4 6h16M4 12h16M4 18h10\"/></svg>日志</b><span class=\"ds-log-busy\"><span class=\"ds-spin\"></span>提取中</span><span class=\"ds-log-last ds-log-ok\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M20 6 9 17l-5-5\"/></svg>已规划 4 章（第 5–8 章）</span><button class=\"ds-ghost\">清空</button><button class=\"ds-ghost\" aria-expanded=\"false\">展开</button></footer></div>",
+      "css": ".ds-nl-log-canvas { --nl-ink: var(--SmartThemeBodyColor, #dcdcd2); --nl-accent: var(--SmartThemeQuoteColor, #e18a24); --nl-tint: var(--SmartThemeBlurTintColor, rgba(23, 23, 28, 0.96)); background: var(--nl-tint); color: var(--nl-ink); font-family: var(--mainFontFamily, system-ui, -apple-system, \"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", \"Noto Sans CJK SC\", sans-serif); font-size: 14px; line-height: 1.5; padding: 16px; border-radius: 10px; padding: 0; overflow: hidden; } .ds-logbar { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px 0 24px; border-top: 1px solid color-mix(in srgb, var(--nl-ink) 11%, transparent); background: color-mix(in srgb, var(--nl-ink) 3%, transparent); font-size: 12px; } .ds-logbar > b { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: color-mix(in srgb, var(--nl-ink) 72%, transparent); } .ds-log-busy { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; color: color-mix(in oklab, var(--nl-accent) 78%, var(--nl-ink)); white-space: nowrap; } .ds-spin { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: ds-spin 0.8s linear infinite; } @keyframes ds-spin { to { transform: rotate(360deg); } } .ds-log-last { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-log-last svg { margin-right: 5px; vertical-align: -2px; } .ds-log-ok { color: color-mix(in oklab, #3fb27f 82%, var(--nl-ink)); } .ds-ghost { display: inline-flex; align-items: center; height: 26px; padding: 0 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: color-mix(in srgb, var(--nl-ink) 72%, transparent); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; transition: background-color 0.12s cubic-bezier(0.2, 0.8, 0.2, 1), color 0.12s cubic-bezier(0.2, 0.8, 0.2, 1); } .ds-ghost:hover { background: color-mix(in srgb, var(--nl-ink) 7%, transparent); color: var(--nl-ink); } .ds-ghost:focus-visible { outline: 2px solid var(--nl-accent); outline-offset: 1px; } @media (prefers-reduced-motion: reduce) { .ds-spin { animation-duration: 1.6s; } }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Workbench",
+    "overview": "NovelLoom is a workbench that lives inside someone else's room. It opens as a full-window overlay on top of SillyTavern and borrows everything visual from the user's theme: the body text color becomes its ink, the quote color becomes its single accent, the blur tint becomes its glass. Nothing in the window carries a hue of its own except the four status signals, and even those are pulled toward the theme's ink so they sit in the same light. The result is the category standard for a tool UI (grouped sidebar, page header, work area, log strip) finished to the bar of Linear's restraint and Notion's comfortable hierarchy, and it changes with the user's theme, light or dark, without a single override.\n\nThe workbench is quiet so the pipeline can speak. The sidebar is the pipeline: thirteen pages grouped by stage (概览 / 准备 / 整理 / 生成 / 续写), each with a right-aligned count, a check once the step is done, a \"下一步\" pill on the next required step, and a spinner while a long AI job runs there. The project page repeats the same state as a numbered checklist. Density serves the daily author (32px rows, 13–14px text, hairline-separated lists); guidance serves the newcomer (a one-line purpose under every page title, empty states that name the next action). Long AI jobs never disappear: the log strip and its running status stay pinned to the bottom of every page.\n\nDepth comes from layering the theme's ink at small percentages, not from shadows. Only the things that float above SillyTavern (the window, dialogs, the floating button) cast a shadow and blur what is behind them.",
+    "keyCharacteristics": [
+      "Every color derived from SillyTavern theme variables through `color-mix`; no fixed brand hex.",
+      "One accent, used as a signal: primary action, current selection, focus, progress, and the next step.",
+      "One system sans stack inherited from SillyTavern, five sizes (12/13/14/16/20 × the theme's font scale), hierarchy by weight 600 and ink level.",
+      "4px spacing grid; one 32px control height per row; 6/8/10/12px radii plus pills.",
+      "Flat inside the window: ink-tint veils and 11% hairlines; shadow only on floating layers.",
+      "16px line icons on a 24 grid with a 1.75 stroke in `currentColor`; no emoji inside the window."
+    ],
+    "rules": [
+      {
+        "name": "The Borrowed Palette Rule",
+        "body": "Every UI color is a `color-mix` of the theme's ink, accent or glass. The only fixed values are the four status hues (always pulled 18% toward ink), white on accent, and the black scrim. Borders derive from ink, not from SillyTavern's border color variable.",
+        "section": "colors"
+      },
+      {
+        "name": "The Accent Is a Signal Rule",
+        "body": "The accent marks what you can act on or where you are: the primary action, the current selection, focus, progress and running work, and the next step. It never colors headings, card chrome, or decoration beyond the brand spool.",
+        "section": "colors"
+      },
+      {
+        "name": "The Importance-by-Lightness Rule",
+        "body": "Character importance (主要 / 重要 / 次要) is ink level (Theme Ink / Quiet Ink / Faint Ink), never accent or a status hue.",
+        "section": "colors"
+      },
+      {
+        "name": "The Theme Font Rule",
+        "body": "Text uses SillyTavern's font family and font scale. No web fonts and no external font hosts; sizes come from the five scaled steps, with only the 11px badge numerals (下一步 pill, pipeline marks, relation-graph labels) sitting outside them.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular Count Rule",
+        "body": "Every count, progress figure, timestamp and table cell uses tabular numerals so columns and the sidebar counts never jitter while a job runs.",
+        "section": "typography"
+      },
+      {
+        "name": "The One Height Rule",
+        "body": "A row, card head or header toolbar holds one control height. Small buttons exist only for rows of small buttons; beside an input, a select or a full-size button they grow to 32px.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat Inside Rule",
+        "body": "No shadow on any card, row, button or panel inside the window. If something needs to stand out, give it a veil or an accent wash; if it truly floats, it is a dialog.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Rows Not Boxes Rule",
+        "body": "Inside a card, collections are rows (hairline-separated for projects, world-book entries, plan chapters, style samples and character cards; 2px-gapped hover rows for chunks), never a grid of filled, bordered mini-cards.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "**Do** derive every new color from `--nl-ink`, `--nl-accent` or `--nl-tint` with `color-mix`, reusing the established steps (ink 3/4/6/7/11/20/58/72%, accent 15/28/32/40/45%, status 14% washes).",
+      "**Do** check every new surface in both a dark and a light SillyTavern theme; nothing may depend on the default orange accent or dark glass.",
+      "**Do** keep spacing on the 4px scale (4, 8, 12, 16, 20, 24, 32) and give each row a single control height (32px; 30px for narrow-screen toolbar buttons).",
+      "**Do** put page-level actions in the header actions slot, with at most one primary action per page header and per card.",
+      "**Do** give every page a one-line purpose under its title and every empty list an icon, a title, an explanation and the next action.",
+      "**Do** show where the user is in the pipeline with the shared done check, \"下一步\" pill and running spinner, in both the sidebar and the project checklist.",
+      "**Do** use the line icon set (24 grid, 1.75 stroke, `currentColor`) at 16px, 14px in small controls and 12px in counts and logs, and mark every in-place AI regenerate with the dice icon in Accent Ink.",
+      "**Do** use tabular numerals for counts, progress and timestamps.",
+      "**Do** keep keyboard focus visible with the 2px accent outline and the 3px field halo."
+    ],
+    "donts": [
+      "**Don't** hard-code a hex for UI chrome or introduce a brand color; the theme supplies the palette.",
+      "**Don't** use the accent for headings, card chrome, category coding or decoration.",
+      "**Don't** render list items as filled, bordered cards inside a card; lists are hairline-separated rows, and the only boxes inside cards are outlined config groups.",
+      "**Don't** add shadows to anything inside the window; only the window, dialogs and the floating button float.",
+      "**Don't** mix control heights in one row or leave a small button beside a full-size input.",
+      "**Don't** use emoji or typed glyphs as icons inside the window or dialogs; the 🧵 mark belongs only to SillyTavern-owned entry points (the extensions drawer and the wand menu), and the window draws the spool icon instead.",
+      "**Don't** load web fonts or any external asset; text follows SillyTavern's font family and font scale.",
+      "**Don't** express importance with color; use ink level."
+    ]
+  }
+}

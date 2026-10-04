@@ -1,3 +1,10 @@
 node_modules/
 *.log
 .DS_Store
+
+# impeccable 设计流程的临时文件（设计文档 DESIGN.md / PRODUCT.md / .impeccable/surfaces 要提交）
+.impeccable/questions/
+.impeccable/review/
+.impeccable/mocks/
+.impeccable/config.local.json
+.claude/launch.json

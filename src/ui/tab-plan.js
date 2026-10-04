@@ -7,7 +7,7 @@ import {
 } from '../planner.js';
 import { getStyleProfile } from '../style.js';
 import { uniq } from '../utils.js';
-import { bindSettings, busy, chainPreviewHtml, confirmDialog, esc, fmtTime, openDialog, optionList, promptDialog, qs, rerollBtn } from './common.js';
+import { bindSettings, busy, chainPreviewHtml, confirmDialog, emptyState, esc, fmtTime, icon, openDialog, optionList, promptDialog, qs, rerollBtn } from './common.js';
 
 const REQUIREMENT_EXAMPLES = [
     '接下来 10 章进入新地图：主角离开下城区，前往魔女学院，途中遇到新的对手',
@@ -22,8 +22,13 @@ function batchHint(settings) {
     return size && count > size ? `，分 ${Math.ceil(count / size)} 批生成（每批 ${size} 章）` : '';
 }
 
+/** 大纲条目里的字段标记：小图标 + 读屏/悬停说明（与编辑对话框的字段名一致） */
+function metaIco(name, label) {
+    return `<span title="${label}">${icon(name, { size: 14, label })}</span>`;
+}
+
 export const planTab = {
-    mount(el, { switchTab }) {
+    mount(el, { switchTab, setActions }) {
         let fromNo = null; // 从某章起重新规划
 
         const render = () => {
@@ -35,8 +40,12 @@ export const planTab = {
             const start = Number.isFinite(fromNo) ? fromNo : planStartNo(p);
             el.innerHTML = `
             <section class="nl-card">
-                <h3>写后续大纲</h3>
-                <div class="nl-muted nl-small">根据已提取的梗概、分卷梗概、章节概要、主要角色现状、世界设定和前文结尾，按你的要求规划接下来的章节。规划好的大纲会被「续写」按章使用。下一章是<b>第 ${next} 章</b>${pending.length ? `，已规划到第 ${Math.max(...pending.map((c) => c.no))} 章` : ''}。</div>
+                <div class="nl-card-head">
+                    <div>
+                        <h3>规划要求</h3>
+                        <div class="nl-card-desc">AI 会参考已提取的梗概、分卷梗概、章节概要、主要角色现状、世界设定和前文结尾来规划。下一章是<b>第 ${next} 章</b>${pending.length ? `，已规划到第 ${Math.max(...pending.map((c) => c.no))} 章` : ''}。</div>
+                    </div>
+                </div>
                 <div class="nl-grid2">
                     <div class="nl-field"><label>规划章数</label><input class="nl-input" type="number" min="1" max="60" data-setting="planner.count"></div>
                     <div class="nl-field"><label>每批章数 <span class="nl-muted nl-small">（分几次请求，单次短、不容易被 API 中途断开；0 = 一次写完）</span></label><input class="nl-input" type="number" min="0" max="60" data-setting="planner.batchSize"></div>
@@ -49,7 +58,7 @@ export const planTab = {
                 <div class="nl-muted nl-small">文风：<b>${esc(getStyleProfile(p, app.settings, 'plan')?.name || '不指定')}</b>（规划时参考视角、基调和写法规则） <a href="#" data-act="goto-style">修改</a></div>
                 <div class="nl-row nl-wrap">
                     ${Number.isFinite(fromNo)
-                        ? `<span class="nl-tag">从第 ${fromNo} 章起重新规划（会覆盖第 ${fromNo} 章及之后尚未写的大纲） <a href="#" data-act="clear-from">✕</a></span>`
+                        ? `<span class="nl-tag">从第 ${fromNo} 章起重新规划（会覆盖第 ${fromNo} 章及之后尚未写的大纲） <a href="#" data-act="clear-from" title="取消" aria-label="取消">${icon('close', { size: 12 })}</a></span>`
                         : `<span class="nl-muted">将规划第 ${start}–${start + (Number(ps.count) || 10) - 1} 章${batchHint(app.settings)}</span>`}
                     <span class="nl-spacer"></span>
                     <button class="nl-btn" data-act="preview">预览提示词</button>
@@ -66,11 +75,9 @@ export const planTab = {
             </section>` : ''}
 
             <section class="nl-card">
-                <div class="nl-row nl-wrap">
-                    <h3>章节大纲（${chapters.length}，待写 ${pending.length}）</h3>
-                    <span class="nl-spacer"></span>
-                    ${pending.length ? `<button class="nl-btn nl-sm nl-primary" data-act="write">按大纲续写</button>` : ''}
-                    <button class="nl-btn nl-sm" data-act="export" ${chapters.length ? '' : 'disabled'}>导出 Markdown</button>
+                <div class="nl-card-head">
+                    <div><h3>章节大纲（${chapters.length}，待写 ${pending.length}）</h3></div>
+                    ${pending.length ? `<button class="nl-btn nl-sm" data-act="write">按大纲续写</button>` : ''}
                     <button class="nl-btn nl-sm nl-danger" data-act="clear" ${pending.length ? '' : 'disabled'}>清空待写大纲</button>
                 </div>
                 <div class="nl-plan-list">
@@ -83,23 +90,25 @@ export const planTab = {
                             ${c.status === 'written' ? '' : `
                             <button class="nl-btn nl-sm" data-act="edit" data-id="${esc(c.id)}">编辑</button>
                             ${rerollBtn('revise', `data-id="${esc(c.id)}"`, { label: 'AI 重写', title: '重新生成本章大纲' })}
-                            <button class="nl-btn nl-sm" data-act="insert" data-id="${esc(c.id)}" title="在这一章后插入一章">插入↓</button>
+                            <button class="nl-btn nl-sm" data-act="insert" data-id="${esc(c.id)}" title="在这一章后插入一章">${icon('plus')}插入</button>
                             <button class="nl-btn nl-sm" data-act="from-here" data-id="${esc(c.id)}" title="从这一章起按新要求重新规划">从此重规划</button>
                             <button class="nl-btn nl-sm nl-danger" data-act="delete" data-id="${esc(c.id)}">删除</button>`}
                         </div>
                         <div class="nl-small">${esc(c.summary)}</div>
                         <div class="nl-muted nl-small">
-                            ${c.pov ? `🎭 视角：${esc(c.pov)}　` : ''}
-                            ${c.characters?.length ? `👤 ${esc(c.characters.join('、'))}　` : ''}
-                            ${c.events?.length ? `⚡ ${esc(c.events.join('；'))}　` : ''}
-                            ${c.foreshadowing?.length ? `🧩 ${esc(c.foreshadowing.join('；'))}　` : ''}
-                            ${c.hook ? `🎣 ${esc(c.hook)}` : ''}
+                            ${c.pov ? `${icon('eye', { size: 14 })} 视角：${esc(c.pov)}　` : ''}
+                            ${c.characters?.length ? `${metaIco('users', '出场角色')} ${esc(c.characters.join('、'))}　` : ''}
+                            ${c.events?.length ? `${metaIco('zap', '关键事件')} ${esc(c.events.join('；'))}　` : ''}
+                            ${c.foreshadowing?.length ? `${metaIco('foreshadow', '伏笔')} ${esc(c.foreshadowing.join('；'))}　` : ''}
+                            ${c.hook ? `${metaIco('link', '章末钩子')} ${esc(c.hook)}` : ''}
                         </div>
-                        ${c.scenes?.length ? `<div class="nl-small nl-muted">🎬 ${c.scenes.map((s) => esc(s.location || '？')).join(' → ')}</div>` : ''}
-                    </div>`).join('') || '<div class="nl-muted">还没有大纲。填写要求后点“生成后续大纲”。</div>'}
+                        ${c.scenes?.length ? `<div class="nl-small nl-muted">${metaIco('image', '场次')} ${c.scenes.map((s) => esc(s.location || '？')).join(' → ')}</div>` : ''}
+                    </div>`).join('') || emptyState('填写要求后点“生成后续大纲”。', '', { title: '还没有大纲', ico: 'plan' })}
                 </div>
             </section>`;
             bindSettings(el, app.settings, () => app.saveSettings());
+            // 页面级操作放进标题栏；切走后迟到的渲染（el 已脱离）不能改写别的页面的标题栏
+            if (el.isConnected) setActions?.(`<button class="nl-btn" data-act="export" title="把全部章节大纲导出为 Markdown 文件" ${chapters.length ? '' : 'disabled'}>${icon('download')}导出 Markdown</button>`, onClick);
         };
 
         const editChapter = async (c) => {

@@ -7,11 +7,24 @@ import { deleteProject, listProjects, loadProject, saveProject } from '../store.
 import { exportTask, parseTask } from '../io.js';
 import { projectStats } from '../project.js';
 import { formatNumber, pickFile, readFileAsText } from '../utils.js';
-import { bindSettings, busy, confirmDialog, esc, fmtTime, optionList, promptDialog, qs } from './common.js';
+import { bindSettings, busy, confirmDialog, emptyState, esc, fmtTime, icon, optionList, promptDialog, qs } from './common.js';
+import { pipelineState } from './pipeline.js';
 
 export const projectTab = {
     mount(el, { switchTab }) {
         let pending = null; // { text, encoding, fileName }
+
+        /** 流程清单：每一步是否完成、做了多少；第一个没完成的必做步骤标为“下一步” */
+        const pipeline = (p) => {
+            const { steps, next } = pipelineState(p);
+            return steps.map((s, i) => `
+                <button class="nl-pipe-row ${s.ok ? 'ok' : ''} ${s === next ? 'next' : ''}" data-goto="${s.tab}">
+                    <span class="nl-pipe-mark">${s.ok ? icon('check', { size: 12, label: '已完成' }) : i + 1}</span>
+                    <span class="nl-pipe-name">${s.name}${s.optional ? '<small>可选</small>' : ''}${s === next ? '<small>下一步</small>' : ''}</span>
+                    <span class="nl-pipe-note">${esc(s.note)}</span>
+                    ${icon('chevronRight', { size: 14, cls: 'nl-pipe-go' })}
+                </button>`).join('');
+        };
 
         const render = async () => {
             const list = await listProjects();
@@ -20,39 +33,27 @@ export const projectTab = {
             el.innerHTML = `
             ${p ? `
             <section class="nl-card nl-current">
-                <div class="nl-row">
-                    <h3>当前项目：${esc(p.name)}</h3>
-                    <span class="nl-spacer"></span>
+                <div class="nl-card-head">
+                    <div>
+                        <h3>${esc(p.name)}</h3>
+                        <div class="nl-card-desc">${formatNumber(st.chars)} 字 · 更新于 ${fmtTime(p.updatedAt)}</div>
+                    </div>
                     <button class="nl-btn nl-sm" data-act="rename-current">重命名</button>
                 </div>
-                <div class="nl-stats">
-                    <div><b>${formatNumber(st.chars)}</b><span>字</span></div>
-                    <div><b>${st.chunks}</b><span>分段</span></div>
-                    <div><b>${st.done}</b><span>已提取</span></div>
-                    <div><b>${st.characters}</b><span>角色</span></div>
-                    <div><b>${st.entries}</b><span>条目</span></div>
-                    <div><b>${p.cards.length}</b><span>角色卡</span></div>
-                    <div><b>${st.generated}</b><span>续写章</span></div>
-                </div>
-                <div class="nl-steps">
-                    <button class="nl-step ${st.chunks ? 'ok' : ''}" data-goto="chunks">① 检查分段</button>
-                    <button class="nl-step ${st.done === st.chunks && st.chunks ? 'ok' : ''}" data-goto="extract">② 提取资料</button>
-                    <button class="nl-step ${st.characters ? 'ok' : ''}" data-goto="characters">③ 校对角色</button>
-                    <button class="nl-step ${st.entries ? 'ok' : ''}" data-goto="worldbook">④ 校对世界书</button>
-                    <button class="nl-step ${p.style?.samples?.length || p.style?.rules || p.style?.banned ? 'ok' : ''}" data-goto="style">⑤ 调整文风（可选）</button>
-                    <button class="nl-step ${p.cards.length ? 'ok' : ''}" data-goto="cards">⑥ 生成角色卡并写入酒馆</button>
-                    <button class="nl-step ${p.plan?.chapters?.length ? 'ok' : ''}" data-goto="plan">⑦ 写后续大纲（可选）</button>
-                    <button class="nl-step ${st.generated ? 'ok' : ''}" data-goto="continue">⑧ 按大纲续写（可选）</button>
-                </div>
-                <div class="nl-muted">书名（用于提示词与世界书命名）：<input class="nl-input nl-inline" data-field="bookName" value="${esc(p.bookName)}"></div>
+                <div class="nl-pipeline nl-stats">${pipeline(p)}</div>
+                <div class="nl-field"><label for="nl-book-field">书名 <span class="nl-muted">用于提示词与世界书命名</span></label><input class="nl-input" id="nl-book-field" style="max-width: 360px" data-field="bookName" value="${esc(p.bookName)}"></div>
             </section>` : ''}
 
             <section class="nl-card">
-                <h3>导入小说</h3>
+                <div class="nl-card-head">
+                    <div>
+                        <h3>导入小说</h3>
+                        <div class="nl-card-desc">自动识别 UTF-8 / GBK / GB18030 / Big5 / UTF-16 编码，按章节分段。</div>
+                    </div>
+                </div>
                 <div class="nl-row nl-wrap">
-                    <button class="nl-btn nl-primary" data-act="pick">选择 TXT 文件</button>
+                    <button class="nl-btn ${p ? '' : 'nl-primary'}" data-act="pick">${icon('upload')}选择 TXT 文件</button>
                     <button class="nl-btn" data-act="paste">粘贴文本</button>
-                    <span class="nl-muted">自动识别 UTF-8 / GBK / GB18030 / Big5 / UTF-16 编码</span>
                 </div>
                 <div class="nl-import-preview" ${pending ? '' : 'hidden'}>
                     <div class="nl-grid2">
@@ -73,22 +74,24 @@ export const projectTab = {
             </section>
 
             <section class="nl-card">
-                <div class="nl-row"><h3>全部项目</h3><span class="nl-spacer"></span><button class="nl-btn nl-sm" data-act="import-task">导入任务文件</button></div>
+                <div class="nl-card-head">
+                    <div>
+                        <h3>全部项目</h3>
+                        <div class="nl-card-desc">项目保存在浏览器里；导出的任务文件可以在别的设备上导入继续。</div>
+                    </div>
+                    <button class="nl-btn nl-sm" data-act="import-task">${icon('download', { size: 14 })}导入任务文件</button>
+                </div>
                 ${list.length ? `<div class="nl-list">${list.map((x) => `
                     <div class="nl-list-item ${x.id === p?.id ? 'active' : ''}">
                         <div class="nl-grow">
                             <b>${esc(x.name)}</b>
-                            <div class="nl-muted">${x.doneCount}/${x.chunkCount} 段已提取 · ${x.characterCount} 角色 · 更新于 ${fmtTime(x.updatedAt)}</div>
+                            <div class="nl-muted nl-small">${x.doneCount}/${x.chunkCount} 段已提取 · ${x.characterCount} 个角色 · 更新于 ${fmtTime(x.updatedAt)}</div>
                         </div>
-                        ${x.id === p?.id ? '<span class="nl-tag">当前</span>' : `<button class="nl-btn nl-sm" data-act="open" data-id="${esc(x.id)}">打开</button>`}
+                        ${x.id === p?.id ? '<span class="nl-tag nl-imp-main">当前</span>' : `<button class="nl-btn nl-sm" data-act="open" data-id="${esc(x.id)}">打开</button>`}
                         <button class="nl-btn nl-sm" data-act="export" data-id="${esc(x.id)}">导出</button>
                         <button class="nl-btn nl-sm nl-danger" data-act="delete" data-id="${esc(x.id)}">删除</button>
-                    </div>`).join('')}</div>` : '<div class="nl-muted">还没有项目。导入一本小说开始吧。</div>'}
-            </section>
-
-            <section class="nl-card nl-muted nl-small">
-                工作流程：导入小说 → 自动分段 → 逐段提取章节概要、角色档案、世界书条目（前文资料会滚动注入后续段落）→ 校对 → 选择角色与故事时间点生成角色卡 → 一键写入酒馆（自动创建并绑定世界书）。
-                可选：用 AI 续写新章节，新章节会回灌资料库；或在酒馆聊天里挂机续写。
+                    </div>`).join('')}</div>`
+                    : emptyState('工作流程：导入小说 → 自动分段 → 逐段提取章节概要、角色档案、世界书条目（前文资料会滚动注入后续段落）→ 校对 → 生成角色卡并写入酒馆。可选：按大纲续写新章节，新章节会回灌资料库。', '', { title: '还没有项目', ico: 'overview' })}
             </section>`;
             bindSettings(el, app.settings, () => app.saveSettings());
         };
