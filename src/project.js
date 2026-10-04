@@ -164,6 +164,10 @@ export function normalizeCharacter(c = {}) {
         lastChunk: Number.isFinite(c.lastChunk) ? c.lastChunk : -1,
         stages: Array.isArray(c.stages) ? c.stages : [],
         locked: !!c.locked,
+        /** 手动新建的角色：重新提取时不会因为“没有出处”被删除 */
+        manual: !!c.manual,
+        /** 别名的出处：{别名: [分段序号...]}，只记录提取时 AI 带进来的别名；重新提取某段时清掉只来自这一段的别名。手动加的、旧数据里的别名没有记录，一直保留 */
+        aliasSources: c.aliasSources && typeof c.aliasSources === 'object' && !Array.isArray(c.aliasSources) ? c.aliasSources : {},
         notes: c.notes || '',
         /** NSFW 补充资料：与身份/性格/外貌等日常向字段分开存放，生成角色卡时可选择是否带上（见 characterProfileText 的 withNsfw） */
         nsfwNotes: c.nsfwNotes || '',
@@ -174,16 +178,55 @@ export function normalizeCharacter(c = {}) {
 
 // ---------------- 查找 ----------------
 
+/**
+ * 太泛的称呼：很多角色都会被这样叫，只凭它们不能认定是同一个人。
+ * 单个字的别名（如“林”）同理，见 isSpecificAlias。
+ */
+export const GENERIC_ALIASES = new Set([
+    '他', '她', '它', '我', '你', '您', '他们', '她们', '我们', '你们', '对方', '那人', '此人', '某人', '众人', '主角', '男主', '女主', '男主角', '女主角',
+    '少爷', '小姐', '大小姐', '公子', '姑娘', '少女', '少年', '男人', '女人', '男子', '女子', '老人', '孩子', '小孩', '小鬼', '丫头', '小子',
+    '老师', '师父', '师傅', '师尊', '师兄', '师姐', '师弟', '师妹', '前辈', '学长', '学姐', '学弟', '学妹', '同学', '班长', '队长', '老板', '老大', '大哥', '大姐',
+    '主人', '主上', '大人', '殿下', '陛下', '王爷', '王妃', '皇上', '公主', '王子', '先生', '女士', '夫人', '太太', '老婆', '老公', '妻子', '丈夫', '相公', '娘子',
+    '父亲', '母亲', '爸爸', '妈妈', '爸', '妈', '爹', '娘', '哥哥', '姐姐', '弟弟', '妹妹', '哥', '姐', '弟', '妹', '叔叔', '阿姨', '爷爷', '奶奶', '外公', '外婆',
+    '魔女', '魔王', '勇者', '圣女', '神', '女神', '医生', '护士', '警察', '店长', '掌柜', '管家', '女仆', '仆人', '侍女', '侍卫', '将军', '宗主', '掌门', '长老',
+]);
+
+/** 能否凭这个别名认定是同一个角色：至少两个字，且不是泛称 */
+export function isSpecificAlias(alias) {
+    const s = String(alias || '').trim();
+    return s.length >= 2 && !GENERIC_ALIASES.has(s);
+}
+
+/**
+ * 找到与 AI 输出的名字对应的已有角色。
+ * 规则（避免不同角色被“滚雪球”式地并到一起）：
+ * 1. 名字与已有角色名完全相同 → 就是它；
+ * 2. 名字是某个已有角色的别名 → 只有唯一匹配时才算；
+ * 3. 别名与已有角色的名字/别名相同 → 只认够具体的别名（isSpecificAlias），且只有唯一匹配时才算；
+ * 匹配到多个角色时视为有歧义，不合并（返回 null，按新角色处理，之后可在角色页手动合并）。
+ */
 export function findCharacterKey(project, name, aliases = []) {
     const n = String(name || '').trim();
     if (!n) return null;
     if (project.characters[n]) return n;
-    const names = [n, ...uniq(aliases)];
-    for (const [key, ch] of Object.entries(project.characters)) {
-        const own = [key, ...(ch.aliases || [])];
-        if (names.some((x) => own.includes(x))) return key;
+    const entries = Object.entries(project.characters);
+    const byName = entries.filter(([, ch]) => (ch.aliases || []).includes(n)).map(([key]) => key);
+    const specific = uniq(aliases).filter((a) => a !== n && isSpecificAlias(a));
+    const byAlias = entries
+        .filter(([key, ch]) => specific.some((a) => a === key || (ch.aliases || []).includes(a)))
+        .map(([key]) => key);
+    if (byName.length === 1) {
+        // 名字只指向一个角色，但具体别名指向的是别人：名字是泛称时信别名，否则视为有歧义
+        if (!byAlias.length || byAlias.includes(byName[0])) return byName[0];
+        if (!isSpecificAlias(n)) return byAlias.length === 1 ? byAlias[0] : null;
+        return null;
     }
-    return null;
+    // 名字有歧义时，用具体别名帮忙确认是哪一个
+    if (byName.length > 1) {
+        const both = byName.filter((k) => byAlias.includes(k));
+        return both.length === 1 ? both[0] : null;
+    }
+    return byAlias.length === 1 ? byAlias[0] : null;
 }
 
 export function findEntryKey(project, category, name, keywords = []) {
@@ -383,12 +426,21 @@ export function mergeCharacter(project, incoming, chunkIndex, opt = {}) {
     const ch = isNew ? normalizeCharacter({ name: incoming.name }) : project.characters[key];
     if (isNew) project.characters[ch.name] = ch;
 
-    // 别名：若 AI 用了别名作为 name，把它记入别名
-    const allNames = uniq([incoming.name, ...(incoming.aliases || [])]).filter((n) => n !== ch.name);
+    // 别名：若 AI 用了别名作为 name，把它记入别名。
+    // 不收下属于其他角色的名字，也不收已被其他角色占用的具体别名，避免以后把别人并进来（泛称可以多人共用，匹配时本来就不认）
+    const ownedByOther = (a) => Object.entries(project.characters).some(([k, c]) => c !== ch && (k === a || (isSpecificAlias(a) && (c.aliases || []).includes(a))));
+    const allNames = uniq([incoming.name, ...(incoming.aliases || [])]).filter((n) => n !== ch.name && !ownedByOther(n));
+    if (!ch.aliasSources || typeof ch.aliasSources !== 'object') ch.aliasSources = {};
+    for (const a of allNames) {
+        // 只给“本次新加的”或“已经有出处记录的”别名记出处；没有记录的旧别名视为手动/旧数据，保持永久
+        if (!ch.aliases.includes(a)) ch.aliasSources[a] = [chunkIndex];
+        else if (Array.isArray(ch.aliasSources[a]) && !ch.aliasSources[a].includes(chunkIndex)) ch.aliasSources[a].push(chunkIndex);
+    }
     ch.aliases = uniq([...ch.aliases, ...allNames]);
 
     const isLatest = chunkIndex >= ch.lastChunk;
     const stageChange = {};
+    const unapplied = [];
     for (const f of ['gender', 'age']) {
         if (incoming[f] && (!ch[f] || (isLatest && !ch.locked))) ch[f] = incoming[f];
     }
@@ -403,10 +455,11 @@ export function mergeCharacter(project, incoming, chunkIndex, opt = {}) {
             stageChange[f] = v;
         } else {
             stageChange[f] = v;
+            unapplied.push(f);
         }
     }
     if (Object.keys(stageChange).length) {
-        ch.stages.push({ chunk: chunkIndex, ...stageChange });
+        ch.stages.push({ chunk: chunkIndex, ...stageChange, ...(unapplied.length ? { unapplied } : {}) });
         ch.stages.sort((a, b) => a.chunk - b.chunk);
         if (ch.stages.length > 40) ch.stages.splice(0, ch.stages.length - 40);
     }
@@ -837,9 +890,14 @@ export function renameInRelationships(project, oldName, newName) {
 }
 
 /** 清理关系图谱中指向已不存在角色的边（角色被删除后调用） */
+/** 角色是否还在：被“重新提取”暂时清掉、等着提取回来的角色也算（见 extract.js 的 resetChunksForReextract） */
+function characterAlive(project, name) {
+    return !!project.characters[name] || (Array.isArray(project.reextractPending) && project.reextractPending.includes(name));
+}
+
 export function pruneRelationships(project) {
     if (!Array.isArray(project.relationships) || !project.relationships.length) return;
-    project.relationships = project.relationships.filter((r) => project.characters[r.from] && project.characters[r.to]);
+    project.relationships = project.relationships.filter((r) => characterAlive(project, r.from) && characterAlive(project, r.to));
 }
 
 /** 角色改名/合并后同步群聊场景卡：成员名与 notes 的 key 一起改 */
@@ -859,14 +917,15 @@ export function renameInGroupCards(project, oldName, newName) {
 /** 清理成员不足两人的群聊场景卡（角色被删除后调用） */
 export function pruneGroupCards(project) {
     if (!Array.isArray(project.groupCards) || !project.groupCards.length) return;
-    for (const g of project.groupCards) g.members = g.members.filter((n) => project.characters[n]);
+    for (const g of project.groupCards) g.members = g.members.filter((n) => characterAlive(project, n));
     project.groupCards = project.groupCards.filter((g) => g.members.length >= 2);
 }
 
 /** 角色改名/合并后同步多视角管理：povStyles 的 key 与大纲章节的 pov 字段一起改 */
 export function renameInPov(project, oldName, newName) {
     if (project.povStyles && Object.prototype.hasOwnProperty.call(project.povStyles, oldName)) {
-        project.povStyles[newName] = project.povStyles[oldName];
+        // 合并时目标角色已有自己的视角文风，则保留目标的
+        if (!Object.prototype.hasOwnProperty.call(project.povStyles, newName)) project.povStyles[newName] = project.povStyles[oldName];
         delete project.povStyles[oldName];
     }
     for (const c of project.plan?.chapters || []) {
@@ -878,11 +937,11 @@ export function renameInPov(project, oldName, newName) {
 export function prunePov(project) {
     if (project.povStyles) {
         for (const k of Object.keys(project.povStyles)) {
-            if (!project.characters[k]) delete project.povStyles[k];
+            if (!characterAlive(project, k)) delete project.povStyles[k];
         }
     }
     for (const c of project.plan?.chapters || []) {
-        if (c.pov && !project.characters[c.pov]) c.pov = '';
+        if (c.pov && !characterAlive(project, c.pov)) c.pov = '';
     }
 }
 
@@ -924,6 +983,14 @@ export function mergeCharactersInto(project, targetName, sourceNames) {
         const s = project.characters[n];
         if (!s) continue;
         target.aliases = uniq([...target.aliases, n, ...s.aliases]).filter((a) => a !== targetName);
+        // 合并来的别名带上原来的出处（被合并角色自己的名字是人为合并的结果，不记出处，重新提取也不会清掉）
+        target.aliasSources = target.aliasSources || {};
+        for (const [a, src] of Object.entries(s.aliasSources || {})) {
+            if (a === targetName || !Array.isArray(src)) continue;
+            target.aliasSources[a] = uniq([...(target.aliasSources[a] || []), ...src].map(String)).map(Number);
+        }
+        delete target.aliasSources[n];
+        if (s.manual) target.manual = true;
         for (const f of ['gender', 'age', 'identity', 'personality', 'relationship']) if (!target[f] && s[f]) target[f] = s[f];
         target.appearance = uniq([...target.appearance, ...s.appearance]);
         target.abilities = uniq([...target.abilities, ...s.abilities]);
@@ -993,20 +1060,41 @@ export function remapChunkRefs(project, mapFn) {
         ch.quotes = ch.quotes.map((q) => ({ ...q, chunk: m(q.chunk) })).filter((q) => q.chunk !== null);
         ch.dialogues = (ch.dialogues || []).map((d) => ({ ...d, chunk: m(d.chunk) })).filter((d) => d.chunk !== null);
         ch.stages = ch.stages.map((s) => ({ ...s, chunk: m(s.chunk) })).filter((s) => s.chunk !== null);
+        const hadSeen = ch.chunksSeen.length > 0;
+        const oldFirst = ch.firstChunk;
         ch.chunksSeen = [...new Set(ch.chunksSeen.map(m).filter((x) => x !== null))].sort((a, b) => a - b);
-        if (!ch.chunksSeen.length && !ch.locked) {
-            delete project.characters[name];
-            continue;
+        if (ch.aliasSources && typeof ch.aliasSources === 'object') {
+            for (const [a, src] of Object.entries(ch.aliasSources)) {
+                if (!Array.isArray(src)) continue;
+                const mapped = [...new Set(src.map(m).filter((x) => x !== null))];
+                if (mapped.length) {
+                    ch.aliasSources[a] = mapped;
+                } else {
+                    // 只来自被删掉那一段的别名，随那一段一起去掉
+                    delete ch.aliasSources[a];
+                    ch.aliases = (ch.aliases || []).filter((x) => x !== a);
+                }
+            }
+        }
+        if (hadSeen && !ch.chunksSeen.length) {
+            if (ch.manual) {
+                const t = Number.isFinite(oldFirst) ? mapFn(oldFirst) : 0;
+                ch.chunksSeen = [t === null ? Math.max(0, oldFirst - 1) : t]; // 手动角色保留时间点
+            } else if (!ch.locked) {
+                delete project.characters[name];
+                continue;
+            }
         }
         ch.firstChunk = ch.chunksSeen.length ? Math.min(...ch.chunksSeen) : Infinity;
         ch.lastChunk = ch.chunksSeen.length ? Math.max(...ch.chunksSeen) : -1;
     }
     for (const cat of Object.values(project.worldbook)) {
         for (const [name, e] of Object.entries(cat)) {
+            const had = (e.sourceChunks || []).length > 0;
             e.sourceChunks = [...new Set((e.sourceChunks || []).map(m).filter((x) => x !== null))];
             e.revisions = (e.revisions || []).map((r) => ({ ...r, chunk: m(r.chunk) })).filter((r) => r.chunk !== null);
             if (e.revisions.length) e.content = e.revisions[e.revisions.length - 1].content;
-            if (!e.sourceChunks.length && !e.locked) delete cat[name];
+            if (had && !e.sourceChunks.length && !e.locked) delete cat[name];
         }
     }
     if (project.volumes?.length) {

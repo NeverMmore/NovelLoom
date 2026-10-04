@@ -75,9 +75,16 @@ export function openDialog({ title, body, buttons = [{ label: '关闭', value: n
         const bodyEl = overlay.querySelector('.nl-dialog-body');
         if (typeof body === 'string') bodyEl.innerHTML = body;
         else if (body) bodyEl.appendChild(body);
+        // 关闭后把焦点还给打开对话框的那个按钮（它已经被重新渲染掉的话就算了）
+        const opener = document.activeElement;
         const close = (value) => {
             overlay.remove();
             document.removeEventListener('keydown', onKey, true);
+            if (opener?.isConnected && !document.activeElement?.closest?.('.nl-dialog-overlay')) {
+                try {
+                    opener.focus({ preventScroll: true });
+                } catch { /* ignore */ }
+            }
             resolve({ value, root: bodyEl });
         };
         const onKey = (e) => {
@@ -100,8 +107,13 @@ export function openDialog({ title, body, buttons = [{ label: '关闭', value: n
         document.addEventListener('keydown', onKey, true);
         document.body.appendChild(overlay);
         onMount?.(bodyEl, close);
+        // 焦点移进对话框（避免焦点留在背后的按钮上，回车又打开一个对话框）：
+        // 有输入框就聚焦输入框；危险操作的确认框聚焦“取消”，防止回车误删；其他聚焦主按钮
         const first = bodyEl.querySelector('input, textarea, select');
-        first?.focus();
+        const foot = overlay.querySelector('.nl-dialog-foot');
+        if (first) first.focus();
+        else if (foot?.querySelector('.nl-danger')) foot.querySelector('button')?.focus();
+        else (foot?.querySelector('.nl-primary') || foot?.querySelector('button:last-child') || overlay.querySelector('[data-close]'))?.focus();
     });
 }
 
@@ -126,7 +138,11 @@ export async function promptDialog(message, defaultValue = '', { title = '输入
         onMount: (b, close) => {
             const el = b.querySelector('input');
             el?.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') close('ok');
+                // 阻止这次回车继续传给接下来打开的对话框（否则会直接“确认”下一个对话框）；输入法选词时的回车不算
+                if (e.key === 'Enter' && !e.isComposing) {
+                    e.preventDefault();
+                    close('ok');
+                }
             });
         },
     });

@@ -5,19 +5,24 @@ import { getVolumes, IMPORTANCE_RANK } from '../project.js';
 import {
     addCustomRelationType,
     addRelationship,
+    addRelationTemplate,
     allRelationTypes,
     analyzeRelationships,
+    applyRelationTemplate,
     customRelationTypes,
     exportRelationshipsJson,
     mergeRelationships,
     parseRelationshipsJson,
     relationsAt,
+    relationTemplates,
     relationTypeColor,
     relationTypeLabel,
     removeCustomRelationType,
     removeRelationship,
+    removeRelationTemplate,
     updateCustomRelationType,
     updateRelationship,
+    updateRelationTemplate,
 } from '../relations.js';
 import { createSnapshot } from '../store.js';
 import { downloadFile, pickFile, readFileAsText, safeFileName, truncate } from '../utils.js';
@@ -114,10 +119,16 @@ export const relationsTab = {
                 chunk: p.chunks.length ? p.chunks.length - 1 : 0,
             };
             const chunkOpts = p.chunks.map((c) => ({ value: String(c.index), label: `第 ${c.index + 1} 段：${truncate(c.title, 30)}` }));
+            const tpls = relationTemplates(app.settings);
+            // 套用模板：放在角色下面、类型上面（模板里的 {A}/{B} 用上面选的两个角色替换），整行宽
+            const tplField = tpls.length
+                ? `<div class="nl-field" style="grid-column:1 / -1"><label>套用模板（填好类型、方向和说明，之后仍可修改）</label><select class="nl-input" data-f="template">${optionList([{ value: '', label: '不使用模板' }, ...tpls.map((t) => ({ value: t.id, label: t.name }))], '')}</select></div>`
+                : '';
             const body = `
                 <div class="nl-grid2">
                     <div class="nl-field"><label>角色 A</label><select class="nl-input" data-f="from">${optionList(names, r.from)}</select></div>
                     <div class="nl-field"><label>角色 B</label><select class="nl-input" data-f="to">${optionList(names, r.to)}</select></div>
+                    ${tplField}
                     <div class="nl-field"><label>关系类型</label><select class="nl-input" data-f="type">${optionList(allRelationTypes(app.settings), r.type)}</select></div>
                     <div class="nl-field"><label><input type="checkbox" data-f="mutual" ${r.mutual ? 'checked' : ''}> 双向（不勾选表示 A → B 单向，如暗恋、师徒）</label></div>
                 </div>
@@ -129,6 +140,38 @@ export const relationsTab = {
                 body,
                 wide: true,
                 buttons: [{ label: '取消', value: null }, { label: '保存', value: 'ok', primary: true }],
+                onMount: (root) => {
+                    const tplSel = root.querySelector('[data-f="template"]');
+                    if (!tplSel) return;
+                    const f = (k) => root.querySelector(`[data-f="${k}"]`);
+                    const current = () => tpls.find((t) => t.id === tplSel.value);
+                    // 上次由模板填进去的说明；用户改过说明后（与它不一致）就不再自动改写
+                    let appliedLabel = null;
+                    const fillLabel = (t) => {
+                        appliedLabel = applyRelationTemplate(t, f('from').value, f('to').value).label;
+                        f('label').value = appliedLabel;
+                    };
+                    root.addEventListener('change', (e) => {
+                        if (e.target === tplSel) {
+                            const t = current();
+                            if (!t) {
+                                appliedLabel = null;
+                                return;
+                            }
+                            const res = applyRelationTemplate(t, f('from').value, f('to').value);
+                            const typeSel = f('type');
+                            typeSel.value = [...typeSel.options].some((o) => o.value === res.type) ? res.type : 'other';
+                            f('mutual').checked = res.mutual;
+                            // 模板没写说明时，不清掉用户自己写的说明（但上一个模板填的说明照样换掉）
+                            const lbl = f('label');
+                            if (res.label || !lbl.value.trim() || lbl.value === appliedLabel) fillLabel(t);
+                            else appliedLabel = null;
+                        } else if (e.target === f('from') || e.target === f('to')) {
+                            const t = current();
+                            if (t && appliedLabel !== null && f('label').value === appliedLabel) fillLabel(t);
+                        }
+                    });
+                },
             });
             if (value !== 'ok') return;
             const v = (f) => root.querySelector(`[data-f="${f}"]`);
@@ -217,6 +260,120 @@ export const relationsTab = {
             if (value === 'refresh') await openTypesDialog();
         };
 
+        /** 类型下拉选项；当前值若是已删除的自定义类型，补一个占位选项，免得下拉框默默显示成另一个类型 */
+        const typeOptions = (value) => {
+            const types = allRelationTypes(app.settings);
+            return optionList(types.some((t) => t.value === value) ? types : [...types, { value, label: '（已删除的类型）' }], value);
+        };
+
+        /** 关系模板管理：新增/修改/删除，保存在扩展设置里，跨项目共享；「AI 分析关系」也会参考 */
+        const openTemplatesDialog = async ({ focusNew = false } = {}) => {
+            const tpls = relationTemplates(app.settings);
+            const body = `
+                <div class="nl-muted nl-small">关系模板保存在扩展设置里，所有项目共用。说明里的 {A}、{B} 代表两个角色，套用时换成所选的角色名；「AI 分析关系」也会参考这些模板来归类。</div>
+                <div style="overflow-x:auto;margin-top:8px">
+                <table class="nl-table">
+                    <thead><tr><th>名称</th><th>关系类型</th><th>双向</th><th>说明</th><th></th></tr></thead>
+                    <tbody>
+                        ${tpls.map((t) => `<tr data-rtpl="${esc(t.id)}">
+                            <td><input class="nl-input" data-rt-name value="${esc(t.name)}" aria-label="模板名称" style="min-width:7em"></td>
+                            <td><select class="nl-input" data-rt-type aria-label="关系类型" style="min-width:7.5em">${typeOptions(t.type)}</select></td>
+                            <td style="vertical-align:middle"><input type="checkbox" data-rt-mutual ${t.mutual ? 'checked' : ''} aria-label="双向"></td>
+                            <td><input class="nl-input" data-rt-label value="${esc(t.label)}" placeholder="{A} 从小和 {B} 一起长大" aria-label="说明" style="min-width:12em"></td>
+                            <td style="vertical-align:middle"><button class="nl-icon-btn nl-danger" data-rt-del title="删除模板" aria-label="删除模板「${esc(t.name)}」">${icon('trash')}</button></td>
+                        </tr>`).join('') || '<tr><td colspan="5" class="nl-muted">还没有关系模板</td></tr>'}
+                        <tr>
+                            <td><input class="nl-input" data-rt-new-name placeholder="新模板名称，例如「青梅竹马」" aria-label="新模板名称" style="min-width:7em"></td>
+                            <td><select class="nl-input" data-rt-new-type aria-label="新模板的关系类型" style="min-width:7.5em">${typeOptions('friend')}</select></td>
+                            <td style="vertical-align:middle"><input type="checkbox" data-rt-new-mutual checked aria-label="新模板是否双向"></td>
+                            <td><input class="nl-input" data-rt-new-label placeholder="{A} 从小和 {B} 一起长大" aria-label="新模板的说明" style="min-width:12em"></td>
+                            <td style="vertical-align:middle"><button class="nl-btn nl-sm" data-rt-add>添加</button></td>
+                        </tr>
+                    </tbody>
+                </table>
+                </div>`;
+            // 改名：空名/重名不生效，提示并恢复原名
+            const rename = (id, input) => {
+                const n = input.value.trim();
+                const t = relationTemplates(app.settings).find((x) => x.id === id);
+                if (!t || n === t.name) return;
+                if (!n) app.log('请输入模板名称', 'warn');
+                else if (relationTemplates(app.settings).some((x) => x.id !== id && x.name === n)) app.log('已存在同名的关系模板', 'warn');
+                else {
+                    updateRelationTemplate(app.settings, id, { name: n });
+                    app.saveSettings();
+                    return;
+                }
+                input.value = t.name;
+            };
+            const { value, root } = await openDialog({
+                title: '关系模板',
+                wide: true,
+                body,
+                buttons: [{ label: '关闭', value: null }],
+                onMount: (r, close) => {
+                    const add = () => {
+                        try {
+                            addRelationTemplate(app.settings, {
+                                name: r.querySelector('[data-rt-new-name]').value,
+                                type: r.querySelector('[data-rt-new-type]').value,
+                                mutual: r.querySelector('[data-rt-new-mutual]').checked,
+                                label: r.querySelector('[data-rt-new-label]').value,
+                            });
+                            app.saveSettings();
+                            close('added');
+                        } catch (err) {
+                            app.log(err.message, 'warn');
+                        }
+                    };
+                    r.addEventListener('change', (e) => {
+                        const tr = e.target.closest('[data-rtpl]');
+                        if (!tr) return;
+                        const id = tr.dataset.rtpl;
+                        if (e.target.matches('[data-rt-name]')) return rename(id, e.target);
+                        if (e.target.matches('[data-rt-type]')) updateRelationTemplate(app.settings, id, { type: e.target.value });
+                        else if (e.target.matches('[data-rt-mutual]')) updateRelationTemplate(app.settings, id, { mutual: e.target.checked });
+                        else if (e.target.matches('[data-rt-label]')) updateRelationTemplate(app.settings, id, { label: e.target.value });
+                        else return;
+                        app.saveSettings();
+                    });
+                    r.addEventListener('keydown', (e) => {
+                        if (e.key === 'Enter' && e.target.matches('[data-rt-new-name], [data-rt-new-label]')) {
+                            e.preventDefault();
+                            add();
+                        }
+                    });
+                    r.addEventListener('click', async (e) => {
+                        const del = e.target.closest('[data-rt-del]');
+                        if (del) {
+                            const id = del.closest('[data-rtpl]').dataset.rtpl;
+                            const t = relationTemplates(app.settings).find((x) => x.id === id);
+                            if (!(await confirmDialog(`删除关系模板「${t?.name}」？已经用它填过的关系不受影响。`, { danger: true, okLabel: '删除' }))) return;
+                            removeRelationTemplate(app.settings, id);
+                            app.saveSettings();
+                            close('refresh');
+                        } else if (e.target.closest('[data-rt-add]')) {
+                            add();
+                        }
+                    });
+                    if (focusNew) setTimeout(() => r.querySelector('[data-rt-new-name]')?.focus(), 0);
+                },
+            });
+            // 按 Esc 关闭时输入框可能来不及触发 change：把各行当前的值再写一遍（空名/重名照旧忽略）
+            const before = JSON.stringify(app.settings.relationTemplates || []);
+            for (const tr of root.querySelectorAll('[data-rtpl]')) {
+                updateRelationTemplate(app.settings, tr.dataset.rtpl, {
+                    name: tr.querySelector('[data-rt-name]').value,
+                    type: tr.querySelector('[data-rt-type]').value,
+                    mutual: tr.querySelector('[data-rt-mutual]').checked,
+                    label: tr.querySelector('[data-rt-label]').value,
+                });
+            }
+            if (JSON.stringify(app.settings.relationTemplates || []) !== before) app.saveSettings();
+            render();
+            if (value === 'refresh' || value === 'added') await openTemplatesDialog({ focusNew: value === 'added' });
+        };
+
         const render = () => {
             const p = app.project;
             const edges = edgesFiltered();
@@ -225,7 +382,7 @@ export const relationsTab = {
             el.innerHTML = `
             <div class="nl-row nl-wrap">
                 <div class="nl-field"><label>故事时间点（防剧透：只显示此前已建立的关系）</label><select class="nl-input nl-inline" data-act-input="upto">${optionList(timeOptions(p), upto)}</select></div>
-                <div class="nl-field"><label>类型筛选</label><div class="nl-row"><select class="nl-input nl-inline" data-act-input="type">${optionList([{ value: 'all', label: '全部类型' }, ...allRelationTypes(app.settings)], typeFilter)}</select><button class="nl-btn nl-sm" data-act="manage-types">${icon('settings', { size: 14 })}自定义类型</button></div></div>
+                <div class="nl-field"><label>类型筛选</label><div class="nl-row"><select class="nl-input nl-inline" data-act-input="type">${optionList([{ value: 'all', label: '全部类型' }, ...allRelationTypes(app.settings)], typeFilter)}</select><button class="nl-btn nl-sm" data-act="manage-types">${icon('settings', { size: 14 })}自定义类型</button><button class="nl-btn nl-sm" data-act="manage-templates" title="常用关系的类型、方向和说明写法，添加关系时一键套用">${icon('file', { size: 14 })}关系模板</button></div></div>
             </div>
             ${focus ? `<div class="nl-row nl-muted nl-small">${icon('filter', { size: 14 })}只看「${esc(focus)}」的关系 <button class="nl-icon-btn" data-act="clear-focus" title="清除" aria-label="清除">${icon('close', { size: 14 })}</button></div>` : ''}
             <section class="nl-card nl-rel-graph">${buildSvg(graphEdges, names, focus, app.settings)}</section>
@@ -245,9 +402,11 @@ export const relationsTab = {
             </section>`;
             // 页面已被切走时（例如 AI 分析关系结束后 render）不再改动标题栏，免得覆盖其他页面的按钮
             if (el.isConnected) {
+                const nTpl = relationTemplates(app.settings).length;
+                const analyzeTitle = `只使用所选故事时间点之前的资料${nTpl ? `；会参考你的 ${nTpl} 个关系模板来归类` : ''}`;
                 setActions?.(`<button class="nl-btn" data-act="export">${icon('download')}导出</button>`
                     + `<button class="nl-btn" data-act="import">${icon('upload')}导入</button>`
-                    + `<button class="nl-btn" data-act="analyze" title="只使用所选故事时间点之前的资料">${icon('wand')}AI 分析关系</button>`, onClick);
+                    + `<button class="nl-btn" data-act="analyze" title="${esc(analyzeTitle)}">${icon('wand')}AI 分析关系</button>`, onClick);
             }
         };
 
@@ -290,6 +449,9 @@ export const relationsTab = {
                     break;
                 case 'manage-types':
                     await openTypesDialog();
+                    break;
+                case 'manage-templates':
+                    await openTemplatesDialog();
                     break;
                 case 'analyze':
                     await busy(btn, async () => {

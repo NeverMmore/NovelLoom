@@ -2,7 +2,7 @@
 
 export const MODULE = 'novel_loom';
 export const PREFIX = 'nl';
-export const VERSION = '0.9.1';
+export const VERSION = '0.10.0';
 export const DB_NAME = 'NovelLoomDB';
 export const DB_VERSION = 1;
 
@@ -211,6 +211,8 @@ export const DEFAULT_SETTINGS = {
     defaultEntries: [], // [{category, name, keywords, content}]
     /** 自定义关系类型：保存在扩展设置里，跨项目共享，与内置类型合并使用（见 relations.js 的 allRelationTypes） */
     customRelationTypes: [], // [{value, label, color}]
+    /** 关系模板：保存在扩展设置里，跨项目共享（见 relations.js 的 relationTemplates） */
+    relationTemplates: [], // [{id, name, type, mutual, label, createdAt}]
     /** 剧情推演·走向模板：保存在扩展设置里，跨项目共享（见 deduce.js 的 branchTemplates） */
     branchTemplates: [], // [{id, label, hint, createdAt}]
 };

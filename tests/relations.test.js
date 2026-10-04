@@ -240,13 +240,13 @@ test('deleteChunkAt：角色因分段删除而被移除时，指向它的关系�
     assert.equal(p.relationships[0].chunk, 0, '剩余关系的 chunk 应该跟着重映射（原为 1，段 0 被删后变为 0）');
 });
 
-test('extract.removeChunkContributions：清除某段贡献时同步清理该段建立的关系', () => {
+test('extract.removeChunkContributions：提取不产生关系，重新提取不删关系（手动的、AI 分析的都保留）', () => {
     const p = project();
     addRelationship(p, { from: '江酒', to: '莉莉丝', type: 'romantic', chunk: 0 });
     addRelationship(p, { from: '江酒', to: '莉莉丝', type: 'friend', chunk: 1 });
+    p.relationships.push({ ...p.relationships[1], id: 'r_auto', type: 'rival', auto: true });
     removeChunkContributions(p, 1);
-    assert.equal(p.relationships.length, 1);
-    assert.equal(p.relationships[0].type, 'romantic');
+    assert.deepEqual(p.relationships.map((r) => r.type).sort(), ['friend', 'rival', 'romantic']);
 });
 
 // ---------------- 角色卡接入 ----------------

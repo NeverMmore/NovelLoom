@@ -56,6 +56,18 @@ export function applyConfig(settings, json) {
             settings[key] = { ...settings[key], ...structuredCloneSafe(s[key]) };
         }
     }
+    // 跨项目共享的自定义列表：按 id 合并，不覆盖本机已有的其他项
+    for (const [key, idKey] of [['customRelationTypes', 'value'], ['relationTemplates', 'id'], ['branchTemplates', 'id']]) {
+        if (!Array.isArray(s[key])) continue;
+        const cur = Array.isArray(settings[key]) ? settings[key] : [];
+        for (const item of structuredCloneSafe(s[key])) {
+            if (!item?.[idKey]) continue;
+            const i = cur.findIndex((x) => x?.[idKey] === item[idKey]);
+            if (i >= 0) cur[i] = item;
+            else cur.push(item);
+        }
+        settings[key] = cur;
+    }
     settings.chatgen.isRunning = false;
 }
 

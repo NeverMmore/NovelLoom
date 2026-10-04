@@ -159,11 +159,19 @@ export async function deleteProject(id) {
 
 // ---------------- 快照（修改历史） ----------------
 
-const SNAPSHOT_FIELDS = ['worldbook', 'characters', 'outline', 'cards', 'style'];
+const SNAPSHOT_FIELDS = ['worldbook', 'characters', 'outline', 'cards', 'style', 'relationships', 'groupCards', 'povStyles', 'missingNames', 'censorFlags'];
+
+/** 分段的提取状态（不含正文，正文太大且快照不会改动它）：恢复快照时按 id 写回，保证“待提取/已完成”与资料一致 */
+const CHUNK_STATE_FIELDS = ['status', 'outline', 'important', 'error', 'processedAt'];
 
 export async function createSnapshot(project, label = '手动快照') {
     const data = {};
     for (const f of SNAPSHOT_FIELDS) data[f] = structuredCloneSafe(project[f]);
+    data.chunkState = (project.chunks || []).map((c) => {
+        const s = { id: c.id };
+        for (const f of CHUNK_STATE_FIELDS) if (c[f] !== undefined) s[f] = structuredCloneSafe(c[f]);
+        return s;
+    });
     const snap = {
         id: uid('s_'),
         projectId: project.id,
@@ -196,6 +204,21 @@ export async function restoreSnapshot(project, snapId) {
     if (!snap) throw new Error('快照不存在');
     for (const f of SNAPSHOT_FIELDS) {
         if (snap.data[f] !== undefined) project[f] = structuredCloneSafe(snap.data[f]);
+    }
+    // 旧快照没有 chunkState，分段状态保持不变；分段被增删过时只写回 id 还对得上的
+    if (Array.isArray(snap.data.chunkState)) {
+        const byId = new Map(snap.data.chunkState.map((s) => [s.id, s]));
+        for (const c of project.chunks || []) {
+            const s = byId.get(c.id);
+            if (!s) continue;
+            for (const f of CHUNK_STATE_FIELDS) {
+                if (s[f] !== undefined) c[f] = structuredCloneSafe(s[f]);
+                else if (f === 'outline' || f === 'important') c[f] = [];
+                else if (f === 'error') c[f] = '';
+                else delete c[f];
+            }
+            if (!c.status || c.status === 'processing') c.status = 'pending';
+        }
     }
     return project;
 }

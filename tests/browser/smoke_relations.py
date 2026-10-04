@@ -1,4 +1,4 @@
-# 浏览器冒烟测试（人物关系图谱）：手动增删改、AI 分析、类型/时间点筛选、图谱节点聚焦、导出导入
+# 浏览器冒烟测试（人物关系图谱）：手动增删改、AI 分析、类型/时间点筛选、图谱节点聚焦、导出导入、关系模板（管理、套用、AI 分析参考）
 import json, os, subprocess, sys, time
 from playwright.sync_api import sync_playwright
 
@@ -18,6 +18,10 @@ errors = []
 
 def shot(page, name):
     page.screenshot(path=os.path.join(OUT, name + '.png'))
+
+def settle(page):
+    # 对话框有淡入动画：截图前等动画播完
+    page.wait_for_function('document.getAnimations().every((a) => a.playState !== "running" || a.effect?.getComputedTiming().endTime === Infinity)')
 
 def wait_log(page, text, timeout=30000):
     page.wait_for_function('(t) => [...document.querySelectorAll(".nl-log-line")].some(l => l.textContent.includes(t))', arg=text, timeout=timeout)
@@ -155,6 +159,90 @@ try:
         page.click('.nl-table [data-act="del"] >> nth=0')
         page.click('.nl-dialog-foot button:has-text("删除")')
         page.wait_for_function('(n) => document.querySelectorAll(".nl-table tbody tr").length === n', arg=after_rows - 1)
+
+        # 关系模板：新增模板（扩展设置里保存）
+        assert ev(page, 'NovelLoom.app.settings.relationTemplates.length') == 0
+        assert '关系模板' not in (page.get_attribute('[data-act="analyze"]', 'title') or '')
+        saved_before = ev(page, 'window.__settingsSaved || 0')
+        page.click('[data-act="manage-templates"]')
+        page.wait_for_selector('.nl-dialog [data-rt-new-name]')
+        assert '还没有关系模板' in page.inner_text('.nl-dialog')
+        page.fill('.nl-dialog [data-rt-new-name]', '青梅竹马')
+        page.select_option('.nl-dialog [data-rt-new-type]', 'friend')
+        page.check('.nl-dialog [data-rt-new-mutual]')
+        page.fill('.nl-dialog [data-rt-new-label]', '{A}和{B}从小一起长大')
+        page.click('.nl-dialog [data-rt-add]')
+        page.wait_for_selector('.nl-dialog tr[data-rtpl]')
+        tpls = ev(page, 'NovelLoom.app.settings.relationTemplates')
+        print('relation templates:', json.dumps(tpls, ensure_ascii=False))
+        assert len(tpls) == 1, tpls
+        tpl = tpls[0]
+        assert tpl['name'] == '青梅竹马' and tpl['type'] == 'friend' and tpl['mutual'] is True and tpl['label'] == '{A}和{B}从小一起长大', tpl
+        assert ev(page, 'window.__settingsSaved || 0') > saved_before, '新增模板后应保存扩展设置'
+        assert page.input_value(f'.nl-dialog tr[data-rtpl="{tpl["id"]}"] [data-rt-name]') == '青梅竹马'
+        assert page.input_value(f'.nl-dialog tr[data-rtpl="{tpl["id"]}"] [data-rt-label]') == '{A}和{B}从小一起长大'
+        settle(page)
+        shot(page, '06-templates-dialog')
+        ok_dialog(page, '关闭')
+        page.wait_for_function('!document.querySelector(".nl-dialog")')
+        analyze_title = page.get_attribute('[data-act="analyze"]', 'title') or ''
+        assert '会参考你的 1 个关系模板' in analyze_title, analyze_title
+
+        # 添加关系时套用模板：类型/方向/说明被填好，{A}/{B} 换成所选角色；改角色 B 时说明跟着更新
+        page.click('[data-act="add"]')
+        page.wait_for_selector('.nl-dialog select[data-f="template"]')
+        page.select_option('.nl-dialog select[data-f="from"]', '莉莉丝')
+        page.select_option('.nl-dialog select[data-f="to"]', '江酒')
+        page.select_option('.nl-dialog select[data-f="type"]', 'enemy')
+        page.uncheck('.nl-dialog [data-f="mutual"]')
+        page.select_option('.nl-dialog select[data-f="template"]', label='青梅竹马')
+        assert page.input_value('.nl-dialog select[data-f="type"]') == 'friend'
+        assert page.is_checked('.nl-dialog [data-f="mutual"]')
+        assert page.input_value('.nl-dialog [data-f="label"]') == '莉莉丝和江酒从小一起长大', page.input_value('.nl-dialog [data-f="label"]')
+        page.select_option('.nl-dialog select[data-f="to"]', '姜小白')
+        assert page.input_value('.nl-dialog [data-f="label"]') == '莉莉丝和姜小白从小一起长大', page.input_value('.nl-dialog [data-f="label"]')
+        shot(page, '07-apply-template')
+        ok_dialog(page, '保存')
+        wait_log(page, '已添加关系：莉莉丝 ↔ 姜小白')
+        stored = ev(page, "NovelLoom.app.project.relationships.filter((r) => r.from === '莉莉丝' && r.to === '姜小白')")
+        print('relationship from template:', json.dumps(stored, ensure_ascii=False))
+        assert len(stored) == 1, stored
+        assert stored[0]['type'] == 'friend' and stored[0]['mutual'] is True and stored[0]['label'] == '莉莉丝和姜小白从小一起长大' and not stored[0]['auto'], stored
+        assert '莉莉丝和姜小白从小一起长大' in page.inner_text('.nl-table')
+
+        # AI 分析关系：提示词里带上用户的关系模板
+        n_logs = ev(page, '[...document.querySelectorAll(".nl-log-line")].filter((l) => l.textContent.includes("AI 分析关系：")).length')
+        page.evaluate('window.__prompts = []')
+        page.click('[data-act="analyze"]')
+        page.wait_for_function('(n) => [...document.querySelectorAll(".nl-log-line")].filter((l) => l.textContent.includes("AI 分析关系：")).length > n', arg=n_logs, timeout=20000)
+        rel_prompts = ev(page, 'window.__prompts.filter((p) => p.includes("梳理角色之间已经明确建立的关系"))')
+        assert rel_prompts, '没有发出 AI 分析关系的请求'
+        rel_prompt = rel_prompts[-1]
+        assert '青梅竹马' in rel_prompt and '从小一起长大' in rel_prompt, rel_prompt[-1500:]
+        print('analyze prompt includes relation template')
+        assert ev(page, "NovelLoom.app.project.relationships.some((r) => r.from === '莉莉丝' && r.to === '姜小白' && r.label === '莉莉丝和姜小白从小一起长大')"), '分析后手动套用模板的关系应保留'
+
+        # 窄屏下的模板对话框：表格在对话框里横向滚动，页面本身不横向滚动；随后删除模板
+        page.set_viewport_size({'width': 390, 'height': 844})
+        page.click('[data-act="manage-templates"]')
+        page.wait_for_selector('.nl-dialog tr[data-rtpl]')
+        overflow = ev(page, '({ doc: document.documentElement.scrollWidth, win: window.innerWidth, dlg: document.querySelector(".nl-dialog").getBoundingClientRect().right })')
+        print('mobile template dialog widths:', overflow)
+        assert overflow['doc'] <= overflow['win'] and overflow['dlg'] <= overflow['win'] + 1, overflow
+        settle(page)
+        shot(page, '08-templates-mobile')
+        page.click(f'.nl-dialog tr[data-rtpl="{tpl["id"]}"] [data-rt-del]')
+        page.click('.nl-dialog-foot button:has-text("删除")')
+        page.wait_for_function('[...document.querySelectorAll(".nl-dialog")].some((d) => d.textContent.includes("还没有关系模板"))')
+        assert ev(page, 'NovelLoom.app.settings.relationTemplates.length') == 0
+        ok_dialog(page, '关闭')
+        page.wait_for_function('!document.querySelector(".nl-dialog")')
+        assert '关系模板' not in (page.get_attribute('[data-act="analyze"]', 'title') or '')
+        page.click('[data-act="add"]')
+        page.wait_for_selector('.nl-dialog select[data-f="from"]')
+        assert page.locator('.nl-dialog [data-f="template"]').count() == 0, '没有模板时不应显示「套用模板」'
+        ok_dialog(page, '取消')
+        page.wait_for_function('!document.querySelector(".nl-dialog")')
 
         # 窄屏
         page.set_viewport_size({'width': 390, 'height': 844})

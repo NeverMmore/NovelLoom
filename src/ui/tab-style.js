@@ -374,7 +374,7 @@ export const styleTab = {
                         const { value } = await openDialog({
                             title: '自动挑选范文',
                             body: `<div>从全书均匀挑出 ${picked.length} 段对话与叙述兼有的片段。</div>`,
-                            buttons: [{ label: '取消', value: null }, { label: '追加', value: 'add' }, { label: '替换现有范文', value: 'replace', primary: true }],
+                            buttons: [{ label: '取消', value: null }, { label: '替换现有范文', value: 'replace', danger: true }, { label: '追加', value: 'add', primary: true }],
                         });
                         if (!value) return;
                         replace = value === 'replace';

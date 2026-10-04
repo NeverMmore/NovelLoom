@@ -50,42 +50,138 @@ export function buildExtractPrompt(project, settings, chunk, known) {
     };
 }
 
-/** 清除某分块对项目的贡献（用于重新提取） */
-export function removeChunkContributions(project, idx) {
+/** 角色档案里随提取逐段更新的文字字段（每次变化都记在 stages 里） */
+const STAGE_FIELDS = ['identity', 'personality', 'relationship'];
+
+/**
+ * 这一段有没有可以清除的提取结果（只算 removeChunkContributions 真的会清掉的：角色经历/台词/阶段/别名、
+ * 世界书修订、大纲、未回答的待核实名称等；手动角色的时间点、已回答的待核实名称、关系都不算）
+ */
+export function chunkHasContributions(project, idx) {
+    const c = project.chunks[idx];
+    if (!c) return false;
+    if (c.status === 'done' || c.outline?.length || c.important?.length) return true;
+    for (const ch of Object.values(project.characters)) {
+        const onlyAnchor = ch.manual && ch.chunksSeen?.length === 1;
+        if (ch.chunksSeen?.includes(idx) && !onlyAnchor) return true;
+        if ([ch.experiences, ch.quotes, ch.dialogues, ch.stages].some((list) => (list || []).some((x) => x.chunk === idx))) return true;
+        if (Object.values(ch.aliasSources || {}).some((src) => Array.isArray(src) && src.includes(idx))) return true;
+    }
+    for (const cat of Object.values(project.worldbook)) {
+        for (const e of Object.values(cat)) {
+            if ((e.sourceChunks || []).includes(idx) || (e.revisions || []).some((r) => r.chunk === idx)) return true;
+        }
+    }
+    return (project.missingNames || []).some((m) => m.chunk === idx && !String(m.resolved || '').trim())
+        || (project.censorFlags || []).some((x) => x.chunk === idx);
+}
+
+/**
+ * 清除某分块对项目的贡献（用于重新提取）。
+ * - 只有“这一段是它最后的出处”的角色/条目才会被删掉；手动新建的、锁定的都保留；
+ * - 身份/性格/关系：只有这一段是该角色目前最晚出现的一段、且当前值就是这一段写进去的，才回退到之前真正写入过的记录；
+ *   更早的记录已经被截掉时保留当前值；手动改过的值（和这一段写的不一样）不会被回退
+ *   （想让手动修改在重新提取后也不被 AI 覆盖，请锁定角色）；
+ * - 别名：清掉“只来自这一段”的别名（有出处记录的才清，手动加的和旧数据里的别名保留）；
+ * - 关系图谱不动：提取本来就不产生关系，关系来自「AI 分析关系」或手动添加；
+ * - 已经填写了答案的待核实名称保留；
+ * @param {{prune?: boolean}} opt prune=false：重新提取时用。被清掉的角色马上会重新提取回来，
+ *   所以不要连带删掉指向它们的关系、群聊卡成员和视角文风（默认 true，供真正删除分段时使用）
+ */
+export function removeChunkContributions(project, idx, { prune = true } = {}) {
     for (const [name, ch] of Object.entries(project.characters)) {
+        const had = ch.chunksSeen.includes(idx);
+        const laterSeen = ch.chunksSeen.some((c) => c > idx);
+        const earlierSeen = ch.chunksSeen.some((c) => c < idx);
+        if (!ch.locked && had && !laterSeen) {
+            // 只看真正写进档案的阶段值（锁定/非最新段时 AI 的提议只记录不写入，标在 unapplied 里）
+            const applied = (s, f) => s[f] && !(Array.isArray(s.unapplied) && s.unapplied.includes(f));
+            for (const f of STAGE_FIELDS) {
+                // 这个字段最后一次被写入，是否就是这一段的提取结果；当前值不一样说明手动改过，不回退
+                const last = [...ch.stages].reverse().find((s) => applied(s, f));
+                if (!last || last.chunk !== idx || last[f] !== ch[f]) continue;
+                const prev = ch.stages.filter((s) => s.chunk < idx && applied(s, f)).pop();
+                if (prev) ch[f] = prev[f];
+                else if (!earlierSeen) ch[f] = '';
+                // 更早出现过但没有记录（被 40 条上限截掉）：不知道之前是什么，保留当前值
+            }
+        }
         ch.experiences = ch.experiences.filter((e) => e.chunk !== idx);
         ch.quotes = ch.quotes.filter((q) => q.chunk !== idx);
         ch.dialogues = (ch.dialogues || []).filter((d) => d.chunk !== idx);
         ch.stages = ch.stages.filter((s) => s.chunk !== idx);
+        if (ch.aliasSources && typeof ch.aliasSources === 'object') {
+            for (const [a, src] of Object.entries(ch.aliasSources)) {
+                if (!Array.isArray(src)) continue;
+                const rest = src.filter((c) => c !== idx);
+                if (rest.length) {
+                    ch.aliasSources[a] = rest;
+                } else {
+                    delete ch.aliasSources[a];
+                    ch.aliases = (ch.aliases || []).filter((x) => x !== a);
+                }
+            }
+        }
         ch.chunksSeen = ch.chunksSeen.filter((c) => c !== idx);
-        if (!ch.chunksSeen.length && !ch.locked) {
-            delete project.characters[name];
-            continue;
+        if (had && !ch.chunksSeen.length) {
+            if (ch.manual) {
+                ch.chunksSeen = [idx]; // 手动角色保留它的时间点，故事时间点筛选里不会消失
+            } else if (!ch.locked) {
+                delete project.characters[name];
+                continue;
+            }
         }
         ch.firstChunk = ch.chunksSeen.length ? Math.min(...ch.chunksSeen) : Infinity;
         ch.lastChunk = ch.chunksSeen.length ? Math.max(...ch.chunksSeen) : -1;
     }
     for (const cat of Object.values(project.worldbook)) {
         for (const [name, e] of Object.entries(cat)) {
+            const had = (e.sourceChunks || []).includes(idx);
             e.sourceChunks = (e.sourceChunks || []).filter((c) => c !== idx);
             e.revisions = (e.revisions || []).filter((r) => r.chunk !== idx);
             if (e.revisions.length) e.content = e.revisions[e.revisions.length - 1].content;
-            if (!e.sourceChunks.length && !e.locked) delete cat[name];
+            if (had && !e.sourceChunks.length && !e.locked) delete cat[name];
         }
     }
-    project.missingNames = project.missingNames.filter((m) => m.chunk !== idx);
+    project.missingNames = project.missingNames.filter((m) => m.chunk !== idx || String(m.resolved || '').trim());
     project.censorFlags = (project.censorFlags || []).filter((f) => f.chunk !== idx);
-    if (Array.isArray(project.relationships) && project.relationships.length) {
-        project.relationships = project.relationships.filter((r) => r.chunk !== idx);
+    if (prune) {
         pruneRelationships(project);
+        pruneGroupCards(project);
+        prunePov(project);
     }
-    pruneGroupCards(project);
-    prunePov(project);
     const chunk = project.chunks[idx];
     if (chunk) {
         chunk.outline = [];
         chunk.important = [];
     }
+}
+
+/**
+ * 准备重新提取若干分段：从后往前清掉这些段的贡献，状态改回“待提取”。
+ * 从后往前清，保证身份/性格等字段能一路回退到这些段之前的记录。
+ * @param {number[]} indices 分段序号
+ * @returns {number} 实际重置的段数
+ */
+export function resetChunksForReextract(project, indices) {
+    const list = [...new Set(indices)].filter((i) => Number.isInteger(i) && project.chunks[i]).sort((a, b) => b - a);
+    const before = new Set(Object.keys(project.characters));
+    for (const i of list) {
+        removeChunkContributions(project, i, { prune: false });
+        const c = project.chunks[i];
+        c.status = 'pending';
+        c.error = '';
+        c.lastRaw = '';
+    }
+    const removed = [...before].filter((n) => !project.characters[n]);
+    if (removed.length) project.reextractPending = [...new Set([...(project.reextractPending || []), ...removed])];
+    return list.length;
+}
+
+/** 从第 start 段（含）起全部重新提取的准备工作；start = 0 即全部重新提取 */
+export function resetExtractionFrom(project, start = 0) {
+    const from = Math.max(0, Math.floor(Number(start) || 0));
+    return resetChunksForReextract(project, project.chunks.map((c) => c.index).filter((i) => i >= from));
 }
 
 /**
@@ -356,6 +452,8 @@ export class ExtractionRunner {
             }
         } finally {
             for (const c of project.chunks) if (c.status === 'processing') c.status = 'pending';
+            // 所有分段都提取完了：等待重新提取的角色名单作废（没有再提取回来的角色，留下的关系/群聊卡引用保持原样，不自动删除）
+            if (project.reextractPending?.length && project.chunks.every((c) => c.status === 'done')) project.reextractPending = [];
             await this.save();
             this.running = false;
             const stopped = signal.aborted ? '（已停止）' : this.pauseRequested ? '（已暂停）' : '';

@@ -2,7 +2,7 @@
 
 import { app } from '../app.js';
 import { CHAPTER_REGEX_PRESETS } from '../constants.js';
-import { removeChunkContributions } from '../extract.js';
+import { chunkHasContributions, removeChunkContributions, resetChunksForReextract } from '../extract.js';
 import { addVolumeAt, chunkOutlineText, deleteChunkAt, detectVolumesFromChunks, getVolumes, mergeChunkWithNext, removeVolume, volumeRangeLabel } from '../project.js';
 import { buildVolumeSummary } from '../tools.js';
 import { rewriteSelection } from '../rewrite.js';
@@ -69,8 +69,8 @@ export const chunksTab = {
                     <button class="nl-btn nl-sm" data-act="toggle-select">${selecting ? '退出多选' : '多选'}</button>
                     ${selecting ? `
                         <button class="nl-btn nl-sm" data-act="select-all">全选</button>
-                        <button class="nl-btn nl-sm" data-act="reset-selected">标记待提取</button>
-                        <button class="nl-btn nl-sm nl-primary" data-act="extract-selected">提取所选</button>
+                        <button class="nl-btn nl-sm" data-act="reset-selected" title="清除所选分段已提取的资料，并标记为待提取">清除并重置</button>
+                        <button class="nl-btn nl-sm nl-primary" data-act="extract-selected" title="先清除所选分段已提取的资料，再重新提取">提取所选</button>
                         <button class="nl-btn nl-sm nl-danger" data-act="delete-selected">删除所选</button>` : ''}
                 </div>
                 <div class="nl-chunk-list">
@@ -165,7 +165,8 @@ export const chunksTab = {
                 if (extra === null) return;
             }
             await createSnapshot(app.project, `重新提取 #${chunk.index + 1} 前`);
-            removeChunkContributions(app.project, chunk.index);
+            // 马上会重新提取回来，不连带删掉指向这些角色的关系/群聊卡/视角文风
+            removeChunkContributions(app.project, chunk.index, { prune: false });
             chunk.status = 'pending';
             const prevSuffix = app.settings.extraction.suffixPrompt;
             if (extra) app.settings.extraction.suffixPrompt = `${prevSuffix || ''}\n${extra}`.trim();
@@ -175,6 +176,43 @@ export const chunksTab = {
                 app.settings.extraction.suffixPrompt = prevSuffix;
             }
             render();
+        };
+
+        /** 这一段是否已有提取出的资料（已完成，或之前只改了状态、资料还留着） */
+        const hasData = (p, c) => chunkHasContributions(p, c.index);
+
+        /**
+         * 多选：先清除所选分段已提取的资料，再标记为待提取（避免新旧资料叠在一起）。
+         * @returns {Promise<object[]|null>} 被重置的分段；没选、正忙或取消时返回 null
+         */
+        const clearSelected = async (okLabel) => {
+            if (app.isBusy()) {
+                app.log('有任务正在运行，请稍后', 'warn');
+                return null;
+            }
+            const p = app.project;
+            const chunks = [...selected].map(find).filter(Boolean);
+            if (!chunks.length) {
+                app.log('请先勾选要处理的分段', 'warn');
+                return null;
+            }
+            const withData = chunks.filter((c) => hasData(p, c));
+            if (withData.length) {
+                const ok = await confirmDialog(
+                    `所选 ${chunks.length} 段中有 ${withData.length} 段已经提取过资料。继续会先清除这些段提取出的资料（角色的经历、台词和别名，世界书条目，章节概要），只在这些段里出现过的角色和条目会被删掉，再标记为待提取。手动新建或锁定的内容、人物关系会保留。\n\n操作前会自动保存一份快照，可以在「世界书 → 修改历史」中恢复。`,
+                    { title: '清除已提取的资料', danger: true, okLabel },
+                );
+                if (!ok) return null;
+                if (app.isBusy()) {
+                    app.log('有任务正在运行，请稍后', 'warn');
+                    return null;
+                }
+                // 只有真的要清资料时才存快照，避免只改状态也刷出一堆快照
+                await createSnapshot(p, '重新提取所选前');
+            }
+            resetChunksForReextract(p, chunks.map((c) => c.index));
+            await app.saveNow();
+            return chunks;
         };
 
         const onClick = async (e) => {
@@ -281,19 +319,18 @@ export const chunksTab = {
                         selected.add(cb.dataset.id);
                     });
                     return;
-                case 'reset-selected':
-                    for (const id of selected) {
-                        const c = find(id);
-                        if (c) c.status = 'pending';
-                    }
-                    await app.saveNow();
-                    return render();
+                case 'reset-selected': {
+                    const reset = await clearSelected('清除并重置');
+                    if (!reset) return;
+                    app.log(`已清除 ${reset.length} 段的提取资料，并标记为待提取`, 'success');
+                    if (el.isConnected) render();
+                    return;
+                }
                 case 'extract-selected': {
-                    if (app.isBusy()) return app.log('有任务正在运行', 'warn');
-                    const ids = [...selected];
-                    if (!ids.length) return;
+                    const reset = await clearSelected('清除并重新提取');
+                    if (!reset) return;
                     switchTab('extract');
-                    app.extraction.run({ chunkIds: ids }).catch((err) => app.log(err.message, 'error'));
+                    app.extraction.run({ chunkIds: reset.map((c) => c.id) }).catch((err) => app.log(err.message, 'error'));
                     return;
                 }
                 case 'delete-selected': {

@@ -74,6 +74,64 @@ export function removeCustomRelationType(settings, value) {
     return settings.customRelationTypes.length !== n;
 }
 
+// ---------------- 关系模板（保存在扩展设置里，跨项目共享） ----------------
+// 一个模板 = 名称 + 关系类型 + 单向/双向 + 说明写法；说明里的 {A}/{B} 代表两个角色。
+// 手动添加/编辑关系时可一键套用；「AI 分析关系」时写进提示词，让 AI 优先按这些模板归类。
+
+export function relationTemplates(settings) {
+    const list = Array.isArray(settings?.relationTemplates) ? settings.relationTemplates : [];
+    return list
+        .filter((t) => t?.id && String(t.name || '').trim())
+        .map((t) => ({ id: String(t.id), name: String(t.name).trim(), type: String(t.type || 'other'), mutual: !!t.mutual, label: String(t.label || ''), createdAt: t.createdAt || 0 }));
+}
+
+export function addRelationTemplate(settings, { name, type = 'other', mutual = false, label = '' } = {}) {
+    if (!Array.isArray(settings.relationTemplates)) settings.relationTemplates = [];
+    const n = String(name || '').trim();
+    if (!n) throw new Error('请输入模板名称');
+    if (relationTemplates(settings).some((t) => t.name === n)) throw new Error('已存在同名的关系模板');
+    const t = { id: uid('rtpl_'), name: n, type: String(type || 'other'), mutual: !!mutual, label: String(label || '').trim(), createdAt: Date.now() };
+    settings.relationTemplates.push(t);
+    return t;
+}
+
+export function updateRelationTemplate(settings, id, patch = {}) {
+    const t = (settings.relationTemplates || []).find((x) => x.id === id);
+    if (!t) return null;
+    if (patch.name !== undefined) {
+        const n = String(patch.name).trim();
+        if (n && !relationTemplates(settings).some((x) => x.id !== id && x.name === n)) t.name = n;
+    }
+    if (patch.type !== undefined) t.type = String(patch.type || 'other');
+    if (patch.mutual !== undefined) t.mutual = !!patch.mutual;
+    if (patch.label !== undefined) t.label = String(patch.label).trim();
+    return t;
+}
+
+export function removeRelationTemplate(settings, id) {
+    if (!Array.isArray(settings.relationTemplates)) return false;
+    const n = settings.relationTemplates.length;
+    settings.relationTemplates = settings.relationTemplates.filter((t) => t.id !== id);
+    return settings.relationTemplates.length !== n;
+}
+
+/** 套用模板：返回要填进关系的类型、方向和说明（{A}/{B} 换成两个角色名；角色还没选时保留占位符） */
+export function applyRelationTemplate(template, from = '', to = '') {
+    const label = String(template?.label || '')
+        .replace(/\{A\}/g, from || '{A}')
+        .replace(/\{B\}/g, to || '{B}');
+    return { type: template?.type || 'other', mutual: !!template?.mutual, label };
+}
+
+/** 「AI 分析关系」提示词里的 {TYPES}：可用类型，加上用户的关系模板（没有模板时与原来一致） */
+export function relationTypesPromptText(settings) {
+    const types = allRelationTypes(settings).map((t) => `${t.value}=${t.label}`).join('、');
+    const tpls = relationTemplates(settings);
+    if (!tpls.length) return types;
+    const lines = tpls.map((t) => `- ${t.name}：type=${t.type}（${relationTypeLabel(t.type, settings)}），${t.mutual ? '双向' : '单向 A→B'}${t.label ? `，说明写法参考：${t.label}` : ''}`);
+    return `${types}\n\n用户常用的关系模板（判断关系时优先套用这些模板的类型与方向；说明可参照写法，把 {A}/{B} 换成具体角色并写出本书的具体情节）：\n${lines.join('\n')}`;
+}
+
 export function relationTypeLabel(v, settings) {
     return allRelationTypes(settings).find((t) => t.value === v)?.label || '其他';
 }
@@ -212,7 +270,7 @@ export async function analyzeRelationships(project, settings, { signal, onLog, u
         BOOK: project.bookName,
         PROFILES: truncate(profiles, 12000),
         EXISTING: existing,
-        TYPES: allRelationTypes(settings).map((t) => `${t.value}=${t.label}`).join('、'),
+        TYPES: relationTypesPromptText(settings),
     };
     const res = await callLLM({
         api: settings.api,

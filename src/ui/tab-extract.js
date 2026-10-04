@@ -1,11 +1,12 @@
 // 提取页：模式与参数、分类开关、运行控制、进度
 
 import { app } from '../app.js';
-import { buildExtractPrompt, knownContextFor } from '../extract.js';
+import { buildExtractPrompt, knownContextFor, resetExtractionFrom } from '../extract.js';
 import { getVolumes, projectStats, volumeOf } from '../project.js';
 import { API_MODES } from '../llm.js';
+import { createSnapshot } from '../store.js';
 import { formatDuration, formatNumber } from '../utils.js';
-import { bindSettings, chainPreviewHtml, esc, icon, openDialog, optionList, qs } from './common.js';
+import { bindSettings, busy, chainPreviewHtml, esc, icon, openDialog, optionList, qs } from './common.js';
 
 const MODES = [
     { value: 'serial', label: '串行 · 滚动累积（最连贯，推荐）' },
@@ -93,6 +94,7 @@ export const extractTab = {
                     <button class="nl-btn" data-act="pause">暂停</button>
                     <button class="nl-btn nl-danger" data-act="stop">停止</button>
                     <button class="nl-btn" data-act="retry" ${st.error ? '' : 'disabled'}>只重试失败段（${st.error}）</button>
+                    <button class="nl-btn" data-act="reextract" ${st.done + st.error ? 'title="清除已提取的结果，从头或从某一段起重新提取"' : 'disabled title="还没有提取过的分段"'}>重新提取…</button>
                     <button class="nl-btn" data-act="preview">预览下一段提示词</button>
                     ${Number.isFinite(start) ? `<span class="nl-tag">从第 ${start + 1} 段开始 <a href="#" data-act="clear-start" title="取消" aria-label="取消">${icon('close', { size: 12 })}</a></span>` : ''}
                 </div>
@@ -130,6 +132,81 @@ export const extractTab = {
             app.extraction.run({ startIndex, ...opt }).then(() => render()).catch((e) => app.log(e.message, 'error'));
         };
 
+        /** 重新提取：选择范围 → 快照 → 清除这些段的提取结果 → 按原流程开始提取 */
+        const reextract = async (btn) => {
+            if (app.isBusy()) return app.log('已有任务在运行', 'warn');
+            const p0 = app.project;
+            if (!p0?.chunks.length) return;
+            const firstTodo = p0.chunks.find((c) => c.status !== 'done');
+            const chunkLabel = (c) => {
+                const t = c.title.length > 24 ? `${c.title.slice(0, 24)}…` : c.title;
+                const s = c.status === 'done' ? '' : c.status === 'error' ? '（失败）' : '（未提取）';
+                return `#${c.index + 1} ${t}${s}`;
+            };
+            const mode = app.settings.extraction.mode;
+            const modeName = (MODES.find((m) => m.value === mode)?.label || mode).split(' · ')[0];
+            const tip = mode === 'serial'
+                ? '<div class="nl-muted nl-small">当前是串行模式：前文资料逐段累积，结果最连贯，角色最不容易混在一起。</div>'
+                : `<label><input type="checkbox" data-f="serial"> 这次改用串行模式（当前为「${esc(modeName)}」；串行最连贯，角色最不容易混在一起）</label>`;
+            const { value, root } = await openDialog({
+                title: '重新提取',
+                body: `
+                    <div class="nl-field" role="radiogroup" aria-label="重新提取范围">
+                        <div class="nl-row"><label class="nl-row"><input type="radio" name="nl-reex-scope" value="all" checked> 全部重新提取（共 ${p0.chunks.length} 段）</label></div>
+                        <div class="nl-row nl-wrap">
+                            <label class="nl-row"><input type="radio" name="nl-reex-scope" value="from"> 从</label>
+                            <select class="nl-input nl-inline" data-f="from" aria-label="从哪一段起重新提取">${optionList(p0.chunks.map((c) => ({ value: c.index, label: chunkLabel(c) })), firstTodo ? firstTodo.index : 0)}</select>
+                            <span>这一段起重新提取</span>
+                        </div>
+                        <div class="nl-muted nl-small" data-reex-count></div>
+                    </div>
+                    <div class="nl-field nl-small">
+                        <div><b>会清除：</b>这些分段提取出的角色经历、原文台词和对话示例、由这些分段带进来的别名，世界书条目的修订，章节概要。只出自这些分段的角色和条目会先被删除、再重新提取出来；角色的身份、性格、关系描述退回到这些分段之前的版本（你手动改过的不会被退回，但重新提取时 AI 可能再次改写——想原样保留，请先在「角色」页锁定该角色）。</div>
+                        <div><b>会保留：</b>手动新建或已锁定的角色和条目、人物关系（含 AI 分析出的）、群聊场景卡、视角文风、已经填写的待核实名称、角色卡、续写章节、文风设置。</div>
+                        <div class="nl-muted">旧版本提取出的别名没有出处记录，不会被清掉：如果某个角色已经混进了别人的名字，先在「角色」页删掉它（或编辑别名）再重新提取，最彻底的是「全部重新提取」。</div>
+                        <div class="nl-muted">开始前会自动保存快照「重新提取前」，不满意可以在「世界书 → 修改历史」中恢复（含分段的提取状态和关系）。</div>
+                    </div>
+                    <div class="nl-field"><div>${tip}</div></div>`,
+                buttons: [{ label: '取消', value: null }, { label: '重新提取', value: 'ok', danger: true }],
+                onMount: (body) => {
+                    const sel = body.querySelector('[data-f="from"]');
+                    const fromRadio = body.querySelector('input[name="nl-reex-scope"][value="from"]');
+                    const count = body.querySelector('[data-reex-count]');
+                    const update = () => {
+                        const from = fromRadio.checked ? Number(sel.value) : 0;
+                        const list = p0.chunks.filter((c) => c.index >= from);
+                        const done = list.filter((c) => c.status === 'done').length;
+                        count.textContent = `将重置 ${list.length} 段（其中 ${done} 段已提取过），然后重新提取。`;
+                    };
+                    const pickFrom = () => {
+                        fromRadio.checked = true;
+                        update();
+                    };
+                    sel.addEventListener('pointerdown', pickFrom);
+                    sel.addEventListener('change', pickFrom);
+                    body.addEventListener('change', (e) => e.target.name === 'nl-reex-scope' && update());
+                    update();
+                },
+            });
+            if (value !== 'ok') return;
+            if (app.isBusy()) return app.log('已有任务在运行', 'warn');
+            const p = app.project;
+            if (p !== p0) return;
+            const from = root.querySelector('input[name="nl-reex-scope"]:checked')?.value === 'from' ? Number(root.querySelector('[data-f="from"]').value) || 0 : 0;
+            const serial = !!root.querySelector('[data-f="serial"]')?.checked;
+            const ok = await busy(btn, async () => {
+                await createSnapshot(p, '重新提取前');
+                const n = resetExtractionFrom(p, from);
+                delete app.pendingStartIndex;
+                await app.saveNow();
+                app.log(`🔁 已清除${from ? `第 ${from + 1} 段起` : '全部'} ${n} 段的提取结果，开始重新提取`, 'info');
+                return true;
+            }, '准备中…');
+            if (!ok) return;
+            if (el.isConnected) render();
+            start({ startIndex: from, ...(serial ? { mode: 'serial' } : {}) });
+        };
+
         const onClick = async (e) => {
             const btn = e.target.closest('[data-act], [data-goto]');
             if (!btn) return;
@@ -146,6 +223,8 @@ export const extractTab = {
                     const ids = app.project.chunks.filter((c) => c.status === 'error').map((c) => c.id);
                     return start({ chunkIds: ids });
                 }
+                case 'reextract':
+                    return reextract(btn);
                 case 'clear-start':
                     delete app.pendingStartIndex;
                     return render();
