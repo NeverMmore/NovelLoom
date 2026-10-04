@@ -130,6 +130,17 @@ export function buildWorldbookEntries(project, settings, opt = {}) {
     return out;
 }
 
+/**
+ * 逻辑条目上可选的单条覆盖（状态栏的 MVU 条目会用到，普通条目都不带）：
+ *   comment：条目备注（默认「分类 - 名称」；MVU 靠备注里的 [initvar] / [mvu_update] 识别条目）
+ *   ignoreBudget：不受世界书 token 预算限制
+ *   excludeRecursion / preventRecursion：覆盖全局的「允许递归」设置
+ *   role：@深度 条目的角色（0 系统 / 1 用户 / 2 AI），默认 0
+ */
+function entryComment(e) {
+    return typeof e.comment === 'string' && e.comment ? e.comment : `${e.category} - ${e.name}`;
+}
+
 /** 转为 ST 世界书文件格式 {entries: {uid: entry}} */
 export function toSTWorld(entries, { allowRecursion = false, name = '', description = '' } = {}) {
     const result = { entries: {} };
@@ -138,7 +149,7 @@ export function toSTWorld(entries, { allowRecursion = false, name = '', descript
             uid: i,
             key: e.keywords,
             keysecondary: [],
-            comment: `${e.category} - ${e.name}`,
+            comment: entryComment(e),
             content: e.content,
             constant: !!e.constant,
             vectorized: false,
@@ -148,9 +159,9 @@ export function toSTWorld(entries, { allowRecursion = false, name = '', descript
             order: e.order,
             position: e.position,
             disable: !!e.disable,
-            ignoreBudget: false,
-            excludeRecursion: !allowRecursion,
-            preventRecursion: !allowRecursion,
+            ignoreBudget: !!e.ignoreBudget,
+            excludeRecursion: e.excludeRecursion ?? !allowRecursion,
+            preventRecursion: e.preventRecursion ?? !allowRecursion,
             matchPersonaDescription: false,
             matchCharacterDescription: false,
             matchCharacterPersonality: false,
@@ -170,7 +181,7 @@ export function toSTWorld(entries, { allowRecursion = false, name = '', descript
             matchWholeWords: null,
             useGroupScoring: null,
             automationId: '',
-            role: 0,
+            role: Number(e.role) || 0,
             sticky: null,
             cooldown: null,
             delay: null,
@@ -195,7 +206,7 @@ export function toCharacterBook(entries, name, { allowRecursion = false } = {}) 
             id: i,
             keys: e.keywords,
             secondary_keys: [],
-            comment: `${e.category} - ${e.name}`,
+            comment: entryComment(e),
             content: e.content,
             constant: !!e.constant,
             selective: true,
@@ -205,8 +216,8 @@ export function toCharacterBook(entries, name, { allowRecursion = false } = {}) 
             use_regex: true,
             extensions: {
                 position: e.position,
-                exclude_recursion: !allowRecursion,
-                prevent_recursion: !allowRecursion,
+                exclude_recursion: e.excludeRecursion ?? !allowRecursion,
+                prevent_recursion: e.preventRecursion ?? !allowRecursion,
                 delay_until_recursion: false,
                 display_index: i,
                 probability: 100,
@@ -221,13 +232,13 @@ export function toCharacterBook(entries, name, { allowRecursion = false } = {}) 
                 match_whole_words: null,
                 use_group_scoring: false,
                 automation_id: '',
-                role: 0,
+                role: Number(e.role) || 0,
                 vectorized: false,
                 sticky: null,
                 cooldown: null,
                 delay: null,
                 triggers: [],
-                ignore_budget: false,
+                ignore_budget: !!e.ignoreBudget,
             },
         })),
     };

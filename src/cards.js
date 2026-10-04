@@ -6,8 +6,13 @@ import { lintCard, formatIssues } from './lint.js';
 import { buildOutlineText, characterAt, characterProfileText, entryAt, IMPORTANCE_RANK } from './project.js';
 import { WRITING_RULES, getPrompt, render } from './prompts.js';
 import { relationLine, relationsAt } from './relations.js';
+import {
+    STATUS_USAGE_NOTE_MARK, buildStatusRegexScripts, buildTavernHelper, statusBarActive, statusBarEntries, statusBarMeta,
+    statusBarUsageNote, withStatusTag,
+} from './statusbar.js';
 import { bannedRulesFor, styleTextFor } from './style.js';
 import { truncate, uid, uniq } from './utils.js';
+import { toCharacterBook } from './worldbook.js';
 
 export const CARD_FIELDS = ['name', 'description', 'personality', 'scenario', 'first_mes', 'alternate_greetings', 'mes_example', 'system_prompt', 'post_history_instructions', 'creator_notes', 'tags'];
 
@@ -277,42 +282,72 @@ export async function regenerateCardField(project, settings, card, fieldKey, { s
 
 /**
  * 构建 ST 可导入的角色卡 JSON（V3 规范，并带 V1 顶层字段以兼容旧版）
+ * @param {object} card
+ * @param {{worldName?: string, characterBook?: object|null, creator?: string, bookName?: string, statusBar?: object|false|null}} opt
+ *   statusBar：settings.statusBar（取 MVU / mvu_zod 的 CDN 地址）；传 false 时即使卡片启用了状态栏也不输出。
+ *   卡片的状态栏启用且有变量时（statusBarActive）额外输出：regex_scripts、tavern_helper、开场白占位标签、
+ *   作者备注里的使用说明、extensions.novel_loom.statusBar；world 与 character_book.name 保持一致，
+ *   没传 characterBook 时只用状态栏的四个条目建一本。
+ * @throws {StatusBarExportError} 状态栏界面有错误时（见 buildStatusRegexScripts）
  */
-export function buildCardJson(card, { worldName = '', characterBook = null, creator = '', bookName = '' } = {}) {
+export function buildCardJson(card, { worldName = '', characterBook = null, creator = '', bookName = '', statusBar = null } = {}) {
     const d = card.data;
+    const sbOn = statusBar !== false && statusBarActive(card);
+    let world = worldName || '';
+    let book = characterBook;
+    let firstMes = d.first_mes;
+    let greetings = d.alternate_greetings;
+    let notes = d.creator_notes;
     const extensions = {
         talkativeness: '0.5',
         fav: false,
-        world: worldName || '',
+        world,
         depth_prompt: { prompt: '', depth: 4, role: 'system' },
         novel_loom: { source: bookName, timepoint: card.timepoint, kind: card.kind },
     };
+    if (sbOn) {
+        const sb = card.statusBar;
+        world = world || book?.name || sb.worldName || `${d.name}·状态栏`;
+        if (!book) book = toCharacterBook(statusBarEntries(card), world);
+        book = { ...book, name: world };
+        extensions.world = world;
+        extensions.regex_scripts = buildStatusRegexScripts(card);
+        extensions.tavern_helper = buildTavernHelper(card, statusBar || {});
+        extensions.novel_loom.statusBar = statusBarMeta(card);
+        if (sb.options?.greetingTag !== false) {
+            firstMes = withStatusTag(firstMes);
+            greetings = (greetings || []).map(withStatusTag);
+        }
+        if (sb.options?.usageNote !== false && !String(notes || '').includes(STATUS_USAGE_NOTE_MARK)) {
+            notes = notes ? `${notes}\n\n${statusBarUsageNote()}` : statusBarUsageNote();
+        }
+    }
     const data = {
         name: d.name,
         description: d.description,
         personality: d.personality,
         scenario: d.scenario,
-        first_mes: d.first_mes,
+        first_mes: firstMes,
         mes_example: d.mes_example,
-        creator_notes: d.creator_notes,
+        creator_notes: notes,
         system_prompt: d.system_prompt,
         post_history_instructions: d.post_history_instructions,
         tags: d.tags,
         creator: creator || '',
         character_version: '1.0',
-        alternate_greetings: d.alternate_greetings,
+        alternate_greetings: greetings,
         group_only_greetings: [],
         extensions,
     };
-    if (characterBook) data.character_book = characterBook;
+    if (book) data.character_book = book;
     return {
         name: d.name,
         description: d.description,
         personality: d.personality,
         scenario: d.scenario,
-        first_mes: d.first_mes,
+        first_mes: firstMes,
         mes_example: d.mes_example,
-        creatorcomment: d.creator_notes,
+        creatorcomment: notes,
         avatar: 'none',
         talkativeness: '0.5',
         fav: false,

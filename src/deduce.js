@@ -22,7 +22,8 @@ export function ensureProjection(card) {
     return pp;
 }
 
-function cardContentText(card) {
+/** 角色卡当前实际内容（含开场白）的纯文本，给剧情推演与状态栏生成（statusbar-ai.js 的 {CARD_CONTENT}）用 */
+export function cardContentText(card) {
     const d = card.data;
     return [
         `姓名：${d.name}`,

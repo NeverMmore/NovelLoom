@@ -1,12 +1,20 @@
-// 设置页：API、分类、默认条目、提示词模板、配置导入导出
+// 设置页：API、分类、默认条目、状态栏（MVU 变量）与状态栏模板库、提示词模板、配置导入导出
 
 import { app } from '../app.js';
-import { DEFAULT_ANTI_TRUNCATE, DEFAULT_CATEGORIES, WI_POSITIONS } from '../constants.js';
+import { DEFAULT_ANTI_TRUNCATE, DEFAULT_CATEGORIES, DEFAULT_STATUS_BAR, WI_POSITIONS } from '../constants.js';
 import { applyConfig, exportConfig } from '../io.js';
 import { API_MODES, CHAIN_TASKS, DEEPSEEK_DEFAULT_ENDPOINT, DEEPSEEK_MODELS, DEFAULT_CHAIN, GEMINI_SAFETY_OPTIONS, listModels, testApi } from '../llm.js';
 import { DEFAULT_PROMPTS, PROMPT_LABELS, PROMPT_PLACEHOLDERS } from '../prompts.js';
-import { pickFile, readFileAsText, structuredCloneSafe } from '../utils.js';
-import { bindSettings, busy, chainPreviewHtml, confirmDialog, emptyState, esc, icon, openDialog, optionList, qs } from './common.js';
+import { countSpecLeaves, specSummaryText } from '../statusbar.js';
+import { STATUSBAR_THEMES, buildPreviewSrcdoc } from '../statusbar-runtime.js';
+import {
+    STATUS_TEMPLATE_MODE_LABELS, STATUS_TEMPLATE_NAME_MAX, duplicateStatusBarTemplate, exportStatusBarTemplate, getStatusBarTemplate,
+    importStatusBarTemplate, listStatusBarTemplates, removeStatusBarTemplate, statusBarTemplateFileName, templatePreviewCard,
+    updateStatusBarTemplate,
+} from '../statusbar-templates.js';
+import { downloadFile, pickFile, readFileAsText, structuredCloneSafe } from '../utils.js';
+import { alertDialog, bindSettings, busy, chainPreviewHtml, confirmDialog, emptyState, esc, icon, openDialog, optionList, qs } from './common.js';
+import { templateNameProblem, varCountText } from './statusbar-dialog.js';
 
 const DIRECT_MODES = ['openai', 'deepseek', 'gemini', 'anthropic'];
 
@@ -45,6 +53,341 @@ function apiSection(key, title) {
         </div>
         <div class="nl-row"><button class="nl-btn" data-act="test" data-key="${key}">测试连接</button><span class="nl-muted" data-test-result="${key}"></span></div>
     </section>`;
+}
+
+// ---------------- 状态栏（MVU 变量）全局选项 ----------------
+
+const SB_HTML_MODES = [{ value: 'ai', label: 'AI 设计界面' }, { value: 'auto', label: '内置排版（不调用 AI）' }];
+const SB_LANGS = [{ value: 'en', label: '英文（省 token）' }, { value: 'zh', label: '中文' }];
+const SB_SHOW_MODES = [{ value: 'one', label: '只最新一层' }, { value: 'n', label: '最新 N 层' }, { value: 'all', label: '每一层' }];
+const SB_KEEP_MODES = [{ value: 'none', label: '全部去掉（省 token）' }, { value: 'k', label: '保留最近 K 轮' }];
+const SB_MAX_VARS = { min: 3, max: 30 };
+const SB_URL_LABELS = { mvuUrl: 'MVU 脚本地址', zodUrl: '变量结构脚本（mvu_zod）地址' };
+
+function sbConf() {
+    const s = app.settings;
+    if (!s.statusBar || typeof s.statusBar !== 'object') s.statusBar = { ...DEFAULT_STATUS_BAR };
+    return s.statusBar;
+}
+
+/** 与导出时的检查一致（statusbar.js safeUrl）：不是 http(s) 地址就会改用默认地址 */
+function sbUrlProblem(v) {
+    const t = String(v ?? '').trim();
+    if (!t) return '留空时导出会使用默认地址';
+    return /^https?:\/\/[^\s'"`<>\\]+$/.test(t) ? '' : '不是 http(s) 地址，导出时会改用默认地址';
+}
+
+function clampInt(v, min, max, fallback) {
+    const n = Math.round(Number(v));
+    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+}
+
+function statusBarSection() {
+    const sb = sbConf();
+    const show = sb.showDepth === null || sb.showDepth === undefined ? 'all' : Number(sb.showDepth) >= 2 ? 'n' : 'one';
+    const showN = Number(sb.showDepth) >= 2 ? Number(sb.showDepth) : 3;
+    const keep = Number(sb.keepUpdateDepth) >= 1 ? 'k' : 'none';
+    const keepK = Number(sb.keepUpdateDepth) >= 1 ? Number(sb.keepUpdateDepth) : 3;
+    const urlField = (key) => {
+        const warn = sbUrlProblem(sb[key]);
+        return `
+            <div class="nl-field"><label for="nl-sb-${key}">${SB_URL_LABELS[key]}</label>
+                <div class="nl-row">
+                    <input class="nl-input nl-grow nl-mono" id="nl-sb-${key}" data-setting="statusBar.${key}" spellcheck="false" autocomplete="off" placeholder="${esc(DEFAULT_STATUS_BAR[key])}">
+                    <button class="nl-icon-btn" data-act="sb-url-reset" data-key="${key}" title="恢复默认地址" aria-label="恢复${SB_URL_LABELS[key]}的默认值">${icon('undo')}</button>
+                </div>
+                <div class="nl-small nl-warn" data-sb-url-warn="${key}" ${warn ? '' : 'hidden'}>${icon('alert', { size: 12 })} <span>${esc(warn)}</span></div>
+            </div>`;
+    };
+    return `
+            <section class="nl-card" data-statusbar-settings>
+                <div class="nl-card-head">
+                    <div>
+                        <h3>状态栏（MVU 变量）</h3>
+                        <div class="nl-card-desc">写卡时可以同时生成一个随剧情更新的状态栏，导出的角色卡需要酒馆助手 4.6 或更高版本。显示与发送相关的选项是新建状态栏时的默认值，已有的状态栏在角色卡的「状态栏」里单独修改；脚本地址在导出角色卡时读取，变量上限在 AI 设计变量时读取。</div>
+                    </div>
+                    <button class="nl-btn nl-sm" data-act="sb-templates" title="查看、导入、导出状态栏模板">${icon('file')}模板库<span class="nl-muted" data-sb-tpl-count>（${listStatusBarTemplates(app.settings).length}）</span></button>
+                </div>
+                <div class="nl-grid2">${urlField('mvuUrl')}${urlField('zodUrl')}</div>
+                <div class="nl-grid3">
+                    <div class="nl-field"><label for="nl-sb-maxVars">变量上限 <span class="nl-muted">（${SB_MAX_VARS.min}–${SB_MAX_VARS.max}，记录的每个字段各算一个）</span></label>
+                        <input class="nl-input" id="nl-sb-maxVars" type="number" min="${SB_MAX_VARS.min}" max="${SB_MAX_VARS.max}" step="1" data-sb="maxVars" value="${esc(sb.maxVars ?? DEFAULT_STATUS_BAR.maxVars)}"></div>
+                    <div class="nl-field"><label for="nl-sb-htmlMode">默认界面</label><select class="nl-input" id="nl-sb-htmlMode" data-setting="statusBar.htmlMode">${optionList(SB_HTML_MODES)}</select></div>
+                    <div class="nl-field"><label for="nl-sb-theme">内置排版主题</label><select class="nl-input" id="nl-sb-theme" data-setting="statusBar.theme">${optionList(STATUSBAR_THEMES)}</select></div>
+                    <div class="nl-field"><label for="nl-sb-lang">变量分析（Analysis）语言</label><select class="nl-input" id="nl-sb-lang" data-setting="statusBar.analysisLang">${optionList(SB_LANGS)}</select></div>
+                    <div class="nl-field"><label for="nl-sb-show">状态栏显示在</label>
+                        <div class="nl-row">
+                            <select class="nl-input nl-grow" id="nl-sb-show" data-sb="showMode">${optionList(SB_SHOW_MODES, show)}</select>
+                            <input class="nl-input nl-num" type="number" min="2" max="99" step="1" data-sb="showN" value="${showN}" title="显示在最新几层 AI 回复上" aria-label="显示在最新几层 AI 回复上" ${show === 'n' ? '' : 'hidden'}>
+                        </div></div>
+                    <div class="nl-field"><label for="nl-sb-keep">历史消息里的变量更新块</label>
+                        <div class="nl-row">
+                            <select class="nl-input nl-grow" id="nl-sb-keep" data-sb="keepMode">${optionList(SB_KEEP_MODES, keep)}</select>
+                            <input class="nl-input nl-num" type="number" min="1" max="20" step="1" data-sb="keepK" value="${keepK}" title="发给 AI 时保留最近几轮回复里的变量更新块" aria-label="保留最近几轮的变量更新块" ${keep === 'k' ? '' : 'hidden'}>
+                        </div></div>
+                </div>
+                <div class="nl-row nl-wrap nl-checks">
+                    <label><input type="checkbox" data-setting="statusBar.foldUpdate"> 聊天里把变量更新块折叠起来</label>
+                    <label><input type="checkbox" data-setting="statusBar.greetingTag"> 开场白也显示状态栏</label>
+                    <label><input type="checkbox" data-setting="statusBar.usageNote"> 在作者备注里附上使用说明</label>
+                </div>
+            </section>`;
+}
+
+// ---------------- 状态栏模板库 ----------------
+
+/** 编辑用户模板的名称与说明；返回 {name, desc}，取消时返回 null */
+async function templateMetaDialog(t) {
+    const { value, root } = await openDialog({
+        title: '编辑模板',
+        body: `
+            <div class="nl-field"><label for="nl-sbt-name">名称</label><input class="nl-input" id="nl-sbt-name" maxlength="${STATUS_TEMPLATE_NAME_MAX}" value="${esc(t.name)}"></div>
+            <div class="nl-field"><label for="nl-sbt-desc">说明 <span class="nl-muted">（可选）</span></label><textarea class="nl-input nl-textarea" id="nl-sbt-desc" rows="3" maxlength="200">${esc(t.desc || '')}</textarea></div>
+            <div class="nl-small nl-err" data-sbt-err hidden></div>`,
+        buttons: [
+            { label: '取消', value: null },
+            {
+                label: '保存', value: 'ok', primary: true,
+                validate: (b) => {
+                    // 与状态栏对话框、updateStatusBarTemplate 同一口径（空白合并、不分大小写），不会通过这里却在保存时抛错
+                    const msg = templateNameProblem(app.settings, b.querySelector('#nl-sbt-name').value, t.id);
+                    const err = b.querySelector('[data-sbt-err]');
+                    err.textContent = msg;
+                    err.hidden = !msg;
+                    return !msg;
+                },
+            },
+        ],
+    });
+    if (value !== 'ok') return null;
+    return { name: root.querySelector('#nl-sbt-name').value, desc: root.querySelector('#nl-sbt-desc').value };
+}
+
+/**
+ * 删除一个模板后选中哪一个：原来位置上的下一个（删的是最后一个就选上一个）；一个都不剩返回 ''
+ * @param {string[]} idsBefore 删除前列表里的 id（按显示顺序）
+ * @param {string} deletedId
+ * @param {string[]} idsAfter 删除后列表里的 id
+ */
+export function templateIdAfterDelete(idsBefore, deletedId, idsAfter) {
+    if (!idsAfter.length) return '';
+    const i = idsBefore.indexOf(deletedId);
+    if (i < 0) return idsAfter[0];
+    // 删除前排在它前面的、现在还在的个数 = 它的下一个在新列表里的位置
+    const pos = idsBefore.slice(0, i).filter((id) => idsAfter.includes(id)).length;
+    return idsAfter[Math.min(pos, idsAfter.length - 1)];
+}
+
+/**
+ * 模板库详情里的变量数标签：与状态栏对话框同一口径（varCountText，记录的每个字段各算一个）；
+ * 超过当前变量上限时另加一个警告标签（沿用结构时多出的变量会被丢弃，与对话框里的模板库一致）
+ */
+export function templateVarTagsHtml(t, maxVars = DEFAULT_STATUS_BAR.maxVars) {
+    const n = t?.spec ? countSpecLeaves(t.spec) : 0;
+    if (!n) return '<span class="nl-tag">只有界面，没有变量表</span>';
+    const over = n > maxVars ? ` <span class="nl-tag nl-warn" title="沿用结构时多出的变量会被丢弃">超过上限 ${maxVars}</span>` : '';
+    return `<span class="nl-tag">${esc(varCountText(t.spec))}</span>${over}`;
+}
+
+/**
+ * 状态栏模板库（设置页入口）：左边列出内置与保存的模板，右边是选中模板的说明和沙箱预览（与导出到酒馆后看到的一致）。
+ * 可以导入 / 导出单个模板 JSON，复制任意模板，编辑或删除自己的模板；内置模板只读。
+ * 把模板套用到某张卡在角色卡的「状态栏」里进行。
+ */
+export async function openStatusBarTemplateLibrary() {
+    const box = document.createElement('div');
+    const st = globalThis.SillyTavern?.getContext?.();
+    const userName = st?.name1 || '你';
+    const charName = '示例角色';
+    let selected = '';
+    let bg = 'dark';
+    let frame = null;
+    const BG = { dark: 'rgb(27 28 32)', light: 'rgb(243 242 238)' };
+
+    const detailHtml = (t) => {
+        const n = t.spec ? countSpecLeaves(t.spec) : 0;
+        const actions = t.builtin
+            ? `<button class="nl-btn nl-sm" data-tpl-act="duplicate" title="复制成自己的模板，之后可以修改">${icon('copy', { size: 14 })}复制为我的模板</button>
+               <button class="nl-btn nl-sm" data-tpl-act="export">${icon('download', { size: 14 })}导出</button>`
+            : `<button class="nl-btn nl-sm" data-tpl-act="edit">${icon('edit', { size: 14 })}改名 / 说明</button>
+               <button class="nl-btn nl-sm" data-tpl-act="duplicate">${icon('copy', { size: 14 })}复制</button>
+               <button class="nl-btn nl-sm" data-tpl-act="export">${icon('download', { size: 14 })}导出</button>
+               <button class="nl-icon-btn nl-danger" data-tpl-act="delete" title="删除模板" aria-label="删除模板「${esc(t.name)}」">${icon('trash')}</button>`;
+        return `
+            <div class="nl-row nl-wrap">
+                <h3 class="nl-grow" style="margin:0">${esc(t.name)}</h3>
+                ${actions}
+            </div>
+            <div class="nl-row nl-wrap" style="margin:6px 0">
+                ${t.builtin ? '<span class="nl-tag">内置</span>' : ''}
+                <span class="nl-tag">${esc(STATUS_TEMPLATE_MODE_LABELS[t.mode] || t.mode)}</span>
+                ${templateVarTagsHtml(t, app.settings.statusBar?.maxVars || DEFAULT_STATUS_BAR.maxVars)}
+            </div>
+            <div class="nl-muted nl-small">${esc(t.desc || '（没有说明）')}</div>
+            <div class="nl-row" style="margin:10px 0 6px">
+                <span class="nl-muted nl-small nl-grow">预览（示例数据）</span>
+                <div class="nl-seg" role="group" aria-label="预览背景">
+                    <button class="nl-seg-btn ${bg === 'dark' ? 'active' : ''}" data-tpl-bg="dark" aria-pressed="${bg === 'dark'}">深色聊天</button>
+                    <button class="nl-seg-btn ${bg === 'light' ? 'active' : ''}" data-tpl-bg="light" aria-pressed="${bg === 'light'}">浅色聊天</button>
+                </div>
+            </div>
+            <div data-tpl-stage style="padding:12px;border:1px solid var(--nl-line);border-radius:8px;background:${BG[bg]};max-height:560px;overflow:auto"></div>
+            <div class="nl-small nl-warn" data-tpl-err hidden></div>
+            ${t.spec ? `<details style="margin-top:8px"><summary>变量表（${n} 个）</summary><div class="nl-pre nl-small">${esc(specSummaryText(t.spec))}</div></details>` : ''}`;
+    };
+
+    const mountPreview = (t) => {
+        frame = null;
+        const stage = box.querySelector('[data-tpl-stage]');
+        if (!stage || !t) return;
+        const f = document.createElement('iframe');
+        // 沙箱里只允许脚本，不给 allow-same-origin：模板里的代码碰不到酒馆页面
+        f.setAttribute('sandbox', 'allow-scripts');
+        f.setAttribute('referrerpolicy', 'no-referrer');
+        f.setAttribute('title', `「${t.name}」预览`);
+        f.style.cssText = 'display:block;width:100%;height:180px;border:0;background:transparent';
+        f.srcdoc = buildPreviewSrcdoc(templatePreviewCard(t, { charName }), t.sample || undefined, { user: userName, char: charName });
+        stage.appendChild(f);
+        frame = f;
+    };
+
+    const render = () => {
+        const list = listStatusBarTemplates(app.settings);
+        if (!list.some((t) => t.id === selected)) selected = list[0]?.id || '';
+        const t = list.find((x) => x.id === selected) || null;
+        box.innerHTML = `
+            <div class="nl-row nl-wrap">
+                <div class="nl-muted nl-small nl-grow">模板保存变量表和界面，存在扩展设置里，所有项目共用。内置模板不能修改或删除，可以复制成自己的模板。写卡时在「写卡选项」里选择模板，或在角色卡的「状态栏」里套用。</div>
+                <button class="nl-btn nl-sm" data-tpl-act="import">${icon('upload', { size: 14 })}导入模板 JSON</button>
+            </div>
+            <div class="nl-split" style="margin-top:8px">
+                <div class="nl-char-list" role="listbox" aria-label="状态栏模板">
+                    ${list.map((x) => `
+                    <div class="nl-char-item ${x.id === selected ? 'active' : ''}" role="option" tabindex="0" aria-selected="${x.id === selected}" data-tpl-id="${esc(x.id)}">
+                        <div class="nl-row"><b class="nl-grow">${esc(x.name)}</b>${x.builtin ? '<span class="nl-tag">内置</span>' : ''}</div>
+                        <div class="nl-small">${x.spec ? `${countSpecLeaves(x.spec)} 个变量` : '只有界面'} · ${esc(STATUS_TEMPLATE_MODE_LABELS[x.mode] || x.mode)}</div>
+                    </div>`).join('')}
+                </div>
+                <div data-tpl-detail>${t ? detailHtml(t) : emptyState('导入别人分享的模板 JSON，或在角色卡的「状态栏」里点「存为模板」。', '', { title: '没有模板', ico: 'file' })}</div>
+            </div>`;
+        mountPreview(t);
+    };
+
+    const select = (id) => {
+        selected = id;
+        render();
+        box.querySelector(`[data-tpl-id="${CSS.escape(id)}"]`)?.focus();
+    };
+
+    const onMessage = (e) => {
+        if (!frame || e.source !== frame.contentWindow) return;
+        const d = e.data || {};
+        if (d.source !== 'nl-preview') return;
+        if (d.type === 'nl-height') frame.style.height = `${Math.min(Math.max(60, Number(d.height) || 0), 1200)}px`;
+        if (d.type === 'nl-error') {
+            const err = box.querySelector('[data-tpl-err]');
+            if (err && err.hidden) {
+                err.textContent = `预览出错：${String(d.message || '').split('\n')[0].slice(0, 200)}`;
+                err.hidden = false;
+            }
+        }
+    };
+
+    const onClick = async (e) => {
+        const item = e.target.closest('[data-tpl-id]');
+        if (item) return select(item.dataset.tplId);
+        const bgBtn = e.target.closest('[data-tpl-bg]');
+        if (bgBtn) {
+            bg = bgBtn.dataset.tplBg;
+            const stage = box.querySelector('[data-tpl-stage]');
+            if (stage) stage.style.background = BG[bg];
+            box.querySelectorAll('[data-tpl-bg]').forEach((b) => {
+                b.classList.toggle('active', b === bgBtn);
+                b.setAttribute('aria-pressed', String(b === bgBtn));
+            });
+            return undefined;
+        }
+        const btn = e.target.closest('[data-tpl-act]');
+        if (!btn) return undefined;
+        const t = getStatusBarTemplate(app.settings, selected);
+        try {
+            switch (btn.dataset.tplAct) {
+                case 'import': {
+                    const file = await pickFile('.json,application/json');
+                    if (!file) return undefined;
+                    const created = importStatusBarTemplate(app.settings, await readFileAsText(file));
+                    app.saveSettings();
+                    app.log(`已导入状态栏模板「${created.name}」`, 'success');
+                    return select(created.id);
+                }
+                case 'export':
+                    if (!t) return undefined;
+                    downloadFile(JSON.stringify(exportStatusBarTemplate(t), null, 2), statusBarTemplateFileName(t));
+                    return undefined;
+                case 'duplicate': {
+                    if (!t) return undefined;
+                    const copy = duplicateStatusBarTemplate(app.settings, t.id);
+                    app.saveSettings();
+                    app.log(`已复制为「${copy.name}」`, 'success');
+                    return select(copy.id);
+                }
+                case 'edit': {
+                    if (!t || t.builtin) return undefined;
+                    const r = await templateMetaDialog(t);
+                    if (!r) return undefined;
+                    updateStatusBarTemplate(app.settings, t.id, r);
+                    app.saveSettings();
+                    return select(t.id);
+                }
+                case 'delete': {
+                    if (!t || t.builtin) return undefined;
+                    if (!(await confirmDialog(`删除状态栏模板「${t.name}」？已经套用过它的角色卡不受影响。`, { danger: true, okLabel: '删除' }))) return undefined;
+                    const idsBefore = listStatusBarTemplates(app.settings).map((x) => x.id);
+                    removeStatusBarTemplate(app.settings, t.id);
+                    app.saveSettings();
+                    app.log(`已删除状态栏模板「${t.name}」`, 'success');
+                    // 删除按钮随重绘消失，焦点会掉到 <body>：选中原位置上的下一个模板并把焦点放到它上面；列表空了就放到“导入模板 JSON”
+                    const next = templateIdAfterDelete(idsBefore, t.id, listStatusBarTemplates(app.settings).map((x) => x.id));
+                    if (next) return select(next);
+                    selected = '';
+                    render();
+                    box.querySelector('[data-tpl-act="import"]')?.focus();
+                    return undefined;
+                }
+                default:
+                    return undefined;
+            }
+        } catch (err) {
+            await alertDialog(err?.message || String(err), '出错了');
+            return undefined;
+        }
+    };
+
+    const onKey = (e) => {
+        const item = e.target.closest?.('[data-tpl-id]');
+        if (!item) return;
+        const items = [...box.querySelectorAll('[data-tpl-id]')];
+        const i = items.indexOf(item);
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            select(item.dataset.tplId);
+        } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            const next = items[i + (e.key === 'ArrowDown' ? 1 : -1)];
+            if (next) select(next.dataset.tplId);
+        }
+    };
+
+    box.addEventListener('click', onClick);
+    box.addEventListener('keydown', onKey);
+    window.addEventListener('message', onMessage);
+    render();
+    try {
+        await openDialog({ title: '状态栏模板库', wide: true, body: box, buttons: [{ label: '关闭', value: null }] });
+    } finally {
+        window.removeEventListener('message', onMessage);
+        frame = null;
+    }
 }
 
 export const settingsTab = {
@@ -205,6 +548,7 @@ export const settingsTab = {
                     <div class="nl-field"><label>角色条目最多写入对话样本数</label><input class="nl-input" type="number" min="0" data-setting="extraction.maxDialogues"></div>
                 </div>
             </section>
+            ${statusBarSection()}
 
             <section class="nl-card">
                 <div class="nl-card-head"><div><h3>提示词模板</h3></div></div>
@@ -219,6 +563,7 @@ export const settingsTab = {
             </section>`;
             bindSettings(el, app.settings, (path) => {
                 app.saveSettings();
+                if (path === 'statusBar.mvuUrl' || path === 'statusBar.zodUrl') updateUrlWarn(path.slice('statusBar.'.length));
                 if (path.endsWith('.mode')) {
                     const key = path.split('.')[0];
                     prefillDeepseek(key);
@@ -255,6 +600,41 @@ export const settingsTab = {
             if (modelInput) modelInput.value = a.model;
         };
 
+        const updateUrlWarn = (key) => {
+            const box = el.querySelector(`[data-sb-url-warn="${key}"]`);
+            if (!box) return;
+            const msg = sbUrlProblem(sbConf()[key]);
+            box.hidden = !msg;
+            const text = box.querySelector('span');
+            if (text) text.textContent = msg;
+        };
+
+        /** 状态栏选项里不能直接用 data-setting 绑定的控件：变量上限要夹取，显示层数 / 保留轮数由「下拉 + 数字」组合成 1 | N | null */
+        const onStatusBarChange = (t) => {
+            const sec = t.closest('[data-statusbar-settings]');
+            const sb = sbConf();
+            const k = t.dataset.sb;
+            if (k === 'maxVars') {
+                sb.maxVars = clampInt(t.value, SB_MAX_VARS.min, SB_MAX_VARS.max, DEFAULT_STATUS_BAR.maxVars);
+                t.value = sb.maxVars;
+            } else if (k === 'showMode' || k === 'showN') {
+                const mode = qs(sec, '[data-sb="showMode"]').value;
+                const nInput = qs(sec, '[data-sb="showN"]');
+                const n = clampInt(nInput.value, 2, 99, 3);
+                nInput.value = n;
+                nInput.hidden = mode !== 'n';
+                sb.showDepth = mode === 'all' ? null : mode === 'n' ? n : 1;
+            } else if (k === 'keepMode' || k === 'keepK') {
+                const mode = qs(sec, '[data-sb="keepMode"]').value;
+                const kInput = qs(sec, '[data-sb="keepK"]');
+                const n = clampInt(kInput.value, 1, 20, 3);
+                kInput.value = n;
+                kInput.hidden = mode !== 'k';
+                sb.keepUpdateDepth = mode === 'k' ? n : null;
+            } else return;
+            app.saveSettings();
+        };
+
         const toggleModes = () => {
             for (const sec of el.querySelectorAll('[data-api]')) {
                 const mode = app.settings[sec.dataset.api].mode;
@@ -276,6 +656,22 @@ export const settingsTab = {
                     s.antiTruncate = structuredCloneSafe(DEFAULT_ANTI_TRUNCATE);
                     app.saveSettings();
                     return render();
+                case 'sb-url-reset': {
+                    const key = btn.dataset.key;
+                    if (!(key in SB_URL_LABELS)) return;
+                    sbConf()[key] = DEFAULT_STATUS_BAR[key];
+                    app.saveSettings();
+                    const input = el.querySelector(`[data-setting="statusBar.${key}"]`);
+                    if (input) input.value = DEFAULT_STATUS_BAR[key];
+                    updateUrlWarn(key);
+                    return;
+                }
+                case 'sb-templates': {
+                    await openStatusBarTemplateLibrary();
+                    const count = el.querySelector('[data-sb-tpl-count]');
+                    if (count) count.textContent = `（${listStatusBarTemplates(s).length}）`;
+                    return;
+                }
                 case 'test': {
                     const key = btn.dataset.key;
                     const out = qs(el, `[data-test-result="${key}"]`);
@@ -417,6 +813,7 @@ export const settingsTab = {
                 chainTask = t.value;
                 return render();
             }
+            if (t.dataset.sb) return onStatusBarChange(t);
             if (onChainInput(e)) return;
             if (t.matches('[data-prompt-key]')) {
                 promptKey = t.value;

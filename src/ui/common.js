@@ -56,6 +56,12 @@ export function bindSettings(root, settings, onChange) {
 
 let dialogZ = 10050;
 
+/** 这个遮罩是不是当前最上面的对话框（后打开的追加在 body 末尾，叠在上面） */
+function isTopDialog(overlay) {
+    const all = document.querySelectorAll('.nl-dialog-overlay');
+    return all.length > 0 && all[all.length - 1] === overlay;
+}
+
 /**
  * 通用对话框
  * @param {{title: string, body: string|HTMLElement, buttons?: {label:string, value:any, primary?:boolean, danger?:boolean}[], wide?: boolean, onMount?: Function}} opt
@@ -88,10 +94,12 @@ export function openDialog({ title, body, buttons = [{ label: '关闭', value: n
             resolve({ value, root: bodyEl });
         };
         const onKey = (e) => {
-            if (e.key === 'Escape') {
-                e.stopPropagation();
-                close(dismissValue);
-            }
+            if (e.key !== 'Escape') return;
+            // 每个对话框都在 document 上挂了捕获阶段的监听，stopPropagation 拦不住同一节点上的其他监听：
+            // 叠着好几个对话框时只让最上面那个响应 Esc，下面的（比如还没保存的编辑框）原样留着
+            if (!isTopDialog(overlay)) return;
+            e.stopPropagation();
+            close(dismissValue);
         };
         overlay.addEventListener('click', async (e) => {
             if (e.target === overlay || e.target.closest('[data-close]')) return close(dismissValue);

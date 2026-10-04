@@ -20,7 +20,46 @@
 <script>
 window.toastr = { success: (m) => console.log('[toast]', m), error: (m) => console.log('[toast-err]', m), info: () => {}, warning: () => {} };
 window.__saved = { worlds: {}, imports: [] };
+// 状态栏（MVU）：变量表 JSON 与绑定模式界面片段（smoke_statusbar.py 用）
+const SB_SPEC = { title: '莉莉丝的状态', variables: [
+  { path: '世界.时间', type: 'string', init: '夜晚 23:00', label: '时间', widget: 'text', check: ['每轮按剧情推进'] },
+  { path: '世界.地点', type: 'string', init: '莉莉丝的酒吧', label: '地点', widget: 'text', check: ['场景切换时更新'] },
+  { path: '莉莉丝.好感度', type: 'number', init: 30, min: 0, max: 100, integer: true, label: '好感', widget: 'bar', stages: [{ min: 0, label: '戒备' }, { min: 40, label: '信任' }, { min: 80, label: '依恋' }], desc: '莉莉丝对{{user}}的好感', check: ['{{user}} 示好时增加', '单次变化 ±(1~5)'] },
+  { path: '莉莉丝.心情', type: 'enum', options: ['平静', '开心', '低落'], init: '平静', label: '心情', widget: 'badge', check: ['随对话变化'] },
+  { path: '莉莉丝.在场', type: 'boolean', init: true, label: '在场', widget: 'badge', check: ['离开时改为 false'] },
+  { path: '莉莉丝.状态', type: 'list', init: ['微醺'], maxItems: 5, label: '状态', widget: 'tags', check: ['新状态用 insert 追加'] },
+  { path: '主角.物品', type: 'record', keyDesc: '物品名', value: { type: 'object', fields: [{ key: '数量', type: 'number', min: 0, integer: true, init: 1 }, { key: '描述', type: 'string', init: '' }] }, init: { 紫色魔药: { 数量: 1, 描述: '喝下会成为见习魔女' } }, label: '物品', widget: 'list', check: ['获得用 insert，失去用 remove'] },
+] };
+const SB_HTML = [
+  '<style>.sb-box{font:13px/1.5 sans-serif;background:#1d1b22;color:#eee;border:1px solid #6a4c93;border-radius:10px;padding:10px;max-width:760px;margin:0 auto}',
+  '.sb-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.sb-bar{flex:1;min-width:60px;height:6px;background:#333;border-radius:3px;overflow:hidden}',
+  '.sb-bar i{display:block;height:100%;width:var(--nl-pct);background:#c86dd7}.sb-tag{display:inline-block;padding:0 6px;margin:2px;border-radius:8px;background:#333}',
+  '[data-nl-value="开心"]{color:#ffd36b}</style>',
+  '<div class="sb-box">',
+  '<div class="sb-row"><b class="sb-name">{{char}}</b><span class="sb-time" data-nl-text="世界.时间"></span><span class="sb-place" data-nl-text="世界.地点"></span></div>',
+  '<div class="sb-row">好感 <span class="sb-fav" data-nl-text="莉莉丝.好感度"></span><div class="sb-bar" data-nl-bar="莉莉丝.好感度"><i></i></div><span class="sb-stage" data-nl-stage="莉莉丝.好感度"></span></div>',
+  '<div class="sb-row">心情 <span class="sb-mood" data-nl-text="莉莉丝.心情"></span> 在场 <span class="sb-here" data-nl-text="莉莉丝.在场" data-nl-true="在" data-nl-false="不在"></span></div>',
+  '<div class="sb-tags" data-nl-each="莉莉丝.状态"><template><span class="sb-tag" data-nl-item=""></span></template></div>',
+  '<div class="sb-items" data-nl-each="主角.物品"><template><div class="sb-item"><span data-nl-key></span> x <span data-nl-item="数量"></span></div></template></div>',
+  '<div class="sb-render"></div>',
+  '</div>',
+  '<script>window.nlRender = function (stat, ctx) { window.sbRenders = (window.sbRenders || 0) + 1; var el = ctx.root.querySelector(".sb-render"); if (el) el.textContent = "render " + window.sbRenders; };</' + 'script>',
+].join('\n');
+const sbMock = (prompt) => {
+  if (prompt.includes('设计状态栏界面')) { window.__sbHtmlCalls = (window.__sbHtmlCalls || 0) + 1; return '好的，界面如下：\n```html\n' + SB_HTML + '\n```'; }
+  if (!prompt.includes('设计状态栏变量表')) return null;
+  window.__sbSpecCalls = (window.__sbSpecCalls || 0) + 1;
+  // 保留路径（沿用模板结构 / 只更新初始值 / 只重写规则）：照抄给定变量表的 path 与 init，改写 desc/check
+  const kept = prompt.match(/<变量表>\n([\s\S]*?)\n<\/变量表>/);
+  if (kept) {
+    const base = JSON.parse(kept[1]);
+    return '```json\n' + JSON.stringify({ variables: base.map((v) => ({ path: v.path, init: v.init, desc: (v.label || v.path) + '（mock）', check: ['按剧情更新（mock）'] })) }) + '\n```';
+  }
+  return '```json\n' + JSON.stringify(SB_SPEC) + '\n```';
+};
 const mock = (prompt) => {
+  const sb = sbMock(prompt);
+  if (sb !== null) return sb;
   if (prompt.includes('<source>')) {
     const src = prompt.split('<source>')[1].split('</source>')[0];
     const title = (prompt.match(/第 (\d+) 段「([^」]+)」/) || [])[2] || '';

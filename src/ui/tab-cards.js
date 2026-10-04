@@ -9,12 +9,15 @@ import {
 } from '../deduce.js';
 import { buildGroupPrompt, generateGroupCard, groupCardMarkdown, publishGroupCard } from '../group.js';
 import { getVolumes, IMPORTANCE_RANK } from '../project.js';
-import { blobToDataUrl, dataUrlToBlob, defaultWorldName, prepareCard, publishCard } from '../publish.js';
+import { errorText } from '../llm.js';
+import { blobToDataUrl, dataUrlToBlob, defaultWorldName, prepareCard, publishCard, statusBarWorldName } from '../publish.js';
 import { characterExistsInST, openCharacterInST } from '../stio.js';
+import { statusBarActive } from '../statusbar.js';
 import { bannedRulesFor, getStyleProfile } from '../style.js';
 import { greetingText, testChatReply } from '../testchat.js';
 import { downloadFile, estimateTokens, pickFile, safeFileName, truncate, uniq } from '../utils.js';
 import { alertDialog, bindSettings, busy, chainPreviewHtml, confirmDialog, emptyState, esc, fmtTime, icon, importanceLabel, openDialog, optionList, promptDialog, rerollBtn } from './common.js';
+import { generateStatusBarForCard, openStatusBarDialog, openStatusBarPublishHint, statusBarTagHtml, statusBarTemplateOptions } from './statusbar-dialog.js';
 
 const GREETING_SEP = '\n\n=====\n\n';
 
@@ -31,11 +34,47 @@ function lintSummary(lint = []) {
     ].filter(Boolean).join(' ');
 }
 
+/**
+ * 编辑框里“绑定世界书名称”这一栏显示什么：带状态栏的卡写入它自己的一本世界书（statusBar.worldName），
+ * 这一栏显示并修改的是那个名字；其他卡是 card.worldName（留空 = 默认命名）。
+ * @returns {{sb: boolean, shown: string}} sb：显示的是不是状态栏专用世界书；shown：显示出来的值
+ */
+export function cardWorldField(project, settings, card) {
+    const sb = statusBarActive(card);
+    return { sb, shown: sb ? statusBarWorldName(project, settings, card) : (card.worldName || defaultWorldName(project, settings, card.timepoint)) };
+}
+
+/** “绑定世界书名称”这一栏的标签 */
+export function cardWorldLabelHtml(sb) {
+    return sb ? '绑定世界书名称 <span class="nl-muted" title="带状态栏的卡总是写入并绑定自己专用的一本世界书（资料条目 + 状态栏条目）">（状态栏卡专用）</span>' : '绑定世界书名称';
+}
+
+/**
+ * 保存编辑框时把“绑定世界书名称”写回：写哪个字段由这一栏**显示时**的模式（field.sb）决定，不看保存时状态栏开没开——
+ * 在编辑框里打开状态栏设置把状态栏关掉后原样保存，不会把状态栏专用世界书的名字写进 card.worldName（反过来也一样）。
+ * @param {object} card
+ * @param {{sb: boolean, shown: string}} field cardWorldField() 的结果（显示这一栏时的模式与值）
+ * @param {string} input 输入框的值
+ */
+export function applyCardWorldInput(card, field, input) {
+    const v = String(input ?? '').trim();
+    if (field.sb) {
+        // 没改动就不写死（statusBar.worldName 留空 = 跟随默认命名）；清空也是回到默认
+        if (v !== String(field.shown).trim() && card.statusBar) card.statusBar.worldName = v;
+        return;
+    }
+    card.worldName = v;
+}
+
 export const cardsTab = {
     mount(el, { switchTab }) {
-        const form = { kind: 'character', charName: app.pendingCardChar || '', timepoint: '', requirement: '', greetings: app.settings.cards.greetings, firstMesLen: '400-800 字', avatarDataUrl: '' };
+        const form = { kind: 'character', charName: app.pendingCardChar || '', timepoint: '', requirement: '', greetings: app.settings.cards.greetings, firstMesLen: '400-800 字', avatarDataUrl: '', statusBarRequirement: '' };
         delete app.pendingCardChar;
         const groupForm = { members: new Set(), timepoint: '', requirement: '' };
+        /** 状态栏对话框的上下文（见 statusbar-dialog.js） */
+        const sbCtx = () => ({ app, project: app.project, settings: app.settings, save: () => app.saveNow(), saveSettings: () => app.saveSettings(), onChange: () => render() });
+        /** 这次写卡是否接着生成状态栏（世界/旁白卡暂不支持） */
+        const wantStatusBar = () => !!app.settings.cards.statusBar && form.kind !== 'world';
 
         /** 角色名 → 该角色已写入酒馆的 avatar 文件名（不含 .png）；没有则返回空字符串 */
         const resolveAvatar = (name) => {
@@ -62,6 +101,9 @@ export const cardsTab = {
             const p = app.project;
             const chars = charOptions();
             if (!form.charName && chars.length) form.charName = chars[0].value;
+            const sbTpls = statusBarTemplateOptions(app.settings);
+            if (!sbTpls.some((t) => t.value === (app.settings.cards.statusBarTemplateId || ''))) app.settings.cards.statusBarTemplateId = '';
+            const sbOn = !!app.settings.cards.statusBar;
             el.innerHTML = `
             <section class="nl-card">
                 <div class="nl-card-head">
@@ -97,11 +139,20 @@ export const cardsTab = {
                         <label><input type="checkbox" data-setting="worldbook.includeStyleEntry"> 附带“文风”条目</label>
                         <label><input type="checkbox" data-setting="cards.lintAfterGenerate"> 生成后自动审稿</label>
                     </div>
+                    <div class="nl-sb-form">
+                        <label ${form.kind === 'world' ? 'hidden' : ''}><input type="checkbox" data-setting="cards.statusBar"> 同时生成状态栏（MVU 变量）</label>
+                        <div class="nl-muted nl-small">${form.kind === 'world' ? '世界/旁白卡暂不支持状态栏。' : '写完角色卡后接着让 AI 设计一套变量（好感、心情、位置……）和显示在每条回复下面的状态栏；导出的卡需要酒馆助手（JS-Slash-Runner）4.6 以上。生成后可以在卡片的「状态栏」里修改、预览。'}</div>
+                        <div class="nl-grid2" data-sb-form-opts ${sbOn && form.kind !== 'world' ? '' : 'hidden'}>
+                            <div class="nl-field"><label>状态栏模板</label><select class="nl-input" data-setting="cards.statusBarTemplateId">${optionList(sbTpls, app.settings.cards.statusBarTemplateId || '')}</select></div>
+                            <div class="nl-field"><label>状态栏要求（可选）</label><input class="nl-input" data-form="statusBarRequirement" value="${esc(form.statusBarRequirement)}" placeholder="例如：重点记录好感和体力；记录随身物品"></div>
+                        </div>
+                    </div>
                 </details>
                 <div class="nl-muted nl-small">文风：<b>${esc(getStyleProfile(p, app.settings, 'card')?.name || '不指定')}</b>（用于开场白与示例对话；勾选“文风”条目时也写进世界书）${bannedRulesFor(p, app.settings, 'card').length ? ` · 审稿会检查 ${bannedRulesFor(p, app.settings, 'card').length} 个禁用词` : ''} <a href="#" data-act="goto-style">修改</a></div>
                 <div class="nl-row">
                     <button class="nl-btn nl-primary" data-act="generate" ${!chars.length && form.kind !== 'world' ? 'disabled' : ''}>生成</button>
                     <button class="nl-btn" data-act="preview">预览提示词</button>
+                    <span class="nl-muted nl-small" data-sb-gen-hint ${sbOn && form.kind !== 'world' ? '' : 'hidden'}>会同时生成状态栏</span>
                     ${!chars.length ? '<span class="nl-muted">还没有角色资料，请先提取。</span>' : ''}
                 </div>
             </section>
@@ -115,7 +166,7 @@ export const cardsTab = {
                     <div class="nl-cardbox" data-id="${esc(c.id)}">
                         ${c.avatarDataUrl ? `<img class="nl-avatar" src="${c.avatarDataUrl}" alt="">` : avatarEmpty()}
                         <div class="nl-grow">
-                            <div><b>${esc(c.data.name)}</b> <span class="nl-tag">${c.kind === 'world' ? '世界卡' : '角色卡'}</span> ${c.stAvatar ? (characterExistsInST(c.stAvatar) ? '<span class="nl-tag nl-ok">已在酒馆</span>' : '<span class="nl-tag">酒馆中已删除</span>') : ''}</div>
+                            <div><b>${esc(c.data.name)}</b> <span class="nl-tag">${c.kind === 'world' ? '世界卡' : '角色卡'}</span> ${statusBarTagHtml(c)} ${c.stAvatar ? (characterExistsInST(c.stAvatar) ? '<span class="nl-tag nl-ok">已在酒馆</span>' : '<span class="nl-tag">酒馆中已删除</span>') : ''}</div>
                             <div class="nl-muted nl-small">${esc(timepointLabel(p, Number.isFinite(c.timepoint) ? c.timepoint : Infinity))} · ${fmtTime(c.updatedAt)} · 约 ${estimateTokens(c.data.description + c.data.first_mes)} tokens</div>
                             <div class="nl-small">${lintSummary(c.lint)}</div>
                             <div class="nl-small nl-clamp">${esc(truncate(c.data.first_mes, 120))}</div>
@@ -124,6 +175,7 @@ export const cardsTab = {
                             <button class="nl-btn nl-sm" data-act="edit" data-id="${esc(c.id)}">编辑</button>
                             <button class="nl-btn nl-sm" data-act="testchat" data-id="${esc(c.id)}" title="写入酒馆前先在这里聊两句，看看开场白和回复怎么样">${icon('message', { size: 14 })}试聊</button>
                             <button class="nl-btn nl-sm" data-act="deduce" data-id="${esc(c.id)}" title="根据这张卡当前的设定和相关世界书，推演剧情走向">${icon('crystal', { size: 14 })}剧情推演</button>
+                            ${c.kind === 'world' ? '' : `<button class="nl-btn nl-sm" data-act="statusbar" data-id="${esc(c.id)}" title="MVU 变量状态栏：变量、更新规则、界面、预览">状态栏</button>`}
                             <button class="nl-btn nl-sm" data-act="publish" data-id="${esc(c.id)}">${icon('upload', { size: 14 })}${c.stAvatar ? '更新到酒馆' : '写入酒馆'}</button>
                             ${c.stAvatar && characterExistsInST(c.stAvatar) ? `<button class="nl-btn nl-sm" data-act="open-st" data-id="${esc(c.id)}">在酒馆打开</button>` : ''}
                             <button class="nl-btn nl-sm" data-act="json" data-id="${esc(c.id)}">导出 JSON</button>
@@ -186,6 +238,9 @@ export const cardsTab = {
             const d = card.data;
             const field = (k, label, rows = 4, val = d[k]) => `<div class="nl-field"><label>${label} <span class="nl-muted nl-small" data-tok="${k}">${estimateTokens(val)} tokens</span> ${rerollBtn('reroll-field', `data-field="${k}"`, { title: '只重新生成这一个字段，其余部分不变' })}</label><textarea class="nl-input nl-textarea" rows="${rows}" data-card="${k}">${esc(val)}</textarea></div>`;
             const lintHtml = (lint) => (lint?.length ? lint.map((i) => `<div class="nl-lint nl-lint-${i.level}"><b>[${esc(i.fieldLabel)}] ${esc(i.type)}</b>：${esc(i.context)} <span class="nl-muted">→ ${esc(i.tip)}</span></div>`).join('') : `<div class="nl-ok">${icon('check', { size: 14 })} 没有发现问题</div>`);
+            // 带状态栏的卡写入它自己的一本世界书（statusBar.worldName），编辑框显示并修改的是这个名字；
+            // 保存时按这一栏显示时的模式写回（见 applyCardWorldInput），不按保存那一刻状态栏开没开
+            let worldField = cardWorldField(app.project, app.settings, card);
             const { value, root } = await openDialog({
                 title: `编辑角色卡：${d.name}`,
                 wide: true,
@@ -195,7 +250,7 @@ export const cardsTab = {
                         <button class="nl-btn nl-sm" data-card-act="avatar">${icon('upload', { size: 14 })}上传头像</button>
                         <button class="nl-btn nl-sm" data-card-act="avatar-clear">清除头像</button>
                         <div class="nl-field nl-grow"><label>名称</label><input class="nl-input" data-card="name" value="${esc(d.name)}"></div>
-                        <div class="nl-field nl-grow"><label>绑定世界书名称</label><input class="nl-input" data-card-world value="${esc(card.worldName || defaultWorldName(app.project, app.settings, card.timepoint))}"></div>
+                        <div class="nl-field nl-grow"><label data-card-world-label>${cardWorldLabelHtml(worldField.sb)}</label><input class="nl-input" data-card-world value="${esc(worldField.shown)}"></div>
                     </div>
                     <details class="nl-lint-box" open><summary>审稿（本地规则，不耗 token）</summary><div data-lint>${lintHtml(card.lint)}</div>
                         <div class="nl-row"><button class="nl-btn nl-sm" data-card-act="lint">重新扫描</button><button class="nl-btn nl-sm" data-card-act="fix">AI 按审稿意见修正</button></div></details>
@@ -210,6 +265,7 @@ export const cardsTab = {
                         ${field('post_history_instructions', '历史后指令（post_history_instructions）', 3)}
                         ${field('creator_notes', '作者备注（creator_notes）', 2)}
                         <div class="nl-field"><label>标签（逗号分隔）</label><input class="nl-input" data-card="tags" value="${esc(d.tags.join('，'))}"></div>
+                        ${card.kind === 'world' ? '' : `<div class="nl-field"><label>状态栏（MVU 变量）</label><div class="nl-row">${statusBarTagHtml(card) || '<span class="nl-muted nl-small">这张卡还没有状态栏</span>'}<button class="nl-btn nl-sm" data-card-act="statusbar">打开状态栏设置</button></div></div>`}
                     </details>`,
                 buttons: [{ label: '取消', value: null }, { label: '保存', value: 'save' }, { label: '保存并写入酒馆', value: 'publish', primary: true }],
                 onMount: (r) => {
@@ -250,6 +306,25 @@ export const cardsTab = {
                         } else if (act === 'avatar-clear') {
                             card.avatarDataUrl = '';
                             r.querySelector('[data-avatar-img]').outerHTML = avatarEmpty('data-avatar-img');
+                        } else if (act === 'statusbar') {
+                            // 不关闭编辑框：状态栏对话框叠在上面，关掉后回到这里继续编辑
+                            await openStatusBarDialog(card, sbCtx());
+                            const tag = statusBarTagHtml(card);
+                            const host = b.parentElement;
+                            if (host) {
+                                host.innerHTML = `${tag || '<span class="nl-muted nl-small">这张卡还没有状态栏</span>'}<button class="nl-btn nl-sm" data-card-act="statusbar">打开状态栏设置</button>`;
+                                // 原来有焦点的按钮被换掉了，焦点会掉到 <body>：放回新按钮上（Esc / 关闭后键盘还停在原处）
+                                if (!document.activeElement || document.activeElement === document.body) host.querySelector('[data-card-act="statusbar"]')?.focus({ preventScroll: true });
+                            }
+                            // 状态栏开关变了：世界书名称这一栏没改过的话换成对应模式的名字和标签；改过就保留输入，仍按原来的模式保存
+                            const next = cardWorldField(app.project, app.settings, card);
+                            const worldInp = r.querySelector('[data-card-world]');
+                            if (next.sb !== worldField.sb && worldInp && worldInp.value.trim() === String(worldField.shown).trim()) {
+                                worldField = next;
+                                worldInp.value = next.shown;
+                                const lab = r.querySelector('[data-card-world-label]');
+                                if (lab) lab.innerHTML = cardWorldLabelHtml(next.sb);
+                            }
                         } else if (act === 'lint') {
                             const data = collect();
                             card.lint = lintCardFor(app.project, app.settings, data);
@@ -273,7 +348,7 @@ export const cardsTab = {
             });
             if (!value) return;
             card.data = readCardForm(root, card);
-            card.worldName = root.querySelector('[data-card-world]').value.trim();
+            applyCardWorldInput(card, worldField, root.querySelector('[data-card-world]').value);
             card.lint = lintCardFor(app.project, app.settings, card.data);
             card.updatedAt = Date.now();
             await app.saveNow();
@@ -742,12 +817,15 @@ export const cardsTab = {
         };
 
         const doPublish = async (card, btn) => {
-            await busy(btn, async () => {
-                const r = await publishCard(app.project, app.settings, card, { overwrite: true });
+            const r = await busy(btn, async () => {
+                const res = await publishCard(app.project, app.settings, card, { overwrite: true });
                 await app.saveNow();
-                app.log(`🎴 已写入酒馆：角色「${card.data.name}」${app.settings.cards.linkWorldbook ? `，绑定世界书「${r.worldName}」（${r.entryCount} 条）` : ''}`, 'success');
+                app.log(`🎴 已写入酒馆：角色「${card.data.name}」${app.settings.cards.linkWorldbook || res.statusBar ? `，绑定世界书「${res.worldName}」（${res.entryCount} 条）` : ''}${res.statusBar ? '，带状态栏' : ''}`, 'success');
                 globalThis.toastr?.success(`角色「${card.data.name}」已写入酒馆`, 'NovelLoom');
+                return res;
             }, '写入中…');
+            // 带状态栏的卡：提示导入内嵌世界书、允许本卡正则（可一键，需确认）、允许酒馆助手脚本
+            if (r?.statusBar) await openStatusBarPublishHint(card, sbCtx());
         };
 
         const onClick = async (e) => {
@@ -760,20 +838,36 @@ export const cardsTab = {
                 case 'regen': {
                     const o = card ? { kind: card.kind, charName: card.charName, timepoint: Number.isFinite(card.timepoint) ? card.timepoint : Infinity, requirement: card.requirement, greetings: card.data.alternate_greetings.length, firstMesLen: form.firstMesLen } : opts();
                     if (o.kind !== 'world' && !p.characters[o.charName]) return app.log('请选择角色', 'warn');
-                    const result = await busy(btn, () => generateCard(p, app.settings, o, { onLog: (m) => app.log(m) }), 'AI 写卡中…');
+                    // 新建时按“写卡选项”接着生成状态栏；整卡重新生成只沿用旧状态栏（标记为过时），不重新生成
+                    const withStatusBar = !card && wantStatusBar();
+                    const sbOpt = { requirement: form.statusBarRequirement, templateId: app.settings.cards.statusBarTemplateId || '' };
+                    const result = await busy(btn, async () => {
+                        const r = await generateCard(p, app.settings, o, { onLog: (m) => app.log(m) });
+                        if (card) {
+                            r.id = card.id;
+                            r.avatarDataUrl = card.avatarDataUrl;
+                            r.stAvatar = card.stAvatar;
+                            r.worldName = card.worldName;
+                            if (card.statusBar) {
+                                r.statusBar = card.statusBar;
+                                if (r.statusBar.spec?.variables?.length) r.statusBar.stale = true;
+                            }
+                            p.cards[p.cards.indexOf(card)] = r;
+                        } else {
+                            r.avatarDataUrl = form.avatarDataUrl || '';
+                            p.cards.push(r);
+                        }
+                        await app.saveNow(); // 先保存卡片：后面的状态栏失败也不会丢卡
+                        if (withStatusBar) {
+                            btn.innerHTML = `<span class="nl-spin"></span>${esc('AI 生成状态栏中…')}`;
+                            await generateStatusBarForCard(r, sbCtx(), sbOpt);
+                            await app.saveNow();
+                        }
+                        return r;
+                    }, 'AI 写卡中…');
                     if (!result) return;
-                    if (card) {
-                        result.id = card.id;
-                        result.avatarDataUrl = card.avatarDataUrl;
-                        result.stAvatar = card.stAvatar;
-                        result.worldName = card.worldName;
-                        p.cards[p.cards.indexOf(card)] = result;
-                    } else {
-                        result.avatarDataUrl = form.avatarDataUrl || '';
-                        p.cards.push(result);
-                    }
-                    await app.saveNow();
                     app.log(`🎴 已生成「${result.data.name}」${result.lint.length ? `，审稿发现 ${result.lint.filter((i) => i.level !== 'info').length} 处可改进` : ''}`, 'success');
+                    if (card && result.statusBar?.stale) app.log(`「${result.data.name}」的状态栏沿用了旧的变量和初始值，可能需要在「状态栏」里更新初始值`, 'warn');
                     render();
                     return editCard(result);
                 }
@@ -805,6 +899,8 @@ export const cardsTab = {
                     return testChatDialog(card);
                 case 'deduce':
                     return deduceDialog(card);
+                case 'statusbar':
+                    return openStatusBarDialog(card, sbCtx());
                 case 'publish':
                     await doPublish(card, btn);
                     return render();
@@ -816,7 +912,12 @@ export const cardsTab = {
                     }
                     return;
                 case 'json': {
-                    const { json } = prepareCard(p, app.settings, card);
+                    let json;
+                    try {
+                        ({ json } = prepareCard(p, app.settings, card)); // 状态栏界面有错误时会拒绝导出（StatusBarExportError）
+                    } catch (err) {
+                        return alertDialog(errorText(err), '导出失败');
+                    }
                     downloadFile(JSON.stringify(json, null, 2), `${safeFileName(card.data.name)}.json`);
                     return;
                 }
@@ -904,9 +1005,16 @@ export const cardsTab = {
                 groupForm[gk] = e.target.value;
                 return;
             }
+            if (e.target.dataset.setting === 'cards.statusBar') {
+                // 只切换显示，不整页重绘（否则“写卡选项”会收起来）
+                const on = e.target.checked && form.kind !== 'world';
+                el.querySelector('[data-sb-form-opts]')?.toggleAttribute('hidden', !on);
+                el.querySelector('[data-sb-gen-hint]')?.toggleAttribute('hidden', !on);
+                return;
+            }
             const k = e.target.dataset.form;
             if (!k) return;
-            form[k] = e.target.value;
+            form[k] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
             if (k === 'kind') render();
         };
 

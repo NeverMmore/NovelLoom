@@ -644,6 +644,76 @@ export const DEFAULT_PROMPTS = {
 - 不要写“修改说明”“以下是重写后的内容”之类的解释。
 
 直接输出重写后的内容。`,
+
+    // ---------------- 状态栏（MVU 变量）：变量表 + 界面，见 statusbar-ai.js ----------------
+
+    statusSpecSystem: `你是资深的 SillyTavern 角色卡作者，熟悉 MVU 变量框架。你为角色扮演设计“状态栏变量表”：AI 每轮回复后按规则更新这些变量，状态栏界面实时显示当前值。你设计的变量少而精，每一个都会在扮演中真实变化，并且影响剧情或互动。你只输出一个 JSON 对象。`,
+
+    statusSpec: `# 任务
+为《{BOOK}》的角色卡「{CHAR_NAME}」设计状态栏变量表。故事时间点：{TIMEPOINT}（只使用该时间点及之前的信息）。
+
+# 角色卡内容（以这里为准）
+<角色卡内容>
+{CARD_CONTENT}
+</角色卡内容>
+
+# 原著背景资料（仅供参考）
+<背景资料>
+{CONTEXT}
+</背景资料>
+
+# 用户要求
+{REQUIREMENT}
+
+# 设计要求
+- 只选扮演中会变化、对剧情或互动有意义的状态：时间与地点、关系数值（好感、信任等）、心情、着装、所在位置、持有物品、剧情阶段等。姓名、年龄、身份背景这类固定设定已经写在角色卡里，不要做成变量。
+- 变量总数不超过 {MAX_VARS} 个（记录类型的每个字段各算一个）。宁少勿滥，通常 6-10 个就够。
+- 每个数字都要有范围（min / max），并在 check 里写清单轮的变化幅度（例如“单次变化 ±(1~5)”）。
+- 初始值 init 必须符合角色卡开场白里的情境，不剧透 {TIMEPOINT} 之后才发生的事。
+- 用户一律写作“主角”，其他角色写本名；路径用中文短名。
+- 每个变量写 1-3 条 check：什么情况下更新、怎么更新、变化幅度或取值依据；desc 用一句话说明变量含义（可省略）。desc 和 check 里可以用 {{user}} 指代用户、{{char}} 指代角色。
+- label 是界面上显示的短名（2-6 字）；widget 选最合适的显示方式。
+{INSTRUCTION_LINE}
+{TEMPLATE_SPEC}
+# 类型说明
+{TYPE_GUIDE}
+
+# 输出 JSON 模板
+{JSON_TEMPLATE}
+只输出 JSON。`,
+
+    statusHtmlSystem: `你是擅长小尺寸信息面板的前端设计师，为 SillyTavern 聊天消息里的“状态栏”写界面。你只写 <style>、带 data-nl-* 绑定属性的 HTML 标记，以及可选的一小段只负责显示的 <script>；读取变量与刷新由 NovelLoom 的运行时负责。你只输出一个 \`\`\`html 代码块。`,
+
+    statusHtml: `# 任务
+为角色「{CHAR_NAME}」设计状态栏界面。界面嵌在聊天消息里，显示下面这张变量表的当前值，变量更新后自动刷新。
+
+# 变量表
+{SPEC_SUMMARY}
+
+# 示例数据（变量的当前值）
+{SAMPLE_JSON}
+
+# 绑定方式
+{BINDING_GUIDE}
+
+# 风格
+{STYLE_REF}
+
+# 用户要求
+{REQUIREMENT}
+
+# 硬性规则（违反会被拒绝导出）
+- 只输出一个 \`\`\`html 代码块，里面依次是 <style>…</style>、界面标记、可选的 <script>window.nlRender = function (stat, ctx) { … };</script>；不要写 <!doctype>、<html>、<head>、<body>。
+- 变量只通过 data-nl-* 绑定或 nlRender 读取，路径必须来自上面的变量表；显示方式为“不显示”的变量不用出现在界面上。
+- 不引用任何外部资源（图片、字体、样式表、脚本）；图标只能用 Font Awesome 6 的类名（如 <i class="fa-solid fa-heart"></i>），装饰用 CSS 渐变、边框或内联 SVG。
+- 脚本只做显示：不要 fetch、XMLHttpRequest、WebSocket，不要访问 parent、top、localStorage、sessionStorage、cookie，不要 eval、new Function、import，不要调用任何酒馆或酒馆助手的接口，不要修改变量。
+- 不要写 onclick= 这类内联事件属性，也不要用 javascript: 地址；需要响应点击时在 <script> 里用 addEventListener。
+- 代码里不能出现：两个连续的左花括号、$ 后面紧跟数字或 <（如 $1）、反斜杠加花括号、三个连续的反引号，以及 <user>、<char>、<bot> 这类尖括号占位符；脚本里拼接字符串用 + 号，不要用模板字符串。
+- 不要用 vh 单位和 position: fixed；宽度自适应 320~800px，整体高度控制在 280px 左右，次要的分组放进 <details> 折叠。
+- 自带背景色和文字颜色，在深色和浅色的聊天背景上都清晰可读；类名统一加前缀（如 sb-）。
+{INSTRUCTION_LINE}
+
+只输出一个 \`\`\`html 代码块。`,
 };
 
 export const PROMPT_LABELS = {
@@ -693,6 +763,10 @@ export const PROMPT_LABELS = {
     continuity: '连续性检查 · 主提示',
     rewriteSystem: '局部重写 · 系统提示',
     rewrite: '局部重写 · 主提示',
+    statusSpecSystem: '状态栏 · 变量表 · 系统提示',
+    statusSpec: '状态栏 · 变量表 · 主提示',
+    statusHtmlSystem: '状态栏 · 界面 · 系统提示',
+    statusHtml: '状态栏 · 界面 · 主提示',
 };
 
 export const PROMPT_PLACEHOLDERS = {
@@ -714,6 +788,10 @@ export const PROMPT_PLACEHOLDERS = {
     foreshadow: ['{BOOK}', '{CHAPTERS}', '{EXISTING}'],
     continuity: ['{BOOK}', '{CHAPTER_TITLE}', '{CONTEXT}', '{TEXT}'],
     rewrite: ['{BOOK}', '{STYLE}', '{BEFORE}', '{SELECTED}', '{AFTER}', '{INSTRUCTION}'],
+    statusSpecSystem: ['{BOOK}', '{CHAR_NAME}', '{TIMEPOINT}', '{CARD_CONTENT}', '{CONTEXT}', '{REQUIREMENT}', '{MAX_VARS}', '{TEMPLATE_SPEC}', '{TYPE_GUIDE}', '{JSON_TEMPLATE}', '{INSTRUCTION_LINE}'],
+    statusSpec: ['{BOOK}', '{CHAR_NAME}', '{TIMEPOINT}', '{CARD_CONTENT}', '{CONTEXT}', '{REQUIREMENT}', '{MAX_VARS}', '{TEMPLATE_SPEC}', '{TYPE_GUIDE}', '{JSON_TEMPLATE}', '{INSTRUCTION_LINE}'],
+    statusHtmlSystem: ['{CHAR_NAME}', '{SPEC_SUMMARY}', '{SAMPLE_JSON}', '{BINDING_GUIDE}', '{STYLE_REF}', '{REQUIREMENT}', '{INSTRUCTION_LINE}'],
+    statusHtml: ['{CHAR_NAME}', '{SPEC_SUMMARY}', '{SAMPLE_JSON}', '{BINDING_GUIDE}', '{STYLE_REF}', '{REQUIREMENT}', '{INSTRUCTION_LINE}'],
 };
 
 export function getPrompt(settings, key) {

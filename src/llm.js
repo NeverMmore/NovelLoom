@@ -154,6 +154,7 @@ export const CHAIN_TASKS = [
     { value: 'default', label: '默认（所有任务）' },
     { value: 'extract', label: '分段提取' },
     { value: 'card', label: '写角色卡 / 群聊场景卡 / 审稿修订' },
+    { value: 'statusbar', label: '状态栏（变量/界面）' },
     { value: 'outline', label: '写大纲' },
     { value: 'continue', label: '续写正文' },
     { value: 'tools', label: '整理 / 别名 / 梗概 / 关系分析' },

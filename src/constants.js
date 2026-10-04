@@ -2,7 +2,7 @@
 
 export const MODULE = 'novel_loom';
 export const PREFIX = 'nl';
-export const VERSION = '0.10.0';
+export const VERSION = '0.11.0';
 export const DB_NAME = 'NovelLoomDB';
 export const DB_VERSION = 1;
 
@@ -96,6 +96,24 @@ export const DEFAULT_STYLE_OPTIONS = {
     fixMode: 'none', // none | replace（按建议替换）| ai（AI 改写命中的句子）
 };
 
+/**
+ * 状态栏（MVU 变量）全局默认；单卡的 card.statusBar.options 创建时从这里复制，之后可单独修改。
+ * CDN 地址用 testingcf（国内可访问的 jsDelivr 镜像，社区卡通用），不固定版本。
+ */
+export const DEFAULT_STATUS_BAR = {
+    mvuUrl: 'https://testingcf.jsdelivr.net/gh/MagicalAstrogy/MagVarUpdate/artifact/bundle.js',
+    zodUrl: 'https://testingcf.jsdelivr.net/gh/StageDog/tavern_resource/dist/util/mvu_zod.js',
+    maxVars: 12, // 变量（叶子）上限：记录的每个字段各算一个
+    htmlMode: 'ai', // ai = AI 按变量表设计界面（绑定模式 bind）；auto = 内置排版（不调用 AI）
+    theme: 'clean', // 内置排版主题：clean | night | paper
+    analysisLang: 'en', // <Analysis> 用英文（省 token）或中文 zh
+    showDepth: 1, // 状态栏显示在最新几层 AI 回复上：1 = 只最新一层；N = 最新 N 层；null = 每一层
+    keepUpdateDepth: null, // 发给 AI 的历史里保留最近几轮的 <UpdateVariable> 块：null = 全部去掉
+    foldUpdate: true, // 聊天里把 <UpdateVariable> 块折叠成 <details>
+    greetingTag: true, // 导出时给开场白末尾加 <StatusPlaceHolderImpl/>，开场白也显示状态栏
+    usageNote: true, // 导出时在作者备注里追加使用说明
+};
+
 export const DEFAULT_SETTINGS = {
     version: VERSION,
     activeProjectId: '',
@@ -143,6 +161,8 @@ export const DEFAULT_SETTINGS = {
         linkWorldbook: true,
         greetings: 2,
         lintAfterGenerate: true,
+        statusBar: false, // 写卡时同时生成状态栏（MVU 变量），默认不勾选
+        statusBarTemplateId: '', // 写卡时套用的状态栏模板（'' = 自动）
     },
     planner: {
         count: 10,
@@ -215,4 +235,8 @@ export const DEFAULT_SETTINGS = {
     relationTemplates: [], // [{id, name, type, mutual, label, createdAt}]
     /** 剧情推演·走向模板：保存在扩展设置里，跨项目共享（见 deduce.js 的 branchTemplates） */
     branchTemplates: [], // [{id, label, hint, createdAt}]
+    /** 状态栏全局选项（见 DEFAULT_STATUS_BAR） */
+    statusBar: { ...DEFAULT_STATUS_BAR },
+    /** 状态栏模板：保存在扩展设置里，跨项目共享（内置模板不存这里） */
+    statusBarTemplates: [], // [{id:'sbtpl_…', name, desc, mode, spec|null, html, theme, sample, createdAt, updatedAt}]
 };
