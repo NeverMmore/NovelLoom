@@ -1,7 +1,7 @@
 // UI 公共工具：对话框、设置绑定、格式化
 
 import { escapeHtml, estimateTokens } from '../utils.js';
-import { buildChainMessages, getChain } from '../llm.js';
+import { buildChainMessages, errorText, getChain } from '../llm.js';
 
 export const esc = escapeHtml;
 
@@ -182,7 +182,7 @@ export async function busy(btn, fn, label = '处理中…') {
     } catch (e) {
         if (e?.name !== 'AbortError') {
             console.error('[NovelLoom]', e);
-            await alertDialog(`${e.message || e}${e.raw ? `\n\nAI 原始输出（节选）：\n${String(e.raw).slice(0, 800)}` : ''}`, '出错了');
+            await alertDialog(`${errorText(e)}${e?.raw ? `\n\nAI 原始输出（节选）：\n${String(e.raw).slice(0, 800)}` : ''}`, '出错了');
         }
         return undefined;
     } finally {

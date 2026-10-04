@@ -2,7 +2,7 @@
 
 export const MODULE = 'novel_loom';
 export const PREFIX = 'nl';
-export const VERSION = '0.8.1';
+export const VERSION = '0.8.2';
 export const DB_NAME = 'NovelLoomDB';
 export const DB_VERSION = 1;
 

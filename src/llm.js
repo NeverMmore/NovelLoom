@@ -34,6 +34,39 @@ export class LLMError extends Error {
     }
 }
 
+/**
+ * 从任意抛出值里取出可读的错误信息。
+ * 酒馆的 ConnectionManagerRequestService / generateRaw 出错时可能直接 throw 响应 JSON（不是 Error），
+ * 只读 e.message 会丢掉真正的原因（只剩“未知错误”/undefined）。
+ */
+export function errorText(e) {
+    if (e == null) return '未知错误（没有错误信息）';
+    if (typeof e === 'string') return e;
+    const pick = (v) => (typeof v === 'string' && v.trim() ? v.trim() : '');
+    const nested = e.error && typeof e.error === 'object' ? e.error : null;
+    const parts = uniqText([
+        pick(e.message),
+        pick(nested?.message),
+        pick(typeof e.error === 'string' ? e.error : ''),
+        pick(e.response),
+        pick(e.statusText),
+        pick(e.cause?.message) || pick(e.cause),
+    ]);
+    const status = e.status || nested?.status || nested?.code || '';
+    if (parts.length) return `${status ? `[${status}] ` : ''}${parts.join('：')}`;
+    try {
+        const json = JSON.stringify(e);
+        if (json && json !== '{}') return json.slice(0, 500);
+    } catch { /* ignore */ }
+    return String(e);
+}
+
+function uniqText(list) {
+    const out = [];
+    for (const s of list) if (s && !out.some((x) => x.includes(s))) out.push(s);
+    return out;
+}
+
 function ctx() {
     return globalThis.SillyTavern?.getContext?.();
 }
@@ -297,7 +330,8 @@ async function callTavern({ list, signal, userSignal }) {
             if (/is not a function|Cannot read|prompt\.map|substring|trim/i.test(String(e?.message))) {
                 result = await withAbort(c.generateRaw(flatten(list)), signal);
             } else {
-                throw e;
+                const msg = errorText(e);
+                throw new LLMError(`酒馆生成失败：${msg}`, { retryable: RETRYABLE_TEXT.test(msg) });
             }
         }
         return { text: String(result ?? '') };
@@ -323,8 +357,8 @@ async function callProfile({ list, maxTokens, signal, api }) {
         return { text: String(text), reasoning: res?.reasoning || '' };
     } catch (e) {
         if (isAbortError(e) || signal?.aborted) throw signal?.reason?.name === 'TimeoutError' ? new LLMError('请求超时', { retryable: true }) : abortError();
-        const cause = e?.cause?.message || e?.cause || '';
-        throw new LLMError(`${e.message}${cause ? `：${cause}` : ''}`, { retryable: RETRYABLE_TEXT.test(`${e.message} ${cause}`) });
+        const msg = errorText(e);
+        throw new LLMError(`连接配置档请求失败：${msg}`, { retryable: RETRYABLE_TEXT.test(msg) });
     }
 }
 
