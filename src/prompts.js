@@ -733,6 +733,46 @@ export const DEFAULT_PROMPTS = {
 - 卡片一律用 data-nl-each 逐个生成，不要为某个角色写死路径或名字；容器加 data-nl-empty 在没有角色时显示提示。
 - 角色多时用网格或横向滚动控制高度。
 - 标签页和展开详情用 <details>，或在 <script> 里用 addEventListener 实现；可点击的元素用 <button type="button">，能用键盘操作。`,
+
+    resolveNamesSystem: `你是熟悉《{BOOK}》的资料编辑，负责把原文里用模糊说法指代的人物、地点、组织、物品换成具体名称。你优先从给出的原文片段和已有资料里找答案；每个候选都如实标明来源，绝不把自己起的名字说成原文里有的。你只输出一个 JSON 数组，不输出任何解释。`,
+
+    resolveNames: `# 任务
+《{BOOK}》的原文里，有些对象只用模糊说法指代（比如“那家店”“那位大人”）。请为下面每一条推断具体名称：每条最多给 {COUNT} 个不同的候选，最可能的放在最前面，供用户挑选。
+
+# 故事梗概
+{SUMMARY}
+
+# 已有角色（source 为 existing 时，name 必须和这里的名字或括号里的别名一字不差）
+{CHARACTERS}
+
+# 已有世界书条目（同上）
+{ENTRIES}
+
+# 待确认名称（每条附有它出现的原文片段；标了「后文」的片段在它之后，真名常常在后文才揭晓）
+{ITEMS}
+
+# 候选的来源 source
+- text：这个具体名称在上面给出的原文片段里出现过。evidence 填能证明它的一小句原文，逐字照抄，不超过 40 字。
+- existing：就是上面已有角色或世界书条目中的某一个。name 必须和列表里的名字（或括号里列出的别名、又称）完全一致；evidence 有原文依据就填，没有就留空。既在原文片段里出现、又是已有角色或条目的，source 用 existing。
+{INVENT_RULE}
+
+# 要求
+- text 和 existing 候选排在前面；{INVENT_ORDER}
+- 候选必须是具体的专有名称：不要输出模糊说法本身，也不要输出“那个人”“某地”“老板”“小姐”“师父”这类泛称或代词。
+- 名称要和这一条的类型对得上：人物给人名，地点给地名，组织给组织名，物品给物品名。
+- 名称要简短（一般 2-8 个字），不带解释、括号、书名号或引号。
+- 同一条的候选不能重复；某条写了「不要再给」的名称，一个都不要再出现。
+- confidence：high = 原文或已有资料明确对应；medium = 有线索支持但不能确定；low = 只是猜测。
+- reason 用一句话说明判断依据，不超过 60 字。
+- 实在找不到合适的候选时，这一条的 candidates 输出空数组，并在这一条的 reason 里说明为什么找不到。
+{EXTRA}
+# 输出 JSON 模板（按上面的顺序每条输出一个对象，vague 照抄原文说法）
+[
+  {"vague": "原文说法", "reason": "", "candidates": [
+    {"name": "具体名称", "source": "text|existing|invented", "confidence": "high|medium|low", "reason": "判断依据", "evidence": "原文证据"}
+  ]}
+]
+只输出 JSON。`,
 };
 
 export const PROMPT_LABELS = {
@@ -788,6 +828,8 @@ export const PROMPT_LABELS = {
     statusHtmlSystem: '状态栏 · 界面 · 系统提示',
     statusHtml: '状态栏 · 界面 · 主提示',
     statusHtmlWorld: '状态栏 · 界面 · 世界卡附加说明',
+    resolveNamesSystem: '推断待确认名称 · 系统提示',
+    resolveNames: '推断待确认名称 · 主提示',
 };
 
 export const PROMPT_PLACEHOLDERS = {
@@ -816,6 +858,8 @@ export const PROMPT_PLACEHOLDERS = {
     statusHtmlSystem: ['{CHAR_NAME}', '{CARD_KIND}', '{SPEC_SUMMARY}', '{SAMPLE_JSON}', '{BINDING_GUIDE}', '{LAYOUT_GUIDE}', '{STYLE_REF}', '{WORLD_GUIDE}', '{REQUIREMENT}', '{INSTRUCTION_LINE}'],
     statusHtml: ['{CHAR_NAME}', '{CARD_KIND}', '{SPEC_SUMMARY}', '{SAMPLE_JSON}', '{BINDING_GUIDE}', '{LAYOUT_GUIDE}', '{STYLE_REF}', '{WORLD_GUIDE}', '{REQUIREMENT}', '{INSTRUCTION_LINE}'],
     statusHtmlWorld: ['{CHAR_NAME}', '{CAST}'],
+    resolveNamesSystem: ['{BOOK}'],
+    resolveNames: ['{BOOK}', '{COUNT}', '{SUMMARY}', '{CHARACTERS}', '{ENTRIES}', '{ITEMS}', '{INVENT_RULE}', '{INVENT_ORDER}', '{EXTRA}'],
 };
 
 export function getPrompt(settings, key) {

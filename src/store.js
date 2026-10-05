@@ -1,6 +1,7 @@
 // 持久化：设置走 ST extensionSettings；项目与快照走 IndexedDB（不可用时退回内存）
 
 import { DB_NAME, DB_VERSION, DEFAULT_SETTINGS, DEFAULT_CATEGORIES, MODULE } from './constants.js';
+import { normalizeNameResolve } from './names.js';
 import { mergeDefaults, structuredCloneSafe, uid } from './utils.js';
 
 // ---------------- 设置 ----------------
@@ -25,6 +26,8 @@ export function getSettings() {
     if (!Array.isArray(s.categories) || !s.categories.length) {
         s.categories = structuredCloneSafe(DEFAULT_CATEGORIES);
     }
+    // 「AI 推断名称」的选项：超出范围的数值、不认识的模式回到默认
+    s.nameResolve = normalizeNameResolve(s.nameResolve);
     return s;
 }
 

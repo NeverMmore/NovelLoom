@@ -46,8 +46,9 @@ export async function snapshotsDialog() {
                     draw(root);
                 } else if (t.dataset.snapRestore) {
                     if (app.isBusy()) return app.log('有任务正在运行（例如提取），请先停止再回退快照', 'warn');
+                    if (app.nameJob?.projectId === p.id) return app.log('AI 正在推断待确认名称，请等它结束（或在大纲页停止）再回退快照', 'warn');
                     if (!(await confirmDialog('回退会用快照内容覆盖当前的角色、世界书、大纲、角色卡、人物关系、群聊场景卡、视角文风、待核实名称，以及各分段的提取状态（分段正文和续写章节不变）。回退前会先自动保存当前状态为快照。继续？'))) return;
-                    if (app.isBusy()) return app.log('有任务正在运行（例如提取），请先停止再回退快照', 'warn');
+                    if (app.isBusy() || app.nameJob?.projectId === p.id) return app.log('有任务正在运行（例如提取、AI 推断名称），请先停止再回退快照', 'warn');
                     await createSnapshot(p, '回退前自动保存');
                     await restoreSnapshot(p, t.dataset.snapRestore);
                     await app.saveNow();

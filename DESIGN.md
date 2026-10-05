@@ -347,6 +347,7 @@ Compact, neutral and quiet until one of them matters.
 - **Tags:** 20px pills, 7px padding, 12px 500 text on Second Veil in Quiet Ink. Status tags use the status color as text over a 14% wash. Importance tags use ink level only (主要 on Pressed Veil in Theme Ink).
 - **Segmented filters:** 28px pills with a Hairline border, transparent, Quiet Ink; hover Hover Veil. The active one gets Accent Wash, Accent Edge border, Theme Ink and 500 weight. Category filters may lead with a status dot (常驻 blue, 关键词 green) and an item count.
 - **Status dots:** 7px circles in Faint Ink (pending), Leaf Green (done), Brick Red (error), Cornflower Blue or accent; a processing item shows a spinner in Accent Ink instead.
+- **Candidate chips** (AI name candidates on the outline page's 待确认名称 rows): 26px pill buttons with a Strong Hairline border, the name in Theme Ink and a 20px source badge inside (原文 on a Leaf Green wash, 已有 on Second Veil, AI 起名 on an Amber wash). The chosen one (`aria-pressed`) takes Accent Wash and Accent Edge like an active segmented filter; a low-confidence guess gets a dashed border and Faint Ink. They share the row with the small dice 换一批 button, and the chosen candidate's reason and source quote sit below the chips in Quiet Ink, not only in the tooltip. A value the AI filled in that the user has not confirmed adds one Amber line above the reason saying how to confirm it (tap the highlighted chip).
 
 ### Cards / Containers
 - **Corner Style:** 10px.

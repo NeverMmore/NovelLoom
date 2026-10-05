@@ -2,7 +2,7 @@
 
 export const MODULE = 'novel_loom';
 export const PREFIX = 'nl';
-export const VERSION = '0.13.0';
+export const VERSION = '0.14.0';
 export const DB_NAME = 'NovelLoomDB';
 export const DB_VERSION = 1;
 
@@ -113,6 +113,19 @@ export const DEFAULT_STATUS_BAR = {
     greetingTag: true, // 导出时给开场白末尾加 <StatusPlaceHolderImpl/>，开场白也显示状态栏
     usageNote: true, // 导出时在作者备注里追加使用说明
     portraitStore: 'server', // 立绘「选择本地图片」存到哪儿：server = 酒馆服务器（user/images/角色名/，不限大小但不随卡分享）；embed = 压缩后嵌进卡片
+};
+
+/**
+ * 「大纲」页待确认名称的「AI 推断名称」选项（对话框里改了会记住；规整见 names.js 的 normalizeNameResolve）
+ * autoFill：confident = 只把把握大的（原文里有 / 已有角色或条目）填进空行；top = 空行都先填第一个候选；none = 只给候选不自动填
+ */
+export const DEFAULT_NAME_RESOLVE = {
+    invent: true, // 原文和已有资料里找不到时，让 AI 按本书的命名风格起名字（候选会标成「AI 起名」）
+    count: 4, // 每条给几个候选（2-6）
+    autoFill: 'confident',
+    overwrite: false, // false = 只推断还没有候选、也没填写的；true = 全部重新推断（不动手动填写或点选的）
+    batchSize: 6, // 每次请求处理几条
+    extra: '', // 额外要求（追加到提示词末尾）
 };
 
 export const DEFAULT_SETTINGS = {
@@ -238,6 +251,8 @@ export const DEFAULT_SETTINGS = {
     branchTemplates: [], // [{id, label, hint, createdAt}]
     /** 状态栏全局选项（见 DEFAULT_STATUS_BAR） */
     statusBar: { ...DEFAULT_STATUS_BAR },
+    /** 待确认名称「AI 推断名称」的选项（见 DEFAULT_NAME_RESOLVE） */
+    nameResolve: { ...DEFAULT_NAME_RESOLVE },
     /** 状态栏模板：保存在扩展设置里，跨项目共享（内置模板不存这里） */
     statusBarTemplates: [], // [{id:'sbtpl_…', name, desc, mode, spec|null, html, theme, sample, createdAt, updatedAt}]
 };

@@ -158,6 +158,7 @@ export const CHAIN_TASKS = [
     { value: 'outline', label: '写大纲' },
     { value: 'continue', label: '续写正文' },
     { value: 'tools', label: '整理 / 别名 / 梗概 / 关系分析' },
+    { value: 'names', label: '推断待确认名称' },
     { value: 'rewrite', label: '局部重写' },
 ];
 

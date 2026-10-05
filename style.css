@@ -644,6 +644,75 @@ select.nl-input option { background: var(--nl-tint); color: var(--nl-text); }
 .nl-table th { font-weight: 600; font-size: var(--nl-fs-xs); color: var(--nl-text-2); text-align: left; padding: 6px var(--nl-s2); border-bottom: 1px solid var(--nl-line-strong); white-space: nowrap; }
 .nl-table td { border-bottom: 1px solid var(--nl-line); padding: 7px var(--nl-s2); text-align: left; vertical-align: top; }
 .nl-table tbody tr:hover td { background: var(--nl-hover); }
+
+/* 待确认名称：确认名称 + AI 候选（候选是可选中的小圆角按钮，选中用强调色浅底，与分段筛选一致） */
+.nl-mn-table .nl-mn-c-type { white-space: nowrap; color: var(--nl-text-2); }
+/* 不设最小宽度、说法列不禁止换行：侧栏还在的中等宽度（801-1000px）卡片很窄，候选按钮会自己折行 */
+.nl-mn-table .nl-mn-c-vague { min-width: 4em; }
+.nl-mn-table .nl-mn-c-ans { width: 46%; }
+.nl-mn-table .nl-mn-c-act { width: 1%; }
+.nl-mn-input { display: flex; align-items: center; gap: var(--nl-s2); }
+.nl-mn-input > .nl-input { flex: 1; min-width: 0; }
+.nl-mn-by:empty { display: none; }
+.nl-tag.nl-mn-by-ai { color: var(--nl-warn); background: color-mix(in srgb, var(--nl-warn) 14%, transparent); }
+.nl-tag.nl-mn-by-pick { color: var(--nl-ok); background: color-mix(in srgb, var(--nl-ok) 14%, transparent); }
+.nl-mn-cands { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.nl-mn-cand {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    max-width: 100%;
+    padding: 0 3px 0 10px;
+    border: 1px solid var(--nl-line-strong);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--nl-text);
+    cursor: pointer;
+    font: inherit;
+    font-size: var(--nl-fs-sm);
+    transition: background-color 0.12s var(--nl-ease), border-color 0.12s var(--nl-ease), color 0.12s var(--nl-ease);
+}
+.nl-mn-cand:hover { background: var(--nl-hover); }
+.nl-mn-cand[aria-pressed="true"] { background: var(--nl-accent-soft); border-color: var(--nl-accent-line); font-weight: 500; }
+.nl-mn-cand-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 把握不大（只是猜测）：虚线边框、文字变淡 */
+.nl-mn-cand.nl-conf-low { border-style: dashed; color: var(--nl-text-3); }
+.nl-mn-cand.nl-conf-low[aria-pressed="true"] { color: var(--nl-text); }
+/* 来源徽标：原文 = 绿；已有 = 中性；AI 起名 = 琥珀（提醒原文里没有） */
+.nl-mn-src { display: inline-flex; align-items: center; flex-shrink: 0; height: 20px; padding: 0 7px; border-radius: 999px; font-size: var(--nl-fs-xs); font-weight: 500; line-height: 1; white-space: nowrap; background: var(--nl-surface-2); color: var(--nl-text-2); }
+.nl-mn-src-text { color: var(--nl-ok); background: color-mix(in srgb, var(--nl-ok) 14%, transparent); }
+.nl-mn-src-invented { color: var(--nl-warn); background: color-mix(in srgb, var(--nl-warn) 14%, transparent); }
+.nl-mn-why { display: flex; align-items: flex-start; gap: 6px; margin-top: 6px; font-size: var(--nl-fs-sm); line-height: 1.6; color: var(--nl-text-2); }
+.nl-mn-why > .nl-mn-src { margin-top: 1px; }
+.nl-mn-why > .nl-ico { flex-shrink: 0; margin-top: 3px; color: var(--nl-text-3); }
+.nl-mn-ev { display: block; color: var(--nl-text-3); }
+/* AI 自动填入、还没确认：直接写在候选下面（触屏没有悬停提示） */
+.nl-mn-hint { display: block; color: var(--nl-warn); }
+.nl-mn-more { margin-top: 2px; }
+.nl-mn-more ul { margin: 2px 0 0; padding-left: 18px; font-size: var(--nl-fs-sm); line-height: 1.6; color: var(--nl-text-2); }
+.nl-mn-opt-title { font-size: var(--nl-fs-sm); font-weight: 500; color: var(--nl-text-2); }
+/* 窄屏：表格改成一条一块（类型 + 说法 + 忽略 / 上下文 / 确认名称与候选），不横向溢出 */
+@media (max-width: 800px) {
+    .nl-mn-table thead { display: none; }
+    .nl-mn-table, .nl-mn-table tbody { display: block; }
+    .nl-mn-table tr {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        grid-template-areas: "type vague act" "ctx ctx ctx" "ans ans ans";
+        align-items: center;
+        gap: 4px var(--nl-s2);
+        padding: 10px 0;
+        border-bottom: 1px solid var(--nl-line);
+    }
+    .nl-mn-table td, .nl-mn-table td.nl-mn-c-ans { display: block; width: auto; min-width: 0; padding: 0; border: none; }
+    .nl-mn-table tbody tr:hover td { background: none; }
+    .nl-mn-table .nl-mn-c-type { grid-area: type; font-size: var(--nl-fs-xs); }
+    .nl-mn-table .nl-mn-c-vague { grid-area: vague; white-space: normal; }
+    .nl-mn-table .nl-mn-c-ctx { grid-area: ctx; color: var(--nl-text-2); }
+    .nl-mn-table .nl-mn-c-ans { grid-area: ans; margin-top: 4px; }
+    .nl-mn-table .nl-mn-c-act { grid-area: act; }
+}
 .nl-cat { border: 1px solid var(--nl-line); border-radius: var(--nl-r); padding: var(--nl-s3); margin: var(--nl-s2) 0; display: flex; flex-direction: column; gap: var(--nl-s2); }
 .nl-alias-group { padding: var(--nl-s2) 0; border-bottom: 1px solid var(--nl-line); }
 

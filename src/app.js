@@ -19,6 +19,8 @@ export const app = {
     extraction: null,
     continuation: null,
     chatgen: null,
+    /** 正在进行的「AI 推断名称」（大纲页发起，见 ui/tab-outline.js）：{projectId, items, full, progress, ctl, origin}；回退快照前要等它结束 */
+    nameJob: null,
     initialized: false,
 
     async init() {

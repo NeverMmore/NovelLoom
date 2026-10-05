@@ -93,6 +93,13 @@ const sbMock = (prompt) => {
 const mock = (prompt) => {
   const sb = sbMock(prompt);
   if (sb !== null) return sb;
+  // 推断待确认名称（smoke_names.py 用 window.__namesMock 按条目给出不同的候选；没设时每条给一个 AI 起的名字）。
+  // 放在最前面：提示词里有「故事梗概」「原文片段」等字样，会被后面的分支误认
+  if (prompt.includes('推断具体名称')) {
+    if (typeof window.__namesMock === 'function') return window.__namesMock(prompt);
+    const vs = [...prompt.matchAll(/^## \d+\. 「([^」]+)」/gm)].map((m) => m[1]);
+    return JSON.stringify(vs.map((v) => ({ vague: v, reason: '', candidates: [{ name: v + '之名', source: 'invented', confidence: 'medium', reason: '模拟' }] })));
+  }
   if (prompt.includes('<source>')) {
     const src = prompt.split('<source>')[1].split('</source>')[0];
     const title = (prompt.match(/第 (\d+) 段「([^」]+)」/) || [])[2] || '';

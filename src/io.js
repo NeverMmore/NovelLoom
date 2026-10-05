@@ -1,6 +1,7 @@
 // 导入导出：任务（完整项目）、配置、世界书、大纲、角色资料
 
 import { DEFAULT_STATUS_BAR, VERSION } from './constants.js';
+import { missingNameMarkdown, normalizeNameResolve } from './names.js';
 import { buildOutlineText, characterProfileText, getVolumes, mergeEntry, normalizeProject } from './project.js';
 import { PORTRAIT_STORE_MODES } from './statusbar-portraits.js';
 import { templatePortraits } from './statusbar-templates.js';
@@ -40,7 +41,7 @@ export function exportConfig(settings, { includeKeys = false } = {}) {
 export function applyConfig(settings, json) {
     const s = json?.type === 'novel_loom_config' ? json.settings : json;
     if (!s || typeof s !== 'object') throw new Error('不是 NovelLoom 配置文件');
-    for (const key of ['api', 'continueApi', 'chunking', 'extraction', 'worldbook', 'cards', 'continuation', 'chatgen', 'prompts', 'categories', 'defaultEntries', 'messageChains', 'chainOptions', 'planner', 'stylePresets', 'styleOptions', 'antiTruncate', 'statusBar']) {
+    for (const key of ['api', 'continueApi', 'chunking', 'extraction', 'worldbook', 'cards', 'continuation', 'chatgen', 'prompts', 'categories', 'defaultEntries', 'messageChains', 'chainOptions', 'planner', 'stylePresets', 'styleOptions', 'antiTruncate', 'statusBar', 'nameResolve']) {
         if (s[key] === undefined) continue;
         if (key === 'stylePresets' && Array.isArray(s[key])) {
             // 文风预设按 id 合并，不覆盖本机其他预设
@@ -66,6 +67,8 @@ export function applyConfig(settings, json) {
     if (settings.statusBar && typeof settings.statusBar === 'object' && !PORTRAIT_STORE_MODES.includes(settings.statusBar.portraitStore)) {
         settings.statusBar.portraitStore = DEFAULT_STATUS_BAR.portraitStore;
     }
+    // 「AI 推断名称」的选项：候选数 2-6、每批条数、自动填入模式等超出范围的回到合法值
+    settings.nameResolve = normalizeNameResolve(settings.nameResolve);
     const warnings = [];
     // 跨项目共享的自定义列表：按 id 合并，不覆盖本机已有的其他项
     for (const [key, idKey] of [['customRelationTypes', 'value'], ['relationTemplates', 'id'], ['branchTemplates', 'id'], ['statusBarTemplates', 'id']]) {
@@ -174,7 +177,7 @@ export function exportOutline(project) {
     }
     if (project.missingNames.length) {
         lines.push('## 待确认名称', '');
-        for (const m of project.missingNames) lines.push(`- [${m.type}] ${m.vague} → ${m.resolved || m.suggest || '?'}（${m.context}）`);
+        for (const m of project.missingNames) lines.push(missingNameMarkdown(m));
     }
     downloadFile(lines.join('\n'), `${safeFileName(project.bookName)}-大纲.md`, 'text/markdown');
 }
