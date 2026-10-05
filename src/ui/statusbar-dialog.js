@@ -4,10 +4,13 @@
 // 不依赖 DOM 的部分（记录字段编辑、立绘草稿、各分页的 HTML 片段）导出给测试用。
 
 import { errorText } from '../llm.js';
+import { EMBED_MIN_BUDGET, fmtK, imageFolderName } from '../portrait-image.js';
 import { statusBarWorldName } from '../publish.js';
 import { openCharacterInST, toast } from '../stio.js';
 import {
-    GROUP_FIELD_MAX, PORTRAIT_LIMITS, PORTRAIT_OPS, RECORD_FIELD_MAX, TYPE_WIDGETS, VAR_TYPES, VAR_TYPE_LABELS, WIDGET_LABELS,
+    GROUP_FIELD_MAX, PORTRAIT_DATA_TOTAL_MAX, PORTRAIT_DATA_URL_MAX, PORTRAIT_LIMITS, PORTRAIT_OPS, RECORD_FIELD_MAX, TEMPLATE_PORTRAIT_DATA_TOTAL_MAX,
+    TEMPLATE_PORTRAIT_DATA_URL_MAX, TYPE_WIDGETS, VAR_TYPES, VAR_TYPE_LABELS, WIDGET_LABELS, isOwnServerImage, normalizeServerPortraitInput, portraitHash,
+    portraitStorageStats, portraitStoreOf, portraitUrlKind, portraitUrlList, serverPortraitHint,
     applyReplyToState, buildInitialState, buildStatusRegexReplace, buildStatusRegexScripts, buildTavernHelper, castRecordPath,
     compileInitVar, compileOutputFormat, compileSchemaScript, compileUpdateRules, countSpecLeaves, createStatusBar, ensureStatusBar,
     estimateStatusBarTokens, getPath, isWorldCard, lintStatusHtml, normalizeFloorCount, normalizePortraits, normalizeStatusSpec,
@@ -23,11 +26,12 @@ import {
 import {
     STATUS_TEMPLATE_DESC_MAX, STATUS_TEMPLATE_MODE_LABELS, STATUS_TEMPLATE_NAME_MAX, addStatusBarTemplate, applyStatusBarTemplate,
     duplicateStatusBarTemplate, exportStatusBarTemplate, importStatusBarTemplate, listStatusBarTemplates, removeStatusBarTemplate,
-    statusBarTemplateFileName, statusBarVarCap, templateFromStatusBar, templatePreviewCard, templateVarCap, uniqueStatusBarTemplateName,
+    statusBarTemplateFileName, statusBarVarCap, templateFromStatusBar, templatePortraits, templatePreviewCard, templateVarCap, uniqueStatusBarTemplateName,
     updateStatusBarTemplate,
 } from '../statusbar-templates.js';
 import { debounce, downloadFile, estimateTokens, pickFile, safeFileName } from '../utils.js';
 import { alertDialog, busy, confirmDialog, emptyState, esc, icon, openDialog, optionList, rerollBtn } from './common.js';
+import { LocalImageError, dataUrlToBlob, embedImage, fetchServerImage, previewSrcMap, storeImageOnServer } from './portrait-files.js';
 
 const MIN_JSR = '4.6.0';
 const TAILWIND_URL = '/scripts/extensions/third-party/JS-Slash-Runner/lib/tailwindcss.min.js';
@@ -641,11 +645,29 @@ export function templatePortraitsOptionText(portraits) {
 }
 
 /**
+ * 「连同立绘设置」下面的提醒（不阻止保存）：有立绘存在酒馆服务器上（分享模板时不会跟着走）；
+ * 内嵌图片超过模板的上限（每张 / 合计都比卡片小，存模板时会去掉）。两条都建议要分享就改用图床地址——
+ * 存到酒馆服务器分享不出去，改成内嵌又多半超过模板的上限，不能互相指向对方。没有要提醒的返回 []。
+ */
+export function templatePortraitNotes(portraits) {
+    const out = [];
+    const hint = serverPortraitHint(portraits, 'template');
+    if (hint) out.push(hint);
+    const w = [];
+    templatePortraits(portraits, w);
+    const dropped = w.filter((x) => /内嵌图片/.test(x)).length;
+    if (dropped) {
+        out.push(`有 ${dropped} 张内嵌图片超过模板的上限（每张 ${fmtK(TEMPLATE_PORTRAIT_DATA_URL_MAX)}、合计 ${fmtK(TEMPLATE_PORTRAIT_DATA_TOTAL_MAX)} 字，卡片里可以更大），存模板时会去掉；要分享请改用图床地址，只在本机用可以在「立绘」页改存到酒馆服务器`);
+    }
+    return out;
+}
+
+/**
  * 模板名称 + 说明。名称在框里就地检查（不能为空、不能与其他模板重名，不分大小写；改名时排除 exceptId 自己），
  * 有问题时提示并保持对话框打开。portraitsOption：非空时多一个「连同立绘设置」勾选框（默认不勾，图片地址是用户自己的），
- * 结果里带 portraits: true/false。
+ * 结果里带 portraits: true/false；portraitsNotes：勾选框下面的提醒（templatePortraitNotes）。
  */
-async function nameDescDialog({ title, name = '', desc = '', settings = null, exceptId = null, portraitsOption = '' }) {
+async function nameDescDialog({ title, name = '', desc = '', settings = null, exceptId = null, portraitsOption = '', portraitsNotes = [] }) {
     const check = (r) => {
         const input = r.querySelector('[data-f="name"]');
         const msg = templateNameProblem(settings, input.value, exceptId);
@@ -662,9 +684,14 @@ async function nameDescDialog({ title, name = '', desc = '', settings = null, ex
             <div class="nl-field"><label>名称</label><input class="nl-input" data-f="name" maxlength="${STATUS_TEMPLATE_NAME_MAX}" value="${esc(name)}" aria-label="模板名称" aria-describedby="nl-sb-name-err"></div>
             <div class="nl-small nl-err" id="nl-sb-name-err" data-sb-name-err role="alert" hidden></div>
             <div class="nl-field"><label>说明（可选）</label><input class="nl-input" data-f="desc" maxlength="${STATUS_TEMPLATE_DESC_MAX}" value="${esc(desc)}" placeholder="例如：好感 + 心情 + 着装，浅色卡片" aria-label="模板说明"></div>
-            ${portraitsOption ? `<label><input type="checkbox" data-f="portraits"> ${esc(portraitsOption)}</label>` : ''}`,
+            ${portraitsOption ? `<label><input type="checkbox" data-f="portraits"> ${esc(portraitsOption)}</label>` : ''}
+            ${portraitsOption && portraitsNotes.length ? `<div class="nl-sb-note nl-sb-note-warn" data-sb-tpl-pt-notes hidden>${icon('alert')}<div class="nl-grow">${portraitsNotes.map((n) => `<div class="nl-small">${esc(n)}</div>`).join('')}</div></div>` : ''}`,
         buttons: [{ label: '取消', value: null }, { label: '保存', value: 'ok', primary: true, validate: check }],
         onMount: (r) => {
+            // 立绘的提醒只在勾了「连同立绘设置」时显示（不勾就不存立绘，提醒无关）
+            const pt = r.querySelector('[data-f="portraits"]');
+            const notes = r.querySelector('[data-sb-tpl-pt-notes]');
+            if (pt && notes) pt.addEventListener('change', () => { notes.hidden = !pt.checked; });
             // 改了名字就收起上一次的提示（再点保存时重新检查）
             r.querySelector('[data-f="name"]').addEventListener('input', () => {
                 const err = r.querySelector('[data-sb-name-err]');
@@ -753,7 +780,9 @@ async function previewOnlyDialog(card, sample, title) {
     };
     window.addEventListener('message', onMsg);
     const tailwind = card.statusBar?.mode === 'raw' ? await loadTailwind() : '';
-    frame.srcdoc = buildPreviewSrcdoc(card, sample, { user: userName(), char: card.data?.name, tailwind });
+    // 模板带的立绘存在酒馆服务器上时，和状态栏预览一样先取来换成 data:image
+    const srcMap = await previewSrcMap(portraitUrlList(card.statusBar?.portraits));
+    frame.srcdoc = buildPreviewSrcdoc(card, sample, { user: userName(), char: card.data?.name, tailwind, srcMap });
     try {
         await openDialog({ title, wide: true, body: box, buttons: [{ label: '关闭', value: null }] });
     } finally {
@@ -816,9 +845,11 @@ async function templateLibraryDialog(c, hasVars, charName = '') {
                             } catch {
                                 throw new Error('文件不是合法的 JSON');
                             }
-                            const saved = importStatusBarTemplate(c.settings, json); // 重名时自动改名
+                            const warnings = [];
+                            const saved = importStatusBarTemplate(c.settings, json, { warnings }); // 重名时自动改名
                             c.saveSettings();
                             c.log(`已导入状态栏模板「${saved?.name || ''}」`, 'success');
+                            for (const w of warnings) c.log(w, 'warn');
                             render();
                             return;
                         }
@@ -845,6 +876,9 @@ async function templateLibraryDialog(c, hasVars, charName = '') {
                         case 'tpl-export': {
                             if (!t) return;
                             downloadFile(JSON.stringify(exportStatusBarTemplate(t), null, 2), statusBarTemplateFileName(t));
+                            // 模板带的立绘有存在酒馆服务器上的：提醒分享出去不会跟着走（不阻止导出）
+                            const hint = serverPortraitHint(t.portraits, 'template');
+                            if (hint) c.log(`模板「${t.name}」：${hint}`, 'warn');
                             return;
                         }
                         case 'tpl-rename': {
@@ -1551,7 +1585,7 @@ export function portraitDraftIssues(draft, spec = null) {
         names.add(name);
         const images = (Array.isArray(c?.images) ? c.images : []).map((img) => {
             const url = String(img?.url ?? '').trim();
-            if (!url) return { level: 'empty', msg: '填入图片地址：http(s):// 开头的图床地址，或者较小的 data:image' };
+            if (!url) return { level: 'empty', msg: '点上面的「选择本地图片」，或者填入 http(s):// 开头的图床地址' };
             const up = portraitUrlProblem(url);
             if (up) return err(`${up}：这张图不会保存`);
             const wp = portraitWhenProblem(img?.when);
@@ -1622,11 +1656,119 @@ export function portraitThumbHtml(url, name, { size = '', alt = '' } = {}) {
     const u = String(url ?? '').trim();
     const ok = !!u && !portraitUrlProblem(u);
     const state = !u ? 'empty' : ok ? 'loading' : 'bad';
+    const failTitle = ok && portraitUrlKind(u) === 'server' ? '图片加载失败：酒馆服务器上找不到这张图（可能在图库里被删掉了）' : '图片加载失败：检查地址能不能直接打开，或者图床是否禁止外链';
     return `<span class="nl-sb-thumb${size ? ` nl-sb-thumb-${size}` : ''}" data-sb-thumb-wrap data-state="${state}">`
         + `<span class="nl-sb-thumb-ph" aria-hidden="true">${esc(portraitInitial(name))}</span>`
         + (ok ? `<img data-sb-thumb src="${esc(u)}" alt="${esc(alt)}" referrerpolicy="no-referrer" loading="lazy" decoding="async">` : '')
-        + `<span class="nl-sb-thumb-err" role="img" aria-label="${state === 'bad' ? '地址不合法' : '图片加载失败'}" title="${state === 'bad' ? '地址不合法' : '图片加载失败：检查地址能不能直接打开，或者图床是否禁止外链'}">${icon('alert', { size: 14 })}</span>`
+        + `<span class="nl-sb-thumb-err" role="img" aria-label="${state === 'bad' ? '地址不合法' : '图片加载失败'}" title="${state === 'bad' ? '地址不合法' : failTitle}">${icon('alert', { size: 14 })}</span>`
         + '</span>';
+}
+
+/** 立绘存放位置的显示名与说明（缩略图下面的小标签） */
+const KIND_LABELS = { http: '图床', server: '酒馆', embed: '内嵌' };
+const KIND_TITLES = {
+    http: '图床地址：显示时从图床加载',
+    server: '存在酒馆服务器上（这个角色的图库里）：不占卡片大小，但把卡分享给别人时不会跟着走',
+    embed: '嵌在卡片里：随卡分享，占卡片大小',
+};
+
+/** 缩略图下面标出这张图存在哪儿：图床 / 酒馆 / 内嵌（带大小，太窄显示不全时悬停看 title 里的大小）；地址不合法时不显示 */
+export function portraitKindBadgeHtml(url) {
+    const u = String(url ?? '').trim();
+    const kind = portraitUrlKind(u);
+    if (!kind) return '';
+    const text = kind === 'embed' ? `${KIND_LABELS.embed} ${fmtK(u.length)}` : KIND_LABELS[kind];
+    const title = kind === 'embed' ? `嵌在卡片里（${fmtK(u.length)} 字）：随卡分享，占卡片大小` : KIND_TITLES[kind];
+    return `<span class="nl-sb-kind" data-kind="${kind}" title="${esc(title)}">${esc(text)}</span>`;
+}
+
+/**
+ * 立绘「选择本地图片」按钮。target：c:角色序号、v:图池序号:取值序号、f:图池序号（兜底）；
+ * who：读屏念的是哪一组（每个取值都有同样的按钮）；full：放满了时的原因（按钮禁用，title 说明为什么）。
+ */
+const localPickBtn = (target, { who = '', full = '' } = {}) => `<button class="nl-btn nl-sm" data-act="sb-pt-pick" data-sb-pt-target="${esc(target)}"${full ? ' disabled' : ''} `
+    + `title="${esc(full || '从电脑里选图片（可以多选，也可以直接把图片拖到这一块上）')}" aria-label="${esc(who ? `${who}：选择本地图片` : '选择本地图片')}">`
+    + `${icon('upload', { size: 14 })}选择本地图片</button>`;
+
+/**
+ * 「选择本地图片」/ 转换的结果提示（st.ptLocal[目标]）：{level: 'busy'|'ok'|'warn'|'err', lines: string[], fallback?: boolean}。
+ * fallback：有图片上传到酒馆失败，给一个「改成嵌进卡片」按钮（用同一批文件重试）。文件名等都经 esc 转义。
+ */
+export function portraitLocalMsgHtml(target, m) {
+    const attrs = `data-sb-pt-local="${esc(target)}" role="status"`;
+    if (!m?.lines?.length) return `<div class="nl-sb-pt-local" ${attrs}></div>`;
+    const cls = m.level === 'err' ? 'nl-err' : m.level === 'warn' ? 'nl-warn' : m.level === 'ok' ? 'nl-ok' : 'nl-muted';
+    const ico = m.level === 'busy' ? '<span class="nl-spin"></span>' : icon(m.level === 'ok' ? 'check' : m.level === 'err' || m.level === 'warn' ? 'alert' : 'info', { size: 12 });
+    const btn = m.fallback ? `<button class="nl-btn nl-sm" data-act="sb-pt-embed-fallback" data-sb-pt-target="${esc(target)}" title="用刚才上传失败的图片重试：压缩后嵌进卡片">${icon('image', { size: 14 })}改成嵌进卡片</button>` : '';
+    return `<div class="nl-sb-pt-local ${cls} nl-small" ${attrs}><span class="nl-sb-pt-local-ico">${ico}</span><div class="nl-grow">${m.lines.map((l) => `<div>${esc(l)}</div>`).join('')}</div>${btn}</div>`;
+}
+
+/**
+ * 「立绘」分页顶部：本地图片默认存到哪儿（酒馆服务器 / 嵌进卡片，settings.statusBar.portraitStore）、两种存法的区别、
+ * 内嵌图片的用量（按出现次数算，与卡片的合计上限一致）、有图存在酒馆服务器上时的分享提示和「全部改成内嵌」（存法切换只管之后选的图，
+ * 已经加进来的要靠这个按钮或每张图旁边的「改成内嵌」），以及批量转换的结果（local，目标键 all）。
+ * @param {{store?: 'server'|'embed', portraits?: object, local?: object|null}} o portraits：草稿（portraitDraftToRaw）或规范化后的配置
+ */
+export function portraitStoreBarHtml({ store = 'server', portraits = null, local = null } = {}) {
+    const stats = portraitStorageStats(portraits);
+    const pct = Math.min(100, Math.round((stats.embedChars / PORTRAIT_DATA_TOTAL_MAX) * 1000) / 10);
+    const level = stats.embedChars > PORTRAIT_DATA_TOTAL_MAX * 0.85 ? 'warn' : 'ok';
+    const seg = [['server', '酒馆服务器'], ['embed', '嵌进卡片']].map(([v, l]) => `<button class="nl-seg-btn ${store === v ? 'active' : ''}" aria-pressed="${store === v}" data-act="sb-pt-store" data-sb-val="${v}">${l}</button>`).join('');
+    const hint = serverPortraitHint(portraits);
+    const allBtn = stats.server
+        ? `<button class="nl-btn nl-sm" data-act="sb-pt-convert-all" title="把存在酒馆服务器上的立绘都下载下来，压缩到 512px 嵌进卡片（随卡分享；内嵌合计放不下的会留在服务器上并说明）">${icon('image', { size: 14 })}全部改成内嵌（${stats.server} 张）</button>`
+        : '';
+    return `
+        <div class="nl-sb-pt-store" data-sb-pt-store="${store}">
+            <div class="nl-row nl-wrap">
+                <span class="nl-small nl-sb-pt-store-label" id="nl-sb-pt-store-label">本地图片存到</span>
+                <div class="nl-seg" role="group" aria-labelledby="nl-sb-pt-store-label">${seg}</div>
+                <span class="nl-spacer"></span>
+                <span class="nl-sb-pt-meter" data-level="${level}" title="${esc(`内嵌图片合计不能超过 ${fmtK(PORTRAIT_DATA_TOTAL_MAX)} 字，每张最多 ${fmtK(PORTRAIT_DATA_URL_MAX)} 字`)}">
+                    <span class="nl-small nl-num" data-sb-pt-meter>内嵌图片 已用 ${fmtK(stats.embedChars)} / 上限 ${fmtK(PORTRAIT_DATA_TOTAL_MAX)}</span>
+                    <span class="nl-sb-pt-meter-bar" role="meter" aria-label="内嵌图片用量" aria-valuemin="0" aria-valuemax="${PORTRAIT_DATA_TOTAL_MAX}" aria-valuenow="${Math.min(stats.embedChars, PORTRAIT_DATA_TOTAL_MAX)}"><i style="width:${pct}%"></i></span>
+                </span>
+            </div>
+            <div class="nl-muted nl-small">这里只决定之后「选择本地图片」存到哪儿，已经加进来的图片不会变。酒馆服务器：不限大小（超过 4MB 或 2048px 的图会转成 webp，GIF 动图因此只留第一帧）、卡片不变大，但把卡分享给别人时图片不会跟着走。嵌进卡片：自动缩到 512px 随卡分享，卡片会变大，合计有上限。删掉的图片不会从酒馆服务器上删除，仍在这个角色的图库里。</div>
+            ${hint ? `<div class="nl-sb-note nl-sb-note-warn" data-sb-pt-share-hint>${icon('alert')}<div class="nl-grow">${esc(hint)}</div>${allBtn}</div>` : ''}
+            ${portraitLocalMsgHtml('all', local)}
+        </div>`;
+}
+
+/** 图池文本框里一行地址的短 id（哈希 + 长度）：删除缩略图时核对那一行还是不是同一张图（文本框改过、还没重绘时行号可能已经变了） */
+export function poolLineId(url) {
+    const u = String(url ?? '').trim();
+    return `${portraitHash(u).toString(36)}.${u.length.toString(36)}`;
+}
+
+/**
+ * 图池一组图（一个取值或兜底）的缩略图：每张对应文本框里的一行，带存放位置标签和删除按钮
+ * （内嵌图片在文本框里是一长串 base64，手动选中删除很难）。target：v:图池:取值 / f:图池；who：读屏念的是哪一组。
+ */
+export function poolThumbsHtml(target, text, { name = '?', who = '' } = {}) {
+    const items = urlLines(text).slice(0, PORTRAIT_LIMITS.poolImages);
+    return `<div class="nl-sb-thumbs">${items.map(({ line, url }) => `<div class="nl-sb-pool-thumb" data-sb-pool-thumb="${line}">`
+        + portraitThumbHtml(url, name, { size: 'xs', alt: `${who}第 ${line} 行` })
+        + `<div class="nl-sb-pool-thumb-foot">${portraitKindBadgeHtml(url)}`
+        + `<button class="nl-icon-btn nl-danger" data-act="sb-pool-img-del" data-sb-pt-target="${esc(target)}" data-sb-line="${line}" data-sb-line-id="${poolLineId(url)}" title="删除第 ${line} 行的图片" aria-label="${esc(`${who}：删除第 ${line} 行的图片`)}">${icon('close', { size: 12 })}</button>`
+        + '</div></div>').join('')}</div>`;
+}
+
+/** 一组图片地址（图池的一个取值或兜底）存在哪儿的小结与批量转换：「酒馆 1 · 内嵌 1（38K）」 */
+function poolLocalSummaryHtml(target, text) {
+    const kinds = { http: 0, server: 0, embed: 0 };
+    let chars = 0;
+    for (const u of splitUrls(text)) {
+        const k = portraitUrlKind(u);
+        if (!k) continue;
+        kinds[k]++;
+        if (k === 'embed') chars += u.length;
+    }
+    const parts = [kinds.http ? `图床 ${kinds.http}` : '', kinds.server ? `酒馆 ${kinds.server}` : '', kinds.embed ? `内嵌 ${kinds.embed}（${fmtK(chars)}）` : ''].filter(Boolean);
+    const conv = (to, n, label, title) => (n ? `<button class="nl-btn nl-sm" data-act="sb-pt-convert-list" data-sb-pt-target="${esc(target)}" data-sb-to="${to}" title="${esc(title)}">${esc(label)}</button>` : '');
+    return `${parts.length ? `<span class="nl-muted nl-small nl-num" data-sb-pt-kinds>${esc(parts.join(' · '))}</span>` : ''}`
+        + conv('embed', kinds.server, '全部改成内嵌', '把存在酒馆服务器上的几张下载下来，压缩后嵌进卡片（随卡分享）')
+        + conv('server', kinds.embed, '全部存到酒馆', '把内嵌的几张上传到酒馆服务器（卡片变小，但分享时不会跟着走）');
 }
 
 /** 解锁条件里可以选的变量：条目自己的字段（相对路径）、固定分组里的变量（相对路径），以及其他变量的完整路径 */
@@ -1646,9 +1788,10 @@ function whenPathOptions(spec, name, record) {
     return out.slice(0, 40);
 }
 
-function portraitImgRowHtml(ci, ii, img, info, { name, res, dl, count }) {
+function portraitImgRowHtml(ci, ii, img, info, { name, res, dl, count, local = null }) {
     const url = String(img?.url ?? '').trim();
     const valid = !!url && !portraitUrlProblem(url);
+    const kind = valid ? portraitUrlKind(url) : '';
     const who = `第 ${ii + 1} 张`;
     const a = (k) => `data-sb-pt="${k}" data-sb-pt-c="${ci}" data-sb-pt-i="${ii}"`;
     const cur = valid && !res.pooled && res.url === url;
@@ -1659,11 +1802,13 @@ function portraitImgRowHtml(ci, ii, img, info, { name, res, dl, count }) {
     const tags = `${cur ? '<span class="nl-tag nl-sb-tag-cur">默认显示</span>' : ''}${locked ? `<span class="nl-tag" title="按「预览」里的示例数据，还没达到解锁条件">${icon('lock', { size: 12 })}未解锁</span>` : ''}`;
     return `
         <div class="nl-sb-pt-img${info?.level === 'err' ? ' is-bad' : ''}${cur ? ' is-current' : ''}" data-sb-pt-row="${ci}.${ii}">
-            ${portraitThumbHtml(url, name, { alt: `「${name}」${who}` })}
+            <div class="nl-sb-pt-thumbcol">${portraitThumbHtml(url, name, { alt: `「${name}」${who}` })}${portraitKindBadgeHtml(url)}</div>
             <div class="nl-sb-pt-fields">
                 <div class="nl-row">
-                    <input class="nl-input nl-grow nl-mono" ${a('url')} value="${esc(url)}" placeholder="https://… 或 data:image/…;base64,…" spellcheck="false" autocomplete="off" aria-label="${esc(`${who}：图片地址`)}" aria-describedby="${msgId}"${info?.level === 'err' ? ' aria-invalid="true"' : ''}>
+                    <input class="nl-input nl-grow nl-mono" ${a('url')} value="${esc(url)}" placeholder="https://…、选择本地图片，或 data:image/…;base64,…" spellcheck="false" autocomplete="off" aria-label="${esc(`${who}：图片地址`)}" aria-describedby="${msgId}"${info?.level === 'err' ? ' aria-invalid="true"' : ''}>
                     <input class="nl-input nl-sb-pt-label" ${a('label')} value="${esc(img?.label ?? '')}" maxlength="16" placeholder="说明（可选）" aria-label="${esc(`${who}：说明`)}">
+                    ${kind === 'server' ? `<button class="nl-btn nl-sm" data-act="sb-pt-convert" data-sb-pt-c="${ci}" data-sb-pt-i="${ii}" data-sb-to="embed" title="把这张从酒馆服务器下载下来，压缩到 512px 嵌进卡片（随卡分享）" aria-label="${esc(`${who}：改成内嵌（嵌进卡片）`)}">改成内嵌</button>` : ''}
+                    ${kind === 'embed' ? `<button class="nl-btn nl-sm" data-act="sb-pt-convert" data-sb-pt-c="${ci}" data-sb-pt-i="${ii}" data-sb-to="server" title="把这张上传到酒馆服务器（卡片变小，但分享时不会跟着走）" aria-label="${esc(`${who}：存到酒馆（上传到酒馆服务器）`)}">存到酒馆</button>` : ''}
                 </div>
                 <div class="nl-row nl-wrap nl-sb-pt-when">
                     <span class="nl-muted nl-small">解锁条件</span>
@@ -1673,6 +1818,7 @@ function portraitImgRowHtml(ci, ii, img, info, { name, res, dl, count }) {
                     ${tags}
                 </div>
                 ${msgLinesHtml(info?.msg ? [info] : [], `id="${msgId}" data-sb-pt-msg="${ci}.${ii}"`)}
+                ${local ? portraitLocalMsgHtml(`c:${ci}:${ii}`, local) : ''}
             </div>
             <div class="nl-sb-fld-acts">${btn('sb-pt-img-up', 'arrowUp', '上移', ii === 0)}${btn('sb-pt-img-down', 'arrowDown', '下移', ii === count - 1)}${btn('sb-pt-img-del', 'trash', '删除', false)}</div>
         </div>`;
@@ -1696,23 +1842,28 @@ function portraitCharHtml(ci, c, info, ctx) {
                 : pos >= 0 ? `默认显示第 ${pos + 1} 张` : `默认显示另一处「${name}」里的图`;
     const dl = `nl-sb-pt-paths-${ci}`;
     const full = imgs.length >= PORTRAIT_LIMITS.images;
+    // 选择本地图片先填空着的行，再往后加：还能放几张
+    const freeSlots = PORTRAIT_LIMITS.images - imgs.filter((x) => String(x?.url ?? '').trim()).length;
     const label = name || '（未命名）';
+    const local = ctx.local || {};
     return `
-        <section class="nl-sb-pt-char${info?.name?.level === 'err' ? ' is-bad' : ''}" data-sb-pt-char="${ci}" aria-label="${esc(`「${label}」的立绘`)}">
+        <section class="nl-sb-pt-char${info?.name?.level === 'err' ? ' is-bad' : ''}" data-sb-pt-char="${ci}" data-sb-pt-drop="c:${ci}" aria-label="${esc(`「${label}」的立绘`)}">
             <div class="nl-sb-pt-head">
                 ${portraitThumbHtml(res.url, name, { size: 'sm', alt: '' })}
                 <input class="nl-input nl-sb-pt-name" data-sb-pt="name" data-sb-pt-c="${ci}" value="${esc(c?.name ?? '')}" placeholder="名字" aria-label="角色名"${info?.name?.level === 'err' ? ' aria-invalid="true"' : ''}>
                 <span class="nl-muted nl-small nl-num">${esc(where)} · ${imgs.length} 张 · ${esc(status)}</span>
                 <span class="nl-spacer"></span>
+                ${localPickBtn(`c:${ci}`, { who: `「${label}」`, full: freeSlots <= 0 ? `每个角色最多 ${PORTRAIT_LIMITS.images} 张` : '' })}
                 <button class="nl-btn nl-sm" data-act="sb-pt-add-img" data-sb-pt-c="${ci}" ${full ? `disabled title="每个角色最多 ${PORTRAIT_LIMITS.images} 张"` : ''}>${icon('plus', { size: 14 })}添加图片</button>
                 <button class="nl-icon-btn nl-danger" data-act="sb-pt-del-char" data-sb-pt-c="${ci}" title="删除这个角色的立绘" aria-label="${esc(`删除「${label}」的立绘`)}">${icon('trash')}</button>
             </div>
             ${msgLinesHtml(info?.name?.msg ? [info.name] : [])}
+            ${portraitLocalMsgHtml(`c:${ci}`, local[`c:${ci}`])}
             ${kind === 'free' && name ? `<div class="nl-muted nl-small">变量表里没有叫「${esc(name)}」的条目或分组：界面里写了 data-nl-portrait="${esc(name)}" 的位置才会用到。</div>` : ''}
             ${kind === 'sample' ? `<div class="nl-muted nl-small" data-sb-pt-sample-note>「${esc(name)}」只在示例数据里出现（模板或 AI 写的演示名字）：聊天里「${esc(record)}」有同名的条目时才会用到。</div>` : ''}
             <datalist id="${dl}">${whenPathOptions(ctx.spec, name, record).map((p) => `<option value="${esc(p)}"></option>`).join('')}</datalist>
-            <div class="nl-sb-pt-imgs">${imgs.map((img, ii) => portraitImgRowHtml(ci, ii, img, info?.images?.[ii], { name, res, dl, count: imgs.length })).join('')
-                || '<div class="nl-muted nl-small nl-sb-pt-none">还没有图片：点「添加图片」，填入图床地址。</div>'}</div>
+            <div class="nl-sb-pt-imgs">${imgs.map((img, ii) => portraitImgRowHtml(ci, ii, img, info?.images?.[ii], { name, res, dl, count: imgs.length, local: local[`c:${ci}:${ii}`] })).join('')
+                || '<div class="nl-muted nl-small nl-sb-pt-none">还没有图片：点「选择本地图片」，或者「添加图片」填入图床地址；也可以把图片拖到这一块上。</div>'}</div>
         </section>`;
 }
 
@@ -1734,15 +1885,22 @@ function portraitPoolHtml(pi, pool, info, ctx) {
     const leaf = rec ? recordLeafFields(rec.value).find((l) => l.path === pool.field) : null;
     const dl = `nl-sb-pool-vals-${pi}`;
     const values = Array.isArray(pool.values) ? pool.values : [];
+    const local = ctx.local || {};
+    const fbTarget = `f:${pi}`;
     const valRows = values.map((v, vi) => {
         const key = String(v?.value ?? '').trim();
         const who = key ? `取值「${key}」` : `第 ${vi + 1} 个取值`;
+        const target = `v:${pi}:${vi}`;
+        const freeSlots = PORTRAIT_LIMITS.poolImages - splitUrls(v?.urls).length;
+        // wrap="off"：一张图一行，内嵌图片的长串 base64 不折行，行与行的分界看得清
         return `
-            <div class="nl-sb-pool-val" data-sb-pool-row="${pi}.${vi}">
+            <div class="nl-sb-pool-val" data-sb-pool-row="${pi}.${vi}" data-sb-pt-drop="${target}">
                 <input class="nl-input" ${a('value', ` data-sb-pool-v="${vi}"`)} list="${dl}" value="${esc(v?.value ?? '')}" placeholder="字段的值，如 敌对" aria-label="${esc(`${who}：字段的值`)}">
                 <div class="nl-sb-pool-urls">
-                    <textarea class="nl-input nl-textarea nl-mono" rows="2" ${a('urls', ` data-sb-pool-v="${vi}"`)} spellcheck="false" placeholder="图片地址，一行一个" aria-label="${esc(`${who}：图片地址（一行一个）`)}">${esc(v?.urls ?? '')}</textarea>
-                    <div class="nl-sb-thumbs">${splitUrls(v?.urls).slice(0, PORTRAIT_LIMITS.poolImages).map((u) => portraitThumbHtml(u, key || '?', { size: 'xs' })).join('')}</div>
+                    <textarea class="nl-input nl-textarea nl-mono nl-sb-pool-ta" rows="2" wrap="off" ${a('urls', ` data-sb-pool-v="${vi}"`)} spellcheck="false" placeholder="图片地址，一行一个；或者选择本地图片" aria-label="${esc(`${who}：图片地址（一行一个）`)}">${esc(v?.urls ?? '')}</textarea>
+                    ${poolThumbsHtml(target, v?.urls, { name: key || '?', who })}
+                    <div class="nl-row nl-wrap nl-sb-pool-local">${localPickBtn(target, { who, full: freeSlots <= 0 ? `每个取值最多 ${PORTRAIT_LIMITS.poolImages} 张` : '' })}${poolLocalSummaryHtml(target, v?.urls)}</div>
+                    ${portraitLocalMsgHtml(target, local[target])}
                     ${msgLinesHtml(info?.values?.[vi], `data-sb-pool-msg="${pi}.${vi}"`)}
                 </div>
                 <button class="nl-icon-btn nl-danger" data-act="sb-pool-val-del" data-sb-pool-p="${pi}" data-sb-pool-v="${vi}" title="删除这个取值" aria-label="${esc(`删除${who}`)}">${icon('trash')}</button>
@@ -1764,9 +1922,11 @@ function portraitPoolHtml(pi, pool, info, ctx) {
             <datalist id="${dl}">${(leaf?.field?.type === 'enum' ? leaf.field.options : []).map((o) => `<option value="${esc(o)}"></option>`).join('')}</datalist>
             <div class="nl-sb-pool-vals">${valRows || '<div class="nl-muted nl-small">还没有取值：点「添加取值」，例如 阵营 = 敌对 时用哪几张图。</div>'}</div>
             <div class="nl-row"><button class="nl-btn nl-sm" data-act="sb-pool-val-add" data-sb-pool-p="${pi}" ${fullVals ? `disabled title="最多 ${PORTRAIT_LIMITS.values} 个取值"` : ''}>${icon('plus', { size: 14 })}添加取值</button></div>
-            <div class="nl-field"><label for="nl-sb-pool-fb-${pi}">兜底：字段的值没有对应的图片时用（一行一个）</label>
-                <textarea class="nl-input nl-textarea nl-mono" rows="2" id="nl-sb-pool-fb-${pi}" ${a('fallback')} spellcheck="false" placeholder="可选">${esc(pool.fallback ?? '')}</textarea>
-                <div class="nl-sb-thumbs">${splitUrls(pool.fallback).slice(0, PORTRAIT_LIMITS.poolImages).map((u) => portraitThumbHtml(u, '?', { size: 'xs' })).join('')}</div>
+            <div class="nl-field" data-sb-pt-drop="${fbTarget}"><label for="nl-sb-pool-fb-${pi}">兜底：字段的值没有对应的图片时用（一行一个）</label>
+                <textarea class="nl-input nl-textarea nl-mono nl-sb-pool-ta" rows="2" wrap="off" id="nl-sb-pool-fb-${pi}" ${a('fallback')} spellcheck="false" placeholder="可选">${esc(pool.fallback ?? '')}</textarea>
+                ${poolThumbsHtml(fbTarget, pool.fallback, { who: `${label}的兜底` })}
+                <div class="nl-row nl-wrap nl-sb-pool-local">${localPickBtn(fbTarget, { who: `${label}的兜底`, full: PORTRAIT_LIMITS.poolImages - splitUrls(pool.fallback).length <= 0 ? `兜底最多 ${PORTRAIT_LIMITS.poolImages} 张` : '' })}${poolLocalSummaryHtml(fbTarget, pool.fallback)}</div>
+                ${portraitLocalMsgHtml(fbTarget, local[fbTarget])}
                 ${msgLinesHtml(info?.fallback, `data-sb-pool-msg="${pi}.f"`)}
             </div>
         </section>`;
@@ -1774,14 +1934,17 @@ function portraitPoolHtml(pi, pool, info, ctx) {
 
 /**
  * 「立绘」分页的内容（纯 HTML，对话框负责事件）。
- * @param {{draft: object, spec?: object, sample?: object, portraits?: object, sb?: object, notes?: string[], newName?: string, newMsg?: string}} o
+ * @param {{draft: object, spec?: object, sample?: object, portraits?: object, sb?: object, notes?: string[], newName?: string, newMsg?: string,
+ *   store?: 'server'|'embed', local?: object}} o
  *   draft：portraitDraftFrom 的草稿；portraits：规范化后正在生效的配置（取图状态按它和示例数据 sample 计算）；
- *   sb：用来判断当前界面会不会显示立绘；notes：保存时规范化给出的其他提示；newName / newMsg：「添加」输入框的内容与提示
+ *   sb：用来判断当前界面会不会显示立绘；notes：保存时规范化给出的其他提示；newName / newMsg：「添加」输入框的内容与提示；
+ *   store：「选择本地图片」默认存到哪儿（portraitStoreOf）；local：「选择本地图片」/ 转换的结果提示 {目标: {level, lines, fallback}}
  */
-export function portraitsPanelHtml({ draft, spec = null, sample = null, portraits = null, sb = null, notes = [], newName = '', newMsg = '' }) {
+export function portraitsPanelHtml({ draft, spec = null, sample = null, portraits = null, sb = null, notes = [], newName = '', newMsg = '', store = 'server', local = {} }) {
     const d = { chars: Array.isArray(draft?.chars) ? draft.chars : [], pools: Array.isArray(draft?.pools) ? draft.pools : [] };
     const issues = portraitDraftIssues(d, spec);
     const ctx = {
+        local: isObj(local) ? local : {},
         spec,
         stat: isObj(sample) ? sample : {},
         portraits: portraits || normalizePortraits(portraitDraftToRaw(d), { spec }),
@@ -1800,7 +1963,8 @@ export function portraitsPanelHtml({ draft, spec = null, sample = null, portrait
     const chips = free.slice(0, 24).map((x) => chipHtml(x, x.record ? `「${x.record}」里的条目` : '固定分组')).join('');
     const sampleChips = freeSample.slice(0, 12).map((x) => chipHtml(x, `示例数据：「${x.record}」里只有示例数据才有的条目（模板或 AI 写的演示名字，不一定是这个故事里的角色）`, ' data-sb-sample')).join('');
     return `
-        <div class="nl-card-desc">给角色配上立绘图片（你自己配置，不由 AI 生成）。状态栏里带 data-nl-portrait 的位置显示当前的图，换图按钮在已解锁的图之间轮换，玩家手动选的图记在他自己的浏览器里；没有图或图片打不开时显示名字首字的占位。只支持 http(s) 图床地址和较小的 data:image（不支持 svg）。</div>
+        <div class="nl-card-desc">给角色配上立绘图片（你自己配置，不由 AI 生成）。状态栏里带 data-nl-portrait 的位置显示当前的图，换图按钮在已解锁的图之间轮换，玩家手动选的图记在他自己的浏览器里；没有图或图片打不开时显示名字首字的占位。可以选择本地图片，也可以填 http(s) 图床地址或 data:image（不支持 svg）。</div>
+        ${portraitStoreBarHtml({ store, portraits: portraitDraftToRaw(d), local: ctx.local.all })}
         ${disp.level === 'warn'
         ? `<div class="nl-sb-note nl-sb-note-warn" data-sb-pt-display>${icon('alert')}<div class="nl-grow">${esc(disp.text)}</div></div>`
         : `<div class="nl-ok nl-small" data-sb-pt-display>${icon('check', { size: 14 })} ${esc(disp.text)}</div>`}
@@ -1954,6 +2118,9 @@ export async function openStatusBarDialog(card, ctx = {}) {
         ptNotes: [],
         ptNew: '',
         ptNewMsg: '',
+        // 「选择本地图片」/ 转换存放位置：结果提示（目标 → {level, lines, fallback}）、上传失败的文件（目标 → File[]，「改成嵌进卡片」重试用）
+        ptLocal: {},
+        ptFailed: {},
     };
     const box = document.createElement('div');
     box.className = 'nl-sb';
@@ -2399,6 +2566,8 @@ export async function openStatusBarDialog(card, ctx = {}) {
         notes: st.ptNotes,
         newName: st.ptNew,
         newMsg: st.ptNewMsg,
+        store: portraitStoreOf(c.settings),
+        local: st.ptLocal,
     });
 
     /** 草稿 → sb.portraits（规范化：标红的不保存）；规范化给出的、编辑器里没有逐项标出的提示（合计超限、超出数量）留在 ptNotes */
@@ -2407,6 +2576,8 @@ export async function openStatusBarDialog(card, ctx = {}) {
         st.pt = portraitDraftFrom(sb.portraits);
         st.ptNotes = [];
         st.ptNewMsg = '';
+        st.ptLocal = {};
+        st.ptFailed = {};
     };
 
     const commitPortraits = () => {
@@ -2425,9 +2596,14 @@ export async function openStatusBarDialog(card, ctx = {}) {
         const nc = Object.keys(p.characters || {}).length;
         const np = (p.pools || []).length;
         const what = `立绘：${nc} 个角色${np ? `、${np} 个图池` : ''}。`;
-        return d.level === 'warn'
+        // 预览只替换 NovelLoom 自己上传的酒馆图片（previewSrcMap）；手填的其他酒馆路径在沙箱里直接加载，登录模式下可能带不上登录信息
+        const foreign = new Set(portraitUrlList(p).filter((u) => portraitUrlKind(u) === 'server' && !isOwnServerImage(u))).size;
+        const foreignLine = foreign
+            ? `<div class="nl-muted nl-small" data-sb-preview-pt-foreign>${icon('info', { size: 12 })} ${esc(`有 ${foreign} 张手填的酒馆图片（不是「选择本地图片」上传的）：预览里直接加载原路径，开了账号登录的酒馆可能显示不出来；聊天里不受影响。`)}</div>`
+            : '';
+        return (d.level === 'warn'
             ? `<div class="nl-warn nl-small" data-sb-preview-pt>${icon('alert', { size: 12 })} ${esc(what + d.text)}</div>`
-            : `<div class="nl-muted nl-small" data-sb-preview-pt>${icon('image', { size: 12 })} ${esc(`${what}状态栏里的换图按钮在这里也能点，换过的图会记住（和聊天里这张卡共用同一份记录，换回默认那张就不再记着）。`)}</div>`;
+            : `<div class="nl-muted nl-small" data-sb-preview-pt>${icon('image', { size: 12 })} ${esc(`${what}状态栏里的换图按钮在这里也能点，换过的图会记住（和聊天里这张卡共用同一份记录，换回默认那张就不再记着）。`)}</div>`) + foreignLine;
     };
 
     const previewPanel = () => {
@@ -2482,11 +2658,13 @@ export async function openStatusBarDialog(card, ctx = {}) {
         const errs = box.querySelector('[data-sb-preview-errs]');
         if (errs) errs.innerHTML = '';
         const tailwind = sb.mode === 'raw' ? await loadTailwind() : '';
+        // 存在酒馆服务器上的立绘：沙箱里请求可能带不上登录信息，先在这里取来换成 data:image（只换预览里加载的地址，卡片不变）
+        const srcMap = sb.mode === 'raw' ? {} : await previewSrcMap(portraitUrlList(sb.portraits));
         if (frameEl() !== frame) return; // 等待期间换了分页
         // 从很矮开始，等页面报上内容高度（避免先闪一下旧高度）
         frame.style.height = '32px';
         // store：这张卡记着的立绘选择（与聊天里共用），预览里换的图重新载入后还在
-        frame.srcdoc = buildPreviewSrcdoc(card, ensureSample(), { user: userName(), char: charName, tailwind, store: readPortraitChoices(card) });
+        frame.srcdoc = buildPreviewSrcdoc(card, ensureSample(), { user: userName(), char: charName, tailwind, store: readPortraitChoices(card), srcMap });
     };
     const postSample = () => {
         const frame = frameEl();
@@ -2558,8 +2736,11 @@ export async function openStatusBarDialog(card, ctx = {}) {
                 <div class="nl-row"><b class="nl-grow">${esc(title)}</b>${err ? '' : `<button class="nl-btn nl-sm" data-act="sb-copy" data-sb-what="${what}">${icon('copy', { size: 14 })}复制</button>`}</div>
                 ${err ? `<div class="nl-err nl-small">${esc(err.message || String(err))}</div>` : `<pre class="nl-pre nl-mono nl-sb-code">${esc(JSON.stringify(obj, null, 2))}</pre>`}
             </div>`;
+        const ptHint = serverPortraitHint(sb.portraits);
         return `
             ${active ? '' : `<div class="nl-sb-note nl-sb-note-warn">${icon('info')}<div class="nl-grow">${sb.enabled ? '还没有变量' : '状态栏已关闭'}：导出和写入酒馆时不会带上状态栏。</div></div>`}
+            ${ptHint ? `<div class="nl-sb-note nl-sb-note-warn" data-sb-export-pt-hint>${icon('alert')}<div class="nl-grow">${esc(ptHint)}</div>
+                <button class="nl-btn nl-sm" data-act="sb-tab" data-tab="portraits">去「立绘」</button></div>` : ''}
             ${d.regexError ? `<div class="nl-sb-note nl-sb-note-err">${icon('alert')}<div class="nl-grow"><b>导出会被阻止</b><div>${esc(d.regexError.message)}</div></div></div>` : ''}
             <h4>环境检查</h4>
             <div class="nl-sb-checklist">${envChecks(card).map(checkLine).join('')}</div>
@@ -2752,7 +2933,8 @@ export async function openStatusBarDialog(card, ctx = {}) {
             const img = ch.images?.[Number(el.dataset.sbPtI)];
             if (!img) return true;
             if (!isObj(img.when)) img.when = { path: '', op: '>=', value: '' };
-            if (k === 'url') img.url = el.value.trim();
+            // 从图库抄来的酒馆图片路径（中文文件夹、带 @ 的文件名……）换成逐段编码的写法；重绘后输入框里也是规范的
+            if (k === 'url') img.url = normalizeServerPortraitInput(el.value);
             else if (k === 'label') img.label = el.value;
             else if (k === 'whenPath') img.when.path = el.value.trim();
             else if (k === 'whenOp') img.when.op = el.value;
@@ -2770,14 +2952,19 @@ export async function openStatusBarDialog(card, ctx = {}) {
             const leaves = recordLeafFields(rv?.value).map((l) => l.path);
             if (leaves.length && !leaves.includes(pool.field)) pool.field = leaves[0];
         } else if (pk === 'field') pool.field = el.value.trim();
-        else if (pk === 'fallback') pool.fallback = el.value;
+        else if (pk === 'fallback') pool.fallback = normalizeServerLines(el.value);
         else {
             const v = pool.values?.[Number(el.dataset.sbPoolV)];
             if (v && pk === 'value') v.value = el.value;
-            else if (v && pk === 'urls') v.urls = el.value;
+            else if (v && pk === 'urls') v.urls = normalizeServerLines(el.value);
         }
         return true;
     };
+    /** 图池的文本框：逐行把手填的酒馆图片路径换成规范写法（其他行原样保留，连同首尾空白） */
+    const normalizeServerLines = (text) => String(text ?? '').split(/\r\n|\r|\n/).map((l) => {
+        const n = normalizeServerPortraitInput(l);
+        return n === l.trim() ? l : n;
+    }).join('\n');
 
     /** 输入时就地更新这一项的提示（不重绘，不打断输入） */
     const refreshPortraitMsg = (el) => {
@@ -2827,6 +3014,270 @@ export async function openStatusBarDialog(card, ctx = {}) {
         commitPortraits();
         renderAll();
         box.querySelector(`[data-sb-pt="url"][data-sb-pt-c="${st.pt.chars.length - 1}"][data-sb-pt-i="0"]`)?.focus();
+    };
+
+    // ---------- 立绘：选择本地图片、转换存放位置 ----------
+    /** 上传到酒馆的文件夹：卡片写进酒馆时的角色名（图片就在这个角色的「图库」里） */
+    const imageFolder = () => imageFolderName(displayName);
+    /** 内嵌图片合计还剩多少字（按草稿算，与保存时的合计上限一致） */
+    const embedBudget = () => PORTRAIT_DATA_TOTAL_MAX - portraitStorageStats(portraitDraftToRaw(st.pt)).embedChars;
+    /** 目标（c:角色 / v:图池:取值 / f:图池的兜底）→ 草稿里的对象；处理期间按对象记，序号变了也不会加错地方 */
+    const ptTarget = (key) => {
+        const [k, a, b] = String(key || '').split(':');
+        if (k === 'c') {
+            const ch = st.pt.chars[Number(a)];
+            return ch ? { kind: 'c', ch, max: PORTRAIT_LIMITS.images } : null;
+        }
+        const pool = st.pt.pools[Number(a)];
+        if (!pool) return null;
+        if (k === 'v') {
+            const v = pool.values?.[Number(b)];
+            return v ? { kind: 'v', pool, v, max: PORTRAIT_LIMITS.poolImages } : null;
+        }
+        return k === 'f' ? { kind: 'f', pool, max: PORTRAIT_LIMITS.poolImages } : null;
+    };
+    /** 目标对象 → 它现在的序号键（处理期间删除 / 移动过也按对象找）；已经删掉时返回 '' */
+    const keyOfTarget = (t) => {
+        if (t.kind === 'c') {
+            const ci = st.pt.chars.indexOf(t.ch);
+            return ci < 0 ? '' : `c:${ci}`;
+        }
+        const pi = st.pt.pools.indexOf(t.pool);
+        if (pi < 0) return '';
+        if (t.kind === 'f') return `f:${pi}`;
+        const vi = (t.pool.values || []).indexOf(t.v);
+        return vi < 0 ? '' : `v:${pi}:${vi}`;
+    };
+    /** 图池的目标在草稿里存地址的地方：取值的 urls / 图池的 fallback（一行一个地址的文本） */
+    const textOf = (t) => (t.kind === 'v' ? { obj: t.v, field: 'urls' } : { obj: t.pool, field: 'fallback' });
+    const targetUrls = (t) => (t.kind === 'c' ? (t.ch.images || []).map((img) => String(img?.url ?? '').trim()).filter(Boolean) : splitUrls(t.kind === 'v' ? t.v.urls : t.pool.fallback));
+    const targetAlive = (t) => (t.kind === 'c' ? st.pt.chars.includes(t.ch) : st.pt.pools.includes(t.pool) && (t.kind !== 'v' || (t.pool.values || []).includes(t.v)));
+    /** 角色：先填空着的图片行，再往后加；图池：接在文本框最后（一行一个） */
+    const addUrlsTo = (t, urls) => {
+        if (t.kind === 'c') {
+            const list = (t.ch.images ||= []);
+            for (const url of urls) {
+                const empty = list.find((img) => !String(img?.url ?? '').trim());
+                if (empty) empty.url = url;
+                else list.push({ url, label: '', when: { path: '', op: '>=', value: '' } });
+            }
+            return;
+        }
+        const { obj, field } = textOf(t);
+        obj[field] = [String(obj[field] ?? '').replace(/\s+$/, ''), ...urls].filter(Boolean).join('\n');
+    };
+    /**
+     * 把一组图（图池的取值 / 兜底的文本）里内容是 from 的那一行换成 to：按此刻的文本找（处理期间文本框可能被改过，不能整份写回旧的）；
+     * 那一行已经被删掉或改过时不动，返回 false
+     */
+    const replaceLine = (obj, field, from, to) => {
+        const cur = String(obj[field] ?? '').split(/\r\n|\r|\n/);
+        const i = cur.findIndex((l) => l.trim() === from);
+        if (i < 0) return false;
+        cur[i] = to;
+        obj[field] = cur.join('\n');
+        return true;
+    };
+    /** 改一个目标的提示（记在 st.ptLocal 里，重绘后还在），并就地换掉页面上那一块 */
+    const setLocalMsg = (key, m) => {
+        if (!key) return;
+        if (m) st.ptLocal[key] = m;
+        else delete st.ptLocal[key];
+        const el = box.querySelector(`[data-sb-pt-local="${CSS.escape(key)}"]`);
+        if (el) el.outerHTML = portraitLocalMsgHtml(key, m);
+    };
+    /** 删除、移动之后序号变了：旧的提示和待重试的文件不再对得上 */
+    const forgetLocal = () => {
+        st.ptLocal = {};
+        st.ptFailed = {};
+    };
+    const fileLabel = (f) => {
+        const n = String(f?.name || '图片');
+        return n.length > 40 ? `${n.slice(0, 37)}…` : n;
+    };
+
+    // 读屏用的结果播报：固定的一块（不随重绘换掉，挂在对话框正文里、box 外面），每次处理完把结果的第一句写进去
+    const live = document.createElement('div');
+    live.className = 'nl-sr-only';
+    live.setAttribute('role', 'status');
+    live.setAttribute('aria-live', 'polite');
+    const announce = (text) => {
+        live.textContent = '';
+        if (text) setTimeout(() => { live.textContent = text; }, 50); // 先清空再写：同样的话连说两次也会念
+    };
+    /** 处理图片之后重绘：busy() 禁用按钮时焦点已经掉到 <body>，renderAll 找不回来；按顺序找第一个还在、没禁用的控件放焦点 */
+    const focusFirstOf = (sels) => {
+        const a = document.activeElement;
+        if (a && a !== document.body && a.isConnected) return; // 处理期间用户自己换了焦点就不动
+        for (const sel of sels) {
+            const el = sel ? box.querySelector(sel) : null;
+            if (el && !el.disabled) {
+                el.focus({ preventScroll: true });
+                return;
+            }
+        }
+    };
+    const pickSel = (key) => `[data-act="sb-pt-pick"][data-sb-pt-target="${CSS.escape(key)}"]`;
+    /** 目标里第 i 张图的输入框（角色：那一行的地址框；图池：整个文本框） */
+    const targetInputSel = (key, i = 0) => {
+        const [k, a, b] = String(key || '').split(':');
+        if (k === 'c') return `[data-sb-pt="url"][data-sb-pt-c="${a}"][data-sb-pt-i="${i}"]`;
+        if (k === 'v') return `[data-sb-pool="urls"][data-sb-pool-p="${a}"][data-sb-pool-v="${b}"]`;
+        return k === 'f' ? `[data-sb-pool="fallback"][data-sb-pool-p="${a}"]` : '';
+    };
+
+    // 一次只处理一批：选择 / 拖放本地图片、各种转换共用一把锁（都会改内嵌用量；同时进行时各自按同一个剩余量压缩，
+    // 合计会超出上限，保存时规范化就会丢掉另一张已经存好的内嵌图片）
+    let ptWorking = false;
+    let closed = false; // 对话框已经关了：还在处理的图片不再写回草稿和卡片（重新打开的对话框有自己的草稿）
+    const BUSY_TEXT = '上一批图片还在处理，稍等再试';
+    /** 已经有一批在处理时拒绝这次操作，在目标下面说明（返回 true 表示不做） */
+    const ptBusyRefused = (key) => {
+        if (!ptWorking) return false;
+        const m = { level: 'warn', lines: [BUSY_TEXT], refused: true };
+        if (box.querySelector(`[data-sb-pt-local="${CSS.escape(key)}"]`)) setLocalMsg(key, m);
+        else {
+            st.ptLocal[key] = m; // 图片行没有提示时页面上没有这一块：重绘出来
+            renderAll();
+        }
+        announce(BUSY_TEXT);
+        return true;
+    };
+    /** 一批处理完：放开锁，收起期间「稍等再试」的提示 */
+    const releasePt = () => {
+        ptWorking = false;
+        for (const [k, m] of Object.entries(st.ptLocal)) if (m?.refused) delete st.ptLocal[k];
+    };
+
+    /**
+     * 选择或拖进来的本地图片：按存法（默认 settings.statusBar.portraitStore）上传到酒馆服务器或压缩后嵌进卡片，加进目标。
+     * 超出数量上限的跳过并列出；每张的错误（不是图片、解码失败、上传失败……）写在目标下面，上传失败的可以「改成嵌进卡片」重试。
+     * 处理期间按对象找目标（删除 / 移动过序号会变）；对话框关掉了就不再写回。btn：从按钮发起时处理完把焦点放回来（拖放时不动焦点）。
+     */
+    const addLocalImages = async (key, files, { mode = portraitStoreOf(c.settings), btn = null } = {}) => {
+        const t = ptTarget(key);
+        const list = [...(files || [])];
+        if (!t || !list.length) return;
+        if (ptBusyRefused(key)) return;
+        ptWorking = true;
+        const take = list.slice(0, Math.max(0, t.max - targetUrls(t).length));
+        const skipped = list.slice(take.length);
+        const errors = [];
+        const failed = [];
+        const notes = new Set();
+        const urls = [];
+        const folder = imageFolder();
+        let budget = embedBudget();
+        delete st.ptFailed[key];
+        const run = async () => {
+            for (const [n, f] of take.entries()) {
+                if (closed) break;
+                setLocalMsg(keyOfTarget(t), { level: 'busy', lines: [`${mode === 'server' ? '正在上传到酒馆服务器' : '正在压缩'}：第 ${n + 1} / ${take.length} 张`] });
+                try {
+                    if (mode === 'server') {
+                        const r = await storeImageOnServer(f, { folder });
+                        urls.push(r.url);
+                        if (r.note) notes.add(r.note);
+                    } else {
+                        const r = await embedImage(f, { limit: Math.min(PORTRAIT_DATA_URL_MAX, budget) });
+                        budget -= r.chars;
+                        urls.push(r.url);
+                        if (r.note) notes.add(r.note);
+                    }
+                } catch (e) {
+                    errors.push(`「${fileLabel(f)}」：${e instanceof LocalImageError ? e.message : errorText(e)}`);
+                    if (e?.kind === 'upload') failed.push(f);
+                }
+            }
+        };
+        try {
+            if (btn?.isConnected) await busy(btn, run, mode === 'server' ? '上传中…' : '压缩中…');
+            else await run();
+        } finally {
+            releasePt();
+        }
+        if (closed) {
+            if (urls.length) c.log(`对话框已关闭，选的 ${urls.length} 张图片没有加进立绘${mode === 'server' ? '（已上传的仍在酒馆服务器上，可以重新打开后再选）' : ''}`, 'warn');
+            return;
+        }
+        // 这一项在处理期间被删掉了：删除时 forgetLocal 已经清掉了它的提示，原来的序号现在可能是别的项，不再碰
+        if (!targetAlive(t)) {
+            c.log('处理图片期间这一项被删掉或换掉了，选的图片没有加进去', 'warn');
+            announce('处理图片期间这一项被删掉了，选的图片没有加进去');
+            return renderAll();
+        }
+        const k = keyOfTarget(t);
+        // 新加的图从哪一张开始（角色先填空着的行）：键盘操作时没有可用的「选择本地图片」就把焦点放到那一行
+        const imgs = t.kind === 'c' ? t.ch.images || [] : [];
+        const empty = imgs.findIndex((img) => !String(img?.url ?? '').trim());
+        const firstNew = t.kind === 'c' ? (empty < 0 ? imgs.length : empty) : 0;
+        if (urls.length) addUrlsTo(t, urls);
+        if (skipped.length) errors.push(`最多 ${t.max} 张：跳过了 ${skipped.length} 张（${skipped.slice(0, 3).map(fileLabel).join('、')}${skipped.length > 3 ? '…' : ''}）`);
+        if (failed.length) st.ptFailed[k] = failed;
+        const head = urls.length ? `已添加 ${urls.length} 张（${mode === 'server' ? '存到酒馆服务器' : '嵌进卡片'}）` : '';
+        st.ptLocal[k] = {
+            level: errors.length ? (urls.length ? 'warn' : 'err') : 'ok',
+            lines: [head, ...errors, ...notes, failed.length ? '上传失败的可以改成压缩后嵌进卡片' : ''].filter(Boolean),
+            fallback: failed.length > 0,
+        };
+        if (urls.length) commitPortraits();
+        renderAll();
+        announce(head || errors[0] || '');
+        if (btn) focusFirstOf([pickSel(k), targetInputSel(k, firstNew)]);
+    };
+
+    /**
+     * 一张图换存放位置：酒馆服务器 → 下载后压缩嵌进卡片；内嵌 → 上传到酒馆服务器。返回 {url, note} 或 {error}。
+     * 失败时地址不变（这张原来存在哪儿还在哪儿）。调用方持有 ptWorking 锁，内嵌的剩余量按调用时的草稿算。
+     */
+    const convertUrl = async (url, to) => {
+        try {
+            if (to === 'embed') {
+                const limit = Math.min(PORTRAIT_DATA_URL_MAX, embedBudget());
+                // 合计已经放不下了：不必先下载
+                if (limit < EMBED_MIN_BUDGET) throw new LocalImageError('budget', '内嵌图片合计已经快到上限了，放不下这张');
+                const r = await embedImage(await fetchServerImage(url), { limit });
+                return { url: r.url, note: r.note };
+            }
+            const r = await storeImageOnServer(dataUrlToBlob(url), { folder: imageFolder() });
+            return { url: r.url, note: r.note };
+        } catch (e) {
+            const msg = e instanceof LocalImageError ? e.message : errorText(e);
+            return { error: `${msg}（这张的地址没有改动）` };
+        }
+    };
+
+    // 拖图片到角色 / 图池的取值 / 兜底上：和「选择本地图片」一样处理
+    const dropTargetOf = (e) => {
+        const el = e.target?.closest?.('[data-sb-pt-drop]');
+        return el && box.contains(el) ? el : null;
+    };
+    const dragHasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+    const clearDropMarks = (except = null) => box.querySelectorAll('.is-drop').forEach((x) => x !== except && x.classList.remove('is-drop'));
+    // 监听挂在整个对话框的遮罩上（盖住整个页面），拦下之后不再往外传：酒馆在 <body> 上接拖进来的文件当作导入角色卡
+    // （script.js 的 charDragDropHandler，即 DragAndDropHandler('body')），拖进来的 PNG 会被当成角色卡导入——差一点没放到目标上（落在边距、标题栏、底栏、遮罩上）也一样
+    const onDragOver = (e) => {
+        if (st.tab !== 'portraits' || !dragHasFiles(e)) return;
+        // 文件拖到分页里别处时也拦下，免得浏览器直接打开图片、离开酒馆页面
+        e.preventDefault();
+        e.stopPropagation();
+        const el = dropTargetOf(e);
+        e.dataTransfer.dropEffect = el ? 'copy' : 'none';
+        clearDropMarks(el);
+        el?.classList.add('is-drop');
+    };
+    const onDragLeave = (e) => {
+        const el = dropTargetOf(e);
+        if (el && !el.contains(e.relatedTarget)) el.classList.remove('is-drop');
+    };
+    const onDrop = (e) => {
+        if (st.tab !== 'portraits' || !dragHasFiles(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        clearDropMarks();
+        const el = dropTargetOf(e);
+        const files = [...(e.dataTransfer?.files || [])];
+        if (el && files.length) addLocalImages(el.dataset.sbPtDrop, files);
     };
 
     // 字段名临时清空后再填上新名字：记着清空前的名字（按字段对象记；名字有问题的行保留原样，对象不变），填上时从它搬数据
@@ -3009,10 +3460,15 @@ export async function openStatusBarDialog(card, ctx = {}) {
         const act = btn.dataset.act;
         const idx = Number(btn.dataset.sbI);
         switch (act) {
-            case 'sb-tab':
+            case 'sb-tab': {
+                // 「导出」分页的分享提示里的「去「立绘」」：过去之后焦点放到「全部改成内嵌」上（真正能改的按钮）
+                const fromHint = !!btn.closest('[data-sb-export-pt-hint]');
                 st.tab = btn.dataset.tab;
                 st.flash = null;
-                return renderAll();
+                renderAll();
+                if (fromHint) box.querySelector('[data-act="sb-pt-convert-all"]')?.focus();
+                return;
+            }
             case 'sb-ai-first':
             case 'sb-ai-all': {
                 const r = await aiDialog({
@@ -3060,13 +3516,21 @@ export async function openStatusBarDialog(card, ctx = {}) {
                 const base = sb.spec.title && sb.spec.title !== '状态栏' ? sb.spec.title : `${displayName}的状态栏`;
                 const r = await nameDescDialog({
                     title: '存为状态栏模板', name: uniqueStatusBarTemplateName(c.settings, base), settings: c.settings,
-                    portraitsOption: templatePortraitsOptionText(sb.portraits),
+                    portraitsOption: templatePortraitsOptionText(sb.portraits), portraitsNotes: templatePortraitNotes(sb.portraits),
                 });
                 if (!r) return;
                 try {
+                    // 模板的内嵌图片上限比卡片小：超出的丢掉，原因记进日志（保存前对话框里已经提醒过）
+                    const warnings = [];
+                    r.warnings = warnings;
                     addStatusBarTemplate(c.settings, templateFromStatusBar(card, r));
                     c.saveSettings();
                     c.log(`已保存状态栏模板「${r.name}」`, 'success');
+                    for (const w of uniqWarnings(warnings)) c.log(w, 'warn');
+                    if (r.portraits) {
+                        const hint = serverPortraitHint(sb.portraits, 'template');
+                        if (hint) c.log(hint, 'warn');
+                    }
                 } catch (err) {
                     await alertDialog(errorText(err), '保存模板失败');
                 }
@@ -3189,7 +3653,8 @@ export async function openStatusBarDialog(card, ctx = {}) {
                 const ch = st.pt.chars[ci];
                 if (!ch) return;
                 const n = (ch.images || []).filter((x) => String(x?.url ?? '').trim()).length;
-                if (n && !(await confirmDialog(`删除「${String(ch.name ?? '').trim() || '（未命名）'}」的 ${n} 张立绘？`, { danger: true, okLabel: '删除' }))) return;
+                if (n && !(await confirmDialog(`删除「${String(ch.name ?? '').trim() || '（未命名）'}」的 ${n} 张立绘？（存在酒馆服务器上的图片不会删除）`, { danger: true, okLabel: '删除' }))) return;
+                forgetLocal();
                 st.pt.chars.splice(ci, 1);
                 commitPortraits();
                 renderAll();
@@ -3211,6 +3676,7 @@ export async function openStatusBarDialog(card, ctx = {}) {
                 const ii = Number(btn.dataset.sbPtI);
                 const list = st.pt.chars[ci]?.images;
                 if (!list?.[ii]) return;
+                forgetLocal();
                 if (act === 'sb-pt-img-del') list.splice(ii, 1);
                 else {
                     const j = act === 'sb-pt-img-up' ? ii - 1 : ii + 1;
@@ -3242,6 +3708,7 @@ export async function openStatusBarDialog(card, ctx = {}) {
                 if (!pool) return;
                 const n = (pool.values || []).reduce((s, v) => s + splitUrls(v?.urls).length, 0) + splitUrls(pool.fallback).length;
                 if (n && !(await confirmDialog(`删除这个图池（${n} 张图）？`, { danger: true, okLabel: '删除' }))) return;
+                forgetLocal();
                 st.pt.pools.splice(pi, 1);
                 commitPortraits();
                 renderAll();
@@ -3261,10 +3728,206 @@ export async function openStatusBarDialog(card, ctx = {}) {
                 const list = st.pt.pools[pi]?.values;
                 const vi = Number(btn.dataset.sbPoolV);
                 if (!list?.[vi]) return;
+                forgetLocal();
                 list.splice(vi, 1);
                 commitPortraits();
                 renderAll();
                 return focusAfterPortraitDelete(act, { pi, vi });
+            }
+            case 'sb-pt-store': {
+                // 「选择本地图片」默认存到哪儿：记在扩展设置里，所有卡共用
+                if (!isObj(c.settings.statusBar)) c.settings.statusBar = {};
+                c.settings.statusBar.portraitStore = btn.dataset.sbVal === 'embed' ? 'embed' : 'server';
+                c.saveSettings();
+                return renderAll();
+            }
+            case 'sb-pt-pick': {
+                const key = btn.dataset.sbPtTarget;
+                if (ptBusyRefused(key)) return; // 先挡住，免得选完文件才说不行
+                const files = await pickFile('image/*', { multiple: true });
+                if (!files?.length) return;
+                const again = box.querySelector(pickSel(key)); // 选文件期间按钮可能被重绘过
+                return addLocalImages(key, files, { btn: again || btn });
+            }
+            case 'sb-pt-embed-fallback': {
+                // 上传到酒馆失败的那几张：改成压缩后嵌进卡片
+                const key = btn.dataset.sbPtTarget;
+                const files = st.ptFailed[key];
+                if (!files?.length) return;
+                if (ptBusyRefused(key)) return;
+                delete st.ptFailed[key];
+                return addLocalImages(key, files, { mode: 'embed', btn });
+            }
+            case 'sb-pt-convert': {
+                const ci = Number(btn.dataset.sbPtC);
+                const ii = Number(btn.dataset.sbPtI);
+                const img = st.pt.chars[ci]?.images?.[ii];
+                if (!img) return;
+                if (ptBusyRefused(`c:${ci}:${ii}`)) return;
+                const url = String(img.url ?? '').trim();
+                const to = btn.dataset.sbTo === 'server' ? 'server' : 'embed';
+                ptWorking = true;
+                let r;
+                try {
+                    r = await busy(btn, () => convertUrl(url, to), to === 'embed' ? '压缩中…' : '上传中…');
+                } finally {
+                    releasePt();
+                }
+                if (closed || !r) return;
+                // 处理期间删除 / 移动过：按对象找这张图现在的位置（找不到就是被删掉了，不再写提示——那个序号现在可能是别的图）
+                const ci2 = st.pt.chars.findIndex((ch) => ch.images?.includes(img));
+                const ii2 = ci2 < 0 ? -1 : st.pt.chars[ci2].images.indexOf(img);
+                if (ii2 < 0) return renderAll();
+                const key = `c:${ci2}:${ii2}`;
+                // 说明、解锁条件、顺序都不变，只换地址（处理期间地址被改过就不动）
+                if (r.url && String(img.url ?? '').trim() === url) {
+                    img.url = r.url;
+                    if (r.note) st.ptLocal[key] = { level: 'warn', lines: [r.note] };
+                    else delete st.ptLocal[key];
+                    commitPortraits();
+                } else if (r.error) st.ptLocal[key] = { level: 'err', lines: [r.error] };
+                renderAll();
+                announce(r.error || `第 ${ii2 + 1} 张已${to === 'embed' ? '改成内嵌' : '存到酒馆服务器'}${r.note ? `：${r.note}` : ''}`);
+                // 按钮换了方向（data-sb-to 变了），选择器里不带它
+                focusFirstOf([`[data-act="sb-pt-convert"][data-sb-pt-c="${ci2}"][data-sb-pt-i="${ii2}"]`, targetInputSel(`c:${ci2}`, ii2)]);
+                return;
+            }
+            case 'sb-pt-convert-list': {
+                const key = btn.dataset.sbPtTarget;
+                const t = ptTarget(key);
+                if (!t || t.kind === 'c') return;
+                if (ptBusyRefused(key)) return;
+                const to = btn.dataset.sbTo === 'server' ? 'server' : 'embed';
+                const from = to === 'embed' ? 'server' : 'embed';
+                const { obj, field } = textOf(t);
+                // 先记下要转换的地址；每转好一张按此刻的文本找到那一行再换（replaceLine），处理期间新加 / 改掉的行不受影响
+                const todo = splitUrls(obj[field]).filter((u) => portraitUrlKind(u) === from);
+                const errors = [];
+                const notes = new Set();
+                let done = 0;
+                ptWorking = true;
+                try {
+                    await busy(btn, async () => {
+                        for (const u of todo) {
+                            if (closed || !targetAlive(t)) break;
+                            const r = await convertUrl(u, to);
+                            if (closed || !targetAlive(t)) break;
+                            if (!r.url) {
+                                errors.push(r.error);
+                                continue;
+                            }
+                            if (r.note) notes.add(r.note);
+                            // 每转一张就写回（下一张按新的内嵌用量算）；那一行已经被删掉或改过就跳过，不算进「已转换」
+                            if (replaceLine(obj, field, u, r.url)) {
+                                done++;
+                                commitPortraits();
+                            }
+                        }
+                    }, '转换中…');
+                } finally {
+                    releasePt();
+                }
+                if (closed) return;
+                const k = keyOfTarget(t);
+                if (!k) {
+                    c.log('转换期间这一组图被删掉了，没有转换完', 'warn');
+                    return renderAll();
+                }
+                const head = done ? `已转换 ${done} 张（${to === 'embed' ? '嵌进卡片' : '存到酒馆服务器'}）` : '';
+                const lines = [head, ...uniqWarnings(errors), ...notes].filter(Boolean);
+                if (lines.length) st.ptLocal[k] = { level: errors.length ? (done ? 'warn' : 'err') : 'ok', lines };
+                renderAll();
+                announce(head || errors[0] || '');
+                focusFirstOf([`[data-act="sb-pt-convert-list"][data-sb-pt-target="${CSS.escape(k)}"]`, pickSel(k)]);
+                return;
+            }
+            case 'sb-pt-convert-all': {
+                // 「立绘」页顶部的「全部改成内嵌」：草稿里所有存在酒馆服务器上的图（角色的图片行、图池的取值与兜底），一张一张转
+                if (ptBusyRefused('all')) return;
+                const jobs = [];
+                for (const ch of st.pt.chars) {
+                    (ch.images || []).forEach((img, i) => {
+                        const u = String(img?.url ?? '').trim();
+                        if (portraitUrlKind(u) === 'server') jobs.push({ img, u, where: `「${String(ch.name ?? '').trim() || '（未命名）'}」第 ${i + 1} 张` });
+                    });
+                }
+                for (const pool of st.pt.pools) {
+                    const where = `图池「${pool.record} · ${pool.field}」`;
+                    for (const v of pool.values || []) for (const u of splitUrls(v.urls)) if (portraitUrlKind(u) === 'server') jobs.push({ obj: v, field: 'urls', u, where: `${where}「${String(v.value ?? '').trim()}」` });
+                    for (const u of splitUrls(pool.fallback)) if (portraitUrlKind(u) === 'server') jobs.push({ obj: pool, field: 'fallback', u, where: `${where}的兜底` });
+                }
+                if (!jobs.length) return;
+                const imgAlive = (img) => st.pt.chars.some((ch) => ch.images?.includes(img));
+                const objAlive = (obj) => st.pt.pools.some((p) => p === obj || p.values?.includes(obj));
+                const cache = new Map(); // 同一张图用在几处：只下载、压缩一次（内嵌合计放得下时直接用）
+                const errors = [];
+                const notes = new Set();
+                let done = 0;
+                ptWorking = true;
+                try {
+                    await busy(btn, async () => {
+                        for (const [n, job] of jobs.entries()) {
+                            if (closed) break;
+                            setLocalMsg('all', { level: 'busy', lines: [`正在改成内嵌：第 ${n + 1} / ${jobs.length} 张`] });
+                            let r = cache.get(job.u);
+                            if (!r || (r.url && r.url.length > embedBudget())) r = await convertUrl(job.u, 'embed');
+                            if (closed) break;
+                            cache.set(job.u, r);
+                            if (!r.url) {
+                                errors.push(`${job.where}：${r.error}`);
+                                continue;
+                            }
+                            if (r.note) notes.add(r.note);
+                            // 处理期间这一张被删掉或改过就跳过；每转一张就写回草稿并保存（下一张按新的内嵌用量算，合计不会超出上限）
+                            let ok = false;
+                            if (job.img) {
+                                if (imgAlive(job.img) && String(job.img.url ?? '').trim() === job.u) {
+                                    job.img.url = r.url;
+                                    ok = true;
+                                }
+                            } else ok = objAlive(job.obj) && replaceLine(job.obj, job.field, job.u, r.url);
+                            if (ok) {
+                                done++;
+                                commitPortraits();
+                            }
+                        }
+                    }, '转换中…');
+                } finally {
+                    releasePt();
+                }
+                if (closed) return;
+                const head = done ? `已转换 ${done} 张（嵌进卡片）` : '';
+                const lines = [head, ...uniqWarnings(errors), ...notes].filter(Boolean);
+                if (lines.length) st.ptLocal.all = { level: errors.length ? (done ? 'warn' : 'err') : 'ok', lines };
+                else delete st.ptLocal.all;
+                renderAll();
+                announce(head || errors[0] || '');
+                // 全部转完后按钮就没了：焦点放到存法切换上
+                focusFirstOf(['[data-act="sb-pt-convert-all"]', '[data-act="sb-pt-store"].active', '[data-act="sb-tab"][data-tab="portraits"]']);
+                return;
+            }
+            case 'sb-pool-img-del': {
+                // 图池缩略图上的删除：删掉文本框里对应的那一行
+                const key = btn.dataset.sbPtTarget;
+                const t = ptTarget(key);
+                if (!t || t.kind === 'c') return;
+                const { obj, field } = textOf(t);
+                const lines = String(obj[field] ?? '').split(/\r\n|\r|\n/);
+                const id = btn.dataset.sbLineId;
+                const at = Number(btn.dataset.sbLine) - 1;
+                // 文本框改过、还没重绘时行号可能变了：先看原来那一行还是不是这张图，不是就找同一张图所在的行
+                const i = lines[at] !== undefined && lines[at].trim() && poolLineId(lines[at]) === id ? at : lines.findIndex((l) => l.trim() && poolLineId(l) === id);
+                if (i < 0) return renderAll();
+                const pos = lines.slice(0, i).filter((l) => l.trim()).length; // 它是第几张缩略图
+                lines.splice(i, 1);
+                obj[field] = lines.join('\n');
+                commitPortraits();
+                renderAll();
+                // 焦点放到挪到这个位置的下一张、没有就上一张的删除按钮，都没有了放到文本框
+                const dels = [...box.querySelectorAll(`[data-act="sb-pool-img-del"][data-sb-pt-target="${CSS.escape(key)}"]`)];
+                (dels[Math.min(pos, dels.length - 1)] || box.querySelector(targetInputSel(key)))?.focus();
+                announce('已删除这张图片');
+                return;
             }
             case 'sb-goto-preview':
                 st.tab = 'preview';
@@ -3382,8 +4045,22 @@ export async function openStatusBarDialog(card, ctx = {}) {
     refreshStatusBarLint(card);
     renderAll();
     try {
-        await openDialog({ title: `状态栏：${displayName}${world ? '（世界卡）' : ''}`, wide: true, body: box, buttons: [{ label: '关闭', value: null }] });
+        await openDialog({
+            title: `状态栏：${displayName}${world ? '（世界卡）' : ''}`,
+            wide: true,
+            body: box,
+            buttons: [{ label: '关闭', value: null }],
+            onMount: (bodyEl) => {
+                bodyEl.appendChild(live); // 读屏播报放在 box 外面，重绘不会换掉它
+                // 拖放挂在遮罩上（盖住整个页面）：差一点没放到目标上也不会漏给酒馆当作导入角色卡；遮罩关掉时监听跟着没了
+                const ov = bodyEl.closest('.nl-dialog-overlay') || box;
+                ov.addEventListener('dragover', onDragOver);
+                ov.addEventListener('dragleave', onDragLeave);
+                ov.addEventListener('drop', onDrop);
+            },
+        });
     } finally {
+        closed = true; // 还在处理的图片不再写回（见 addLocalImages / 各种转换）
         window.removeEventListener('message', onMessage);
         window.removeEventListener('pointerup', onPointerUp, true);
         window.removeEventListener('pointercancel', onPointerUp, true);

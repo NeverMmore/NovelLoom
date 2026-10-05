@@ -6,7 +6,9 @@ import {
     STATUS_TAG, buildInitialState, cloneJson, decodeFenceText, encodeFenceText, htmlSafe, isFrontendText, isPlainObj, jsLit,
     jsStr, simulateStRegexReplace, splitPath, unwrapStatusFence, wrapStatusFence,
 } from './statusbar-base.js';
-import { PORTRAIT_DATA_URL_MAX, normalizePortraits, portraitsActive } from './statusbar-portraits.js';
+import {
+    DATA_IMAGE_RE, PORTRAIT_DATA_URL_MAX, SERVER_IMAGE_PREFIX, isOwnServerImage, normalizePortraits, portraitChoiceId, portraitsActive,
+} from './statusbar-portraits.js';
 
 /** 内置排版的三套主题（CSS 变量） */
 export const STATUSBAR_THEMES = [
@@ -61,6 +63,8 @@ function nlRuntime() {
     var PORTRAITS = window.NL_PORTRAITS && typeof window.NL_PORTRAITS === 'object' ? window.NL_PORTRAITS : {};
     var PCHARS = PORTRAITS.characters && typeof PORTRAITS.characters === 'object' ? PORTRAITS.characters : {};
     var PPOOLS = Array.isArray(PORTRAITS.pools) ? PORTRAITS.pools : [];
+    // 只有 NovelLoom 的沙箱预览会给：酒馆服务器上的立绘（/user/images/…）→ 父页面取来的 data:image（沙箱里可能带不上登录信息）
+    var PSRC = window.NL_PREVIEW_SRC && typeof window.NL_PREVIEW_SRC === 'object' ? window.NL_PREVIEW_SRC : null;
     var CARD = String(window.NL_CARD_ID || 'card');
     var DASH = '—';
     var listening = false;
@@ -300,6 +304,24 @@ function nlRuntime() {
     function storeKey(name) {
         return 'nl-sb:' + CARD + ':' + name;
     }
+    // 记在本地存储里的值（与 statusbar-portraits.js 的 portraitChoiceId 一致）：地址本身；内嵌图片太长，记成哈希 + 长度
+    var idMemo = new Map(); // 内嵌图片很长：每张只算一次哈希
+    function choiceId(url) {
+        var s = String(url);
+        if (s.slice(0, 5).toLowerCase() !== 'data:') return s;
+        if (!idMemo.has(s)) idMemo.set(s, 'nl#' + hashStr(s).toString(36) + '.' + s.length.toString(36));
+        return idMemo.get(s);
+    }
+    function savedIndex(urls, saved) {
+        if (saved === null || saved === undefined) return -1;
+        for (var i = 0; i < urls.length; i++) if (urls[i] === saved || choiceId(urls[i]) === saved) return i;
+        return -1;
+    }
+    // 图片实际加载的地址：预览里换成父页面给的 data:image（只认酒馆服务器路径、只认 base64 的位图），其他时候就是配置的地址
+    function srcOf(url) {
+        var s = PSRC && String(url).indexOf('/user/images/') === 0 && own(PSRC, url) ? PSRC[url] : null;
+        return typeof s === 'string' && /^data:image\/(?:png|jpe?g|gif|webp|avif|bmp);base64,/i.test(s) ? s : url;
+    }
     // 手动选的立绘：先记在内存里，再尽量写进本地存储（沙箱预览或禁用存储时只在内存里）
     function storeGet(name) {
         if (own(chosen, name)) return chosen[name];
@@ -360,8 +382,7 @@ function nlRuntime() {
             index = urls.length ? hashStr(name) % urls.length : -1;
         }
         var dflt = index;
-        var saved = urls.length > 1 ? storeGet(name) : null;
-        var s = saved === null || saved === undefined ? -1 : urls.indexOf(saved);
+        var s = urls.length > 1 ? savedIndex(urls, storeGet(name)) : -1;
         if (s >= 0) index = s;
         return { name: name, urls: urls, index: index, dflt: dflt, url: index >= 0 ? urls[index] : '' };
     }
@@ -420,13 +441,14 @@ function nlRuntime() {
             img.addEventListener('load', function () { if (img.getAttribute('src')) setPortraitState(img, 'ok'); });
             img.addEventListener('error', function () { setPortraitState(img, 'error'); });
         }
-        if (!info.url) {
+        var src = info.url ? srcOf(info.url) : '';
+        if (!src) {
             if (img.hasAttribute('src')) img.removeAttribute('src');
             setPortraitState(img, 'empty');
-        } else if (img.getAttribute('src') !== info.url) {
+        } else if (img.getAttribute('src') !== src) {
             img.setAttribute('referrerpolicy', 'no-referrer');
             setPortraitState(img, 'loading');
-            img.setAttribute('src', info.url);
+            img.setAttribute('src', src);
         } else if (img.complete) {
             setPortraitState(img, img.naturalWidth > 0 ? 'ok' : 'error');
         }
@@ -455,7 +477,7 @@ function nlRuntime() {
         var info = portraitInfo(name, attr(t, 'data-nl-portrait-record') || '', lastStat);
         if (info.urls.length < 2) return;
         var next = (info.index + 1) % info.urls.length;
-        storeSet(name, next === info.dflt ? null : info.urls[next]);
+        storeSet(name, next === info.dflt ? null : choiceId(info.urls[next]));
         applyPortraits(document);
     }
 
@@ -524,7 +546,7 @@ function nlRuntime() {
                     portraits: function (root) { applyPortraits(root || doc); },
                     portrait: function (name, record) {
                         var i = portraitInfo(String(name || ''), record || '', lastStat);
-                        return { url: i.url, urls: i.urls.slice(), index: i.index };
+                        return { url: i.url ? srcOf(i.url) : '', urls: i.urls.map(srcOf), index: i.index };
                     },
                 });
             } catch (e) {
@@ -779,7 +801,8 @@ export function statusBarStoreId(card) {
 }
 
 // ---------------- 记住的立绘选择（聊天与预览共用） ----------------
-// 酒馆助手的状态栏 iframe 与酒馆页面同源：运行时把手动换的立绘记在酒馆页面的本地存储里，键是 'nl-sb:<卡片>:<名字>'。
+// 酒馆助手的状态栏 iframe 与酒馆页面同源：运行时把手动换的立绘记在酒馆页面的本地存储里，键是 'nl-sb:<卡片>:<名字>'，
+// 值是配置里的地址（内嵌图片记短 id，见 portraitChoiceId）。预览里酒馆图片换成了 data:image（NL_PREVIEW_SRC），但记的仍是原路径。
 // NovelLoom 的预览是 sandbox iframe，自己访问不了本地存储：预览页面里装一个代用的 localStorage（见 previewMocks），
 // 读的是父页面通过 buildPreviewSrcdoc 的 opts.store 传进来的记录，写的时候发 {type:'nl-store', key, value} 给父页面，
 // 父页面（就是酒馆页面）用 writePortraitChoice 写进真正的本地存储。所以预览里换的图重新载入后还在，也和聊天里这张卡记着的是同一份。
@@ -788,7 +811,10 @@ export function statusBarStoreId(card) {
 const STORE_KEY_NAME_MAX = 200;
 /** 一张卡最多记多少条立绘选择（页面本地存储里本卡前缀的键 + 内存里的） */
 export const STORE_ENTRIES_MAX = 200;
-/** 一张卡记着的立绘选择合计最多多少字（键 + 地址）：不让预览把酒馆页面的本地存储（通常每个站点约 500 万字）塞满 */
+/**
+ * 一张卡记着的立绘选择合计最多多少字（键 + 值）：不让预览把酒馆页面的本地存储（通常每个站点约 500 万字）塞满。
+ * 现在的运行时只记地址或内嵌图片的短 id（portraitChoiceId），值很短；旧版本记的完整 data: 地址（最长 PORTRAIT_DATA_URL_MAX）也照样认。
+ */
 export const STORE_CHARS_MAX = 524288;
 /** 页面本地存储不可用时记在内存里的选择，所有卡合计最多几条 */
 const MEMORY_CHOICES_MAX = STORE_ENTRIES_MAX * 5;
@@ -811,6 +837,7 @@ function choiceKeyOk(prefix, key) {
     return typeof key === 'string' && key.startsWith(prefix) && key.length > prefix.length && key.length <= prefix.length + STORE_KEY_NAME_MAX && !/[\r\n]/.test(key);
 }
 
+// 值：地址（http(s) / 酒馆图片最长 2048 字）、内嵌图片的短 id，或旧版本记的完整 data: 地址——用卡片的单张上限，卡里能放的都认
 function choiceValueOk(value) {
     return typeof value === 'string' && value.length > 0 && value.length <= PORTRAIT_DATA_URL_MAX;
 }
@@ -845,6 +872,16 @@ export function portraitChoiceUrls(card) {
     for (const pool of p.pools) {
         for (const list of Object.values(pool.pools)) for (const url of list) out.add(url);
         for (const url of pool.fallback) out.add(url);
+    }
+    return out;
+}
+
+/** 预览发来的选择可以是哪些值：配置的每个地址，加上内嵌图片的短 id（portraitChoiceId，运行时现在记的就是它） */
+function portraitChoiceValues(card) {
+    const out = new Set();
+    for (const url of portraitChoiceUrls(card)) {
+        out.add(url);
+        out.add(portraitChoiceId(url));
     }
     return out;
 }
@@ -894,7 +931,8 @@ function storedChoiceSizes(prefix, storage) {
  * 预览页面发来的一条立绘选择能不能记下（父页面处理 nl-store 前用它把关；writePortraitChoice 内部也先调用它）。
  * 预览里跑的是 AI 写的界面代码，消息内容不可信：
  * - 键必须是本卡前缀 'nl-sb:<卡>:' 加 1~200 字的名字（不含换行）；
- * - 值是 null（回到默认，删掉这条）或这张卡配置的某张立绘的地址（portraitChoiceUrls），别的字符串一律拒绝；
+ * - 值是 null（回到默认，删掉这条）或这张卡配置的某张立绘的地址（portraitChoiceUrls）/ 内嵌图片的短 id（portraitChoiceId），
+ *   别的字符串一律拒绝；
  * - 本卡已经记着 STORE_ENTRIES_MAX 条时不再接受新的键（已有的键仍可改、可删）；合计超过 STORE_CHARS_MAX 字时拒绝；
  * - 给了 opt.data（预览正在显示的数据）时，名字还必须是用这份数据渲染时可能换图的（portraitChoiceNames），删除也一样——
  *   预览只能改它显示着的角色的选择，造出来的名字既不占条数上限，也删不掉聊天里记着的其他角色的选择。
@@ -907,7 +945,7 @@ export function portraitChoiceProblem(card, key, value, storage = pageStorage(),
     if (data !== undefined && !portraitChoiceNames(card, data).has(choiceNameKey(key.slice(prefix.length)))) return '预览里没有这个角色的立绘';
     if (value === null) return '';
     if (!choiceValueOk(value)) return '立绘地址无效';
-    if (!portraitChoiceUrls(card).has(value)) return '不是这张卡配置的立绘地址';
+    if (!portraitChoiceValues(card).has(value)) return '不是这张卡配置的立绘地址';
     const have = storedChoiceSizes(prefix, storage);
     if (!have.has(key) && have.size >= STORE_ENTRIES_MAX) return `这张卡已经记着 ${STORE_ENTRIES_MAX} 条立绘选择`;
     let total = key.length + value.length;
@@ -947,10 +985,29 @@ function previewStore(card, store) {
     return out;
 }
 
-/** 编译进文档的立绘配置：重新校验一遍（只留 http(s) 与较小的 data:image），没有任何图片时为 null */
+/** 编译进文档的立绘配置：按卡片的上限重新校验一遍（只留 http(s)、酒馆图片 /user/images/… 与 data:image），没有任何图片时为 null */
 export function documentPortraits(portraits) {
     const p = normalizePortraits(portraits);
     return portraitsActive(p) ? p : null;
+}
+
+/**
+ * buildPreviewSrcdoc 的 opts.srcMap → 预览页面里的 NL_PREVIEW_SRC：只留这份文档里配置的、NovelLoom 自己上传的酒馆图片
+ * （/user/images/…/nl_<哈希>.…，isOwnServerImage；父页面带登录信息读来的图库文件不交给沙箱里别的路径），
+ * 值必须是合法的 base64 位图 data:image（DATA_IMAGE_RE，不含 svg；不限长度——只在预览里用，不进卡片也不进导出）。
+ * @param {object} card
+ * @param {object|Map|null} srcMap {酒馆图片路径: 父页面取来的 data:image}
+ * @param {object|undefined} portraits 预览覆盖的立绘（opts.override.portraits），没有时用卡片自己的
+ */
+function previewSrcs(card, srcMap, portraits) {
+    const entries = srcMap instanceof Map ? [...srcMap] : isPlainObj(srcMap) ? Object.entries(srcMap) : [];
+    if (!entries.length) return {};
+    const urls = portraitChoiceUrls({ statusBar: { portraits: portraits !== undefined ? portraits : statusBarOf(card).portraits } });
+    const out = {};
+    for (const [k, v] of entries) {
+        if (typeof k === 'string' && k.startsWith(SERVER_IMAGE_PREFIX) && urls.has(k) && isOwnServerImage(k) && typeof v === 'string' && DATA_IMAGE_RE.test(v)) out[k] = v;
+    }
+    return out;
 }
 
 /**
@@ -1032,6 +1089,15 @@ function previewMocks(boot) {
         try {
             Object.defineProperty(window, 'localStorage', { configurable: true, enumerable: true, get: function () { return shim; } });
         } catch (e) { /* 换不掉时换图只记在内存里 */ }
+    }
+    // 酒馆服务器上的立绘：沙箱里请求 /user/images/… 可能带不上登录信息，父页面先取来换成 data:image（运行时的 srcOf 读它）。
+    // 定义成只读：界面代码改不掉；运行时记住的选择仍是原来的路径，和聊天里的一样
+    if (boot.src && typeof boot.src === 'object') {
+        var srcs = Object.create(null);
+        Object.keys(boot.src).forEach(function (k) { if (typeof boot.src[k] === 'string') srcs[k] = boot.src[k]; });
+        try {
+            Object.defineProperty(window, 'NL_PREVIEW_SRC', { value: Object.freeze(srcs), writable: false, configurable: false, enumerable: false });
+        } catch (e) { /* 定义不了就直接加载原路径 */ }
     }
     if (typeof window._ === 'undefined') {
         window._ = {
@@ -1166,9 +1232,11 @@ export function simulateShownDocument(doc, { user = 'User', char = 'Char' } = {}
  *   父 → iframe：{type:'nl-sample', stat}（替换示例变量并触发 mag_variable_update_ended）
  * @param {object} card 带 statusBar 的角色卡
  * @param {object} [sample] 示例 stat_data；缺省用 statusBar.sample，再缺省用变量表初始值
- * @param {{user?:string, char?:string, override?:object, tailwind?:string, cdn?:string, store?:object}} opts
+ * @param {{user?:string, char?:string, override?:object, tailwind?:string, cdn?:string, store?:object, srcMap?:object|Map}} opts
  *   override：传给 compileStatusDocument 的覆盖字段；tailwind：raw 模式下内联的 tailwind 运行时代码（父页面取到才传）；
- *   store：记着的立绘选择（readPortraitChoices），预览里代用的 localStorage 从这里读，只留本卡前缀的键
+ *   store：记着的立绘选择（readPortraitChoices），预览里代用的 localStorage 从这里读，只留本卡前缀的键；
+ *   srcMap：{酒馆图片路径: data:image}，父页面取来的酒馆服务器立绘（previewSrcs 过滤）。只换图片实际加载的地址（window.NL_PREVIEW_SRC），
+ *   文档里的 NL_PORTRAITS 与运行时记住的选择仍是原来的路径——不会写进卡片，也不会进导出
  */
 export function buildPreviewSrcdoc(card, sample, opts = {}) {
     const sb = statusBarOf(card);
@@ -1182,6 +1250,8 @@ export function buildPreviewSrcdoc(card, sample, opts = {}) {
     // 与导出同一条路径：正则替换串（& 写成 &amp;）→ 酒馆替换模拟 → 去掉代码块 → 解码一层实体（酒馆助手拿到的就是这个）
     const shown = simulateShownDocument(doc, { user, char });
     const boot = { sample: cloneJson(data), user, char, store: previewStore(card, opts.store) };
+    const src = mode === 'raw' ? {} : previewSrcs(card, opts.srcMap, opts.override?.portraits);
+    if (Object.keys(src).length) boot.src = src;
     const tailwind = mode === 'raw' && opts.tailwind ? `<script>${String(opts.tailwind).replace(/<\/script/gi, '<\\/script')}</script>` : '';
     return [
         '<!DOCTYPE html>',

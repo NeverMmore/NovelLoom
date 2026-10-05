@@ -5,7 +5,7 @@ import { DEFAULT_ANTI_TRUNCATE, DEFAULT_CATEGORIES, DEFAULT_STATUS_BAR, WI_POSIT
 import { applyConfig, exportConfig } from '../io.js';
 import { API_MODES, CHAIN_TASKS, DEEPSEEK_DEFAULT_ENDPOINT, DEEPSEEK_MODELS, DEFAULT_CHAIN, GEMINI_SAFETY_OPTIONS, listModels, testApi } from '../llm.js';
 import { DEFAULT_PROMPTS, PROMPT_LABELS, PROMPT_PLACEHOLDERS } from '../prompts.js';
-import { countSpecLeaves, specSummaryText } from '../statusbar.js';
+import { countSpecLeaves, isOwnServerImage, portraitUrlList, serverPortraitHint, specSummaryText } from '../statusbar.js';
 import { STATUSBAR_THEMES, buildPreviewSrcdoc } from '../statusbar-runtime.js';
 import {
     STATUS_TEMPLATE_MODE_LABELS, STATUS_TEMPLATE_NAME_MAX, duplicateStatusBarTemplate, exportStatusBarTemplate, getStatusBarTemplate,
@@ -14,6 +14,7 @@ import {
 } from '../statusbar-templates.js';
 import { downloadFile, pickFile, readFileAsText, structuredCloneSafe } from '../utils.js';
 import { alertDialog, bindSettings, busy, chainPreviewHtml, confirmDialog, emptyState, esc, icon, openDialog, optionList, qs } from './common.js';
+import { previewSrcMap } from './portrait-files.js';
 import { templateNameProblem, varCountText } from './statusbar-dialog.js';
 
 const DIRECT_MODES = ['openai', 'deepseek', 'gemini', 'anthropic'];
@@ -250,7 +251,15 @@ export async function openStatusBarTemplateLibrary() {
         f.setAttribute('referrerpolicy', 'no-referrer');
         f.setAttribute('title', `「${t.name}」预览`);
         f.style.cssText = 'display:block;width:100%;height:180px;border:0;background:transparent';
-        f.srcdoc = buildPreviewSrcdoc(templatePreviewCard(t, { charName }), t.sample || undefined, { user: userName, char: charName });
+        const card = templatePreviewCard(t, { charName });
+        const show = (srcMap = {}) => {
+            f.srcdoc = buildPreviewSrcdoc(card, t.sample || undefined, { user: userName, char: charName, srcMap });
+        };
+        // 模板带的立绘是 NovelLoom 上传到酒馆服务器的图时：沙箱里可能读不到，先取来换成 data:image 再显示（取的时候换了模板就不管了）；
+        // 只列了图库里别的文件的模板不去读（见 previewSrcMap）
+        const urls = portraitUrlList(card.statusBar.portraits);
+        if (urls.some(isOwnServerImage)) previewSrcMap(urls).then((m) => frame === f && show(m), () => frame === f && show());
+        else show();
         stage.appendChild(f);
         frame = f;
     };
@@ -319,15 +328,21 @@ export async function openStatusBarTemplateLibrary() {
                 case 'import': {
                     const file = await pickFile('.json,application/json');
                     if (!file) return undefined;
-                    const created = importStatusBarTemplate(app.settings, await readFileAsText(file));
+                    const warnings = [];
+                    const created = importStatusBarTemplate(app.settings, await readFileAsText(file), { warnings });
                     app.saveSettings();
                     app.log(`已导入状态栏模板「${created.name}」`, 'success');
+                    for (const w of warnings) app.log(w, 'warn');
                     return select(created.id);
                 }
-                case 'export':
+                case 'export': {
                     if (!t) return undefined;
                     downloadFile(JSON.stringify(exportStatusBarTemplate(t), null, 2), statusBarTemplateFileName(t));
+                    // 模板带的立绘有存在酒馆服务器上的：提醒分享出去不会跟着走（不阻止导出）
+                    const hint = serverPortraitHint(t.portraits, 'template');
+                    if (hint) app.log(hint, 'warn');
                     return undefined;
+                }
                 case 'duplicate': {
                     if (!t) return undefined;
                     const copy = duplicateStatusBarTemplate(app.settings, t.id);
@@ -782,9 +797,10 @@ export const settingsTab = {
                     const file = await pickFile('.json,application/json');
                     if (!file) return;
                     try {
-                        applyConfig(s, JSON.parse(await readFileAsText(file)));
+                        const { warnings } = applyConfig(s, JSON.parse(await readFileAsText(file)));
                         app.saveSettings();
                         app.log('已导入配置', 'success');
+                        for (const w of warnings) app.log(w, 'warn');
                         render();
                     } catch (err) {
                         await openDialog({ title: '导入失败', body: esc(err.message) });

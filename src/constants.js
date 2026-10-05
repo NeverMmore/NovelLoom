@@ -2,7 +2,7 @@
 
 export const MODULE = 'novel_loom';
 export const PREFIX = 'nl';
-export const VERSION = '0.12.0';
+export const VERSION = '0.13.0';
 export const DB_NAME = 'NovelLoomDB';
 export const DB_VERSION = 1;
 
@@ -112,6 +112,7 @@ export const DEFAULT_STATUS_BAR = {
     foldUpdate: true, // 聊天里把 <UpdateVariable> 块折叠成 <details>
     greetingTag: true, // 导出时给开场白末尾加 <StatusPlaceHolderImpl/>，开场白也显示状态栏
     usageNote: true, // 导出时在作者备注里追加使用说明
+    portraitStore: 'server', // 立绘「选择本地图片」存到哪儿：server = 酒馆服务器（user/images/角色名/，不限大小但不随卡分享）；embed = 压缩后嵌进卡片
 };
 
 export const DEFAULT_SETTINGS = {

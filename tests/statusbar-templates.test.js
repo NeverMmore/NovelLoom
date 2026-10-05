@@ -17,7 +17,7 @@ import {
 import {
     STATUS_MODE_LABELS, buildInitialState, buildStatusRegexReplace, buildStatusRegexScripts, compileSchemaScript, countSpecLeaves,
     ensureStatusBar, isFrontendText, lintStatusHtml, normalizePortraits, normalizeStatusSpec, parseStateWithSpec, portraitCandidates,
-    portraitSampleCandidates, seedRecordEntries, unwrapStatusFence,
+    portraitChoiceId, portraitSampleCandidates, seedRecordEntries, unwrapStatusFence,
 } from '../src/statusbar.js';
 import { buildPreviewSrcdoc, cleanFragment, compileStatusDocument, renderDefaultFragment } from '../src/statusbar-runtime.js';
 import { DEFAULT_SETTINGS, DEFAULT_STATUS_BAR } from '../src/constants.js';
@@ -816,7 +816,7 @@ test('多人群像模板（运行时）+ 立绘：卡片和详情显示已解锁
     d.click(cards[0].querySelector('.qx-swap'));
     assert.equal(imgOf(cards[0]).getAttribute('src'), PNG_A);
     assert.ok(!d.querySelector('.qx-stage').classList.contains('is-open'), '换一张不会打开详情');
-    assert.equal(env.window.localStorage.getItem('nl-sb:c1:沈遥'), PNG_A);
+    assert.equal(env.window.localStorage.getItem('nl-sb:c1:沈遥'), portraitChoiceId(PNG_A), '内嵌图片记短 id，不记整个 data: 地址');
     assert.equal(imgOf(d.querySelectorAll('.qx-dt')[0]).getAttribute('src'), PNG_A, '详情里的立绘一起换');
     d.click(cards[0].querySelector('.qx-open'));
     assert.equal(d.querySelectorAll('.qx-dt').filter((x) => !x.hidden).length, 1);

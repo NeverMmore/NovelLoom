@@ -9,8 +9,8 @@
 
 import { DEFAULT_STATUS_BAR } from './constants.js';
 import {
-    STATUS_MODE_LABELS, countSpecLeaves, ensureStatusBar, isFrontendText, isWorldCard, lintStatusHtml, normalizePortraits, normalizeStatusSpec,
-    portraitsActive, seedWorldCastEntries, statusBarCharName, unwrapStatusFence,
+    STATUS_MODE_LABELS, TEMPLATE_PORTRAIT_LIMITS, countSpecLeaves, ensureStatusBar, isFrontendText, isWorldCard, lintStatusHtml, normalizePortraits,
+    normalizeStatusSpec, portraitsActive, seedWorldCastEntries, statusBarCharName, unwrapStatusFence,
 } from './statusbar.js';
 import { STATUSBAR_THEMES, cleanFragment, renderDefaultFragment } from './statusbar-runtime.js';
 import { safeFileName, uid } from './utils.js';
@@ -1073,10 +1073,17 @@ function templateCapValue(v) {
     return Math.min(TEMPLATE_VAR_CAP_MAX, Math.max(TEMPLATE_VAR_CAP_MIN, Math.floor(n)));
 }
 
-/** 模板里的立绘设置：规整后至少有一张图才保留，否则 null */
-function templatePortraits(raw) {
+/**
+ * 模板里的立绘设置：按模板的内嵌图片上限规整（TEMPLATE_PORTRAIT_LIMITS：模板存在扩展设置里，每张 / 合计都比卡片小，
+ * 超出的内嵌图片丢掉并提示改存到酒馆服务器），至少有一张图才保留，否则 null。
+ * @param {object} raw
+ * @param {string[]|null} [warnings] 收集丢弃的原因（带「模板的立绘：」前缀）
+ */
+export function templatePortraits(raw, warnings = null) {
     if (!isObj(raw)) return null;
-    const p = normalizePortraits(raw);
+    const w = [];
+    const p = normalizePortraits(raw, { warnings: w, ...TEMPLATE_PORTRAIT_LIMITS });
+    if (warnings) for (const x of w) warnings.push(`模板的立绘：${x}`);
     return portraitsActive(p) ? p : null;
 }
 
@@ -1118,10 +1125,11 @@ export function statusBarVarCap(card, settings = null, { leaves = null } = {}) {
 
 /**
  * 把任意来源的模板数据规整成存储形状（不含 id/时间）；strict 时缺名称、没内容、界面过大会抛错。
- * maxVars：模板自带的变量上限（3~30）或 null；portraits：至少有一张图的立绘设置或 null。
+ * maxVars：模板自带的变量上限（3~30）或 null；portraits：至少有一张图的立绘设置或 null（按模板的内嵌图片上限，见 templatePortraits）。
+ * warnings：收集立绘被丢掉的原因（内嵌图片超过模板的上限等）。
  * @returns {{name:string, desc:string, mode:string, spec:object|null, html:string, theme:string, sample:object|null, maxVars:number|null, portraits:object|null}}
  */
-function cleanTemplateData(data, { strict = true } = {}) {
+function cleanTemplateData(data, { strict = true, warnings = null } = {}) {
     const src = isObj(data) ? data : {};
     const name = cleanName(src.name);
     const html = typeof src.html === 'string' ? src.html : '';
@@ -1136,7 +1144,7 @@ function cleanTemplateData(data, { strict = true } = {}) {
         theme: THEMES.includes(src.theme) ? src.theme : 'clean',
         sample: isObj(src.sample) ? clone(src.sample) : null,
         maxVars: templateCapValue(src.maxVars),
-        portraits: templatePortraits(src.portraits),
+        portraits: templatePortraits(src.portraits, warnings),
     };
     if (strict) {
         if (!out.name) throw new Error('请输入模板名称');
@@ -1211,10 +1219,11 @@ export function getStatusBarTemplate(settings, id) {
 /**
  * 新建用户模板（名称必填、去首尾空白、不能与已有模板重名，不分大小写）。
  * @param {{name:string, desc?:string, mode?:string, spec?:object|null, html?:string, theme?:string, sample?:object|null}} data
+ * @param {{warnings?: string[]}} [opt] warnings：收集立绘被丢掉的原因（超过模板上限的内嵌图片）
  * @returns {object} 存进 settings.statusBarTemplates 的对象（id 为 sbtpl_…）
  */
-export function addStatusBarTemplate(settings, data) {
-    const t = cleanTemplateData(data);
+export function addStatusBarTemplate(settings, data, { warnings = null } = {}) {
+    const t = cleanTemplateData(data, { warnings });
     assertUniqueName(settings, t.name);
     const now = Date.now();
     const item = { id: uid('sbtpl_'), ...t, createdAt: now, updatedAt: now };
@@ -1259,8 +1268,9 @@ export function duplicateStatusBarTemplate(settings, id, name = '') {
  * 把卡片当前的状态栏做成模板数据（还没保存；保存用 addStatusBarTemplate）。
  * 变量多于默认上限（12）时记下模板自带的上限 maxVars（= 变量数，最多 30），别处套用时不会被截掉。
  * 立绘是用户自己的图片地址，默认不带；portraits: true 时连同立绘设置一起（至少有一张图才带）。
+ * 模板的内嵌图片上限比卡片小（TEMPLATE_PORTRAIT_LIMITS）：超出的内嵌图片丢掉，原因写进 warnings（建议先改存到酒馆服务器）。
  */
-export function templateFromStatusBar(card, { name = '', desc = '', portraits = false } = {}) {
+export function templateFromStatusBar(card, { name = '', desc = '', portraits = false, warnings = null } = {}) {
     const sb = card?.statusBar || {};
     const html = typeof sb.html === 'string' ? sb.html : '';
     let mode = STATUS_TEMPLATE_MODES.includes(sb.mode) ? sb.mode : 'bind';
@@ -1275,7 +1285,7 @@ export function templateFromStatusBar(card, { name = '', desc = '', portraits = 
         theme: THEMES.includes(sb.theme) ? sb.theme : 'clean',
         sample: isObj(sb.sample) ? clone(sb.sample) : null,
         maxVars: neededVarCap(spec),
-        portraits: portraits ? templatePortraits(sb.portraits) : null,
+        portraits: portraits ? templatePortraits(sb.portraits, warnings) : null,
     };
 }
 
@@ -1457,9 +1467,10 @@ export function findStatusBarRegex(scripts) {
 
 /**
  * 从角色卡 JSON（V2/V3）里取状态栏：优先 NovelLoom 写的 extensions.novel_loom.statusBar，其次是显示 <StatusPlaceHolderImpl/> 的正则。
- * NovelLoom 的卡带了立绘设置（statusBar.portraits，至少一张图）时一起带上；变量多于默认上限时记下模板自带的上限。
+ * NovelLoom 的卡带了立绘设置（statusBar.portraits，至少一张图）时一起带上（按模板的内嵌图片上限，丢掉的写进 warnings）；
+ * 变量多于默认上限时记下模板自带的上限。
  */
-export function templateFromCardJson(json) {
+export function templateFromCardJson(json, { warnings = null } = {}) {
     const data = isObj(json.data) ? json.data : json;
     const charName = cleanName(data.name || json.name || '');
     const name = charName ? `${charName}的状态栏` : '导入的状态栏';
@@ -1468,7 +1479,7 @@ export function templateFromCardJson(json) {
         const spec = normalizeTemplateSpec(meta.spec);
         return {
             name, desc: '', mode: meta.mode, spec: meta.spec, html: meta.html, theme: meta.theme, sample: null,
-            maxVars: neededVarCap(spec), portraits: templatePortraits(meta.portraits),
+            maxVars: neededVarCap(spec), portraits: templatePortraits(meta.portraits, warnings),
         };
     }
     const bar = findStatusBarRegex(data.extensions?.regex_scripts);
@@ -1480,10 +1491,11 @@ export function templateFromCardJson(json) {
 
 /**
  * 解析导入的 JSON：NovelLoom 状态栏模板文件、带 name 与 spec/html 的模板对象、或角色卡 JSON（也可以直接传 JSON 文本）。
+ * @param {{warnings?: string[]}} [opt] warnings：收集立绘被丢掉的原因（超过模板上限的内嵌图片、不合法的地址）
  * @returns {object} 模板数据（没有 id；保存用 addStatusBarTemplate，或直接用 importStatusBarTemplate）
  * @throws {Error} 认不出格式或内容不完整时
  */
-export function parseStatusBarTemplate(input) {
+export function parseStatusBarTemplate(input, { warnings = null } = {}) {
     let json = input;
     if (typeof json === 'string') {
         try {
@@ -1495,15 +1507,15 @@ export function parseStatusBarTemplate(input) {
     if (!isObj(json)) throw new Error('不是 NovelLoom 状态栏模板文件');
     let data;
     if (json.type === STATUS_TEMPLATE_FILE_TYPE) data = json;
-    else if (/^chara_card_v[23]$/.test(String(json.spec || '')) || (isObj(json.data) && (json.data.extensions || json.data.first_mes !== undefined))) data = templateFromCardJson(json);
+    else if (/^chara_card_v[23]$/.test(String(json.spec || '')) || (isObj(json.data) && (json.data.extensions || json.data.first_mes !== undefined))) data = templateFromCardJson(json, { warnings });
     else if (('spec' in json || 'html' in json) && ('name' in json || 'mode' in json)) data = json;
     else throw new Error('不是 NovelLoom 状态栏模板文件');
-    return cleanTemplateData({ ...data, name: cleanName(data.name) || '导入的状态栏模板' });
+    return cleanTemplateData({ ...data, name: cleanName(data.name) || '导入的状态栏模板' }, { warnings });
 }
 
-/** 导入并保存一个模板；与已有模板重名时自动改名（「名字 2」…） */
-export function importStatusBarTemplate(settings, json) {
-    const data = parseStatusBarTemplate(json);
+/** 导入并保存一个模板；与已有模板重名时自动改名（「名字 2」…）。warnings 收集立绘被丢掉的原因 */
+export function importStatusBarTemplate(settings, json, { warnings = null } = {}) {
+    const data = parseStatusBarTemplate(json, { warnings });
     data.name = uniqueStatusBarTemplateName(settings, data.name);
     return addStatusBarTemplate(settings, data);
 }

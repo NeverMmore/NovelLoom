@@ -12,7 +12,7 @@ import { getVolumes, IMPORTANCE_RANK } from '../project.js';
 import { errorText } from '../llm.js';
 import { blobToDataUrl, dataUrlToBlob, defaultWorldName, prepareCard, publishCard, statusBarWorldName } from '../publish.js';
 import { characterExistsInST, openCharacterInST } from '../stio.js';
-import { castRecordPath, statusBarActive } from '../statusbar.js';
+import { castRecordPath, serverPortraitHint, statusBarActive } from '../statusbar.js';
 import { getStatusBarTemplate } from '../statusbar-templates.js';
 import { bannedRulesFor, getStyleProfile } from '../style.js';
 import { greetingText, testChatReply } from '../testchat.js';
@@ -136,6 +136,12 @@ export function statusBarButtonTitle(card) {
     return card?.kind === 'world'
         ? 'MVU 变量状态栏（为整个群像设计）：变量、更新规则、界面、立绘、预览'
         : 'MVU 变量状态栏：变量、更新规则、界面、立绘、预览';
+}
+
+/** 导出 JSON / PNG 后：状态栏的立绘有存在酒馆服务器上的，提醒分享出去不会跟着走（不阻止导出） */
+function exportPortraitHint(card) {
+    const hint = statusBarActive(card) ? serverPortraitHint(card.statusBar?.portraits) : '';
+    if (hint) app.log(`「${card.data?.name || ''}」：${hint}`, 'warn');
 }
 
 export const cardsTab = {
@@ -993,14 +999,17 @@ export const cardsTab = {
                         return alertDialog(errorText(err), '导出失败');
                     }
                     downloadFile(JSON.stringify(json, null, 2), `${safeFileName(card.data.name)}.json`);
+                    exportPortraitHint(card);
                     return;
                 }
                 case 'png': {
-                    await busy(btn, async () => {
+                    const ok = await busy(btn, async () => {
                         const { json } = prepareCard(p, app.settings, card);
                         const blob = await buildPngCard(json, card.avatarDataUrl ? await dataUrlToBlob(card.avatarDataUrl) : null);
                         downloadFile(blob, `${safeFileName(card.data.name)}.png`, 'image/png');
+                        return true;
                     });
+                    if (ok) exportPortraitHint(card);
                     return;
                 }
                 case 'delete':

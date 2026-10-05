@@ -180,7 +180,25 @@ document.getElementById('send_but').addEventListener('click', () => {
   setTimeout(() => { stop.style.display = 'none'; }, 600);
 });
 const origFetch = window.fetch.bind(window);
+// 酒馆的图片上传（POST /api/images/upload）：上传的内容记在内存里（window.__uploads），按酒馆的规则返回 {path}；
+// window.__uploadFail = 500 之类的状态码时返回失败，= 'network' 时模拟连不上；window.__onUpload(path, base64) 存在时先交给它（测试脚本用来提供 GET /user/images/**）；
+// window.__uploadGate 是一个 Promise 时等它兑现后再处理（测试脚本用来让上传「卡住」，在处理期间删改、关闭对话框）；
+// 读酒馆图片（GET /user/images/…，由测试脚本的 page.route 提供）同样可以用 window.__imageGate 卡住
+window.__uploads = [];
+const sanitizeName = (s) => String(s || '').replace(/[\/\?<>\\:\*\|"]/g, '').replace(/[\x00-\x1f\x80-\x9f]/g, '').replace(/^\.+$/, '').replace(/[\. ]+$/, '');
 window.fetch = async (url, init) => {
+  if (String(url).includes('/api/images/upload')) {
+    if (window.__uploadGate) await window.__uploadGate;
+    if (window.__uploadFail === 'network') throw new TypeError('Failed to fetch');
+    if (window.__uploadFail) return new Response(JSON.stringify({ error: 'Failed to save the image' }), { status: Number(window.__uploadFail), headers: { 'Content-Type': 'application/json' } });
+    const body = JSON.parse(init.body);
+    const file = sanitizeName(String(body.filename || Date.now()).replace(/\.[^.]+$/, '') + '.' + body.format);
+    const path = '/user/images/' + (body.ch_name ? sanitizeName(body.ch_name) + '/' : '') + file;
+    window.__uploads.push({ ...body, headers: init.headers, path });
+    if (typeof window.__onUpload === 'function') await window.__onUpload(path, body.image);
+    return new Response(JSON.stringify({ path }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  if (String(url).includes('/user/images/') && window.__imageGate) await window.__imageGate;
   if (String(url).includes('/api/characters/import')) {
     const form = init.body;
     const file = form.get('avatar');

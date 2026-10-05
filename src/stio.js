@@ -143,6 +143,60 @@ export async function groupExistsInST(id) {
     }
 }
 
+/** 上传图片到酒馆失败：status 是 HTTP 状态码（连不上酒馆时为 0），message 是给用户看的中文说明 */
+export class ImageUploadError extends Error {
+    constructor(message, status = 0) {
+        super(message);
+        this.name = 'ImageUploadError';
+        this.status = status;
+    }
+}
+
+/** 上传失败的状态码 → 中文说明 */
+export function uploadErrorText(status, detail = '') {
+    const tail = detail ? `：${String(detail).slice(0, 80)}` : '';
+    if (!status) return '连不上酒馆服务器（网络断开，或者酒馆没有在运行）';
+    if (status === 401 || status === 403) return `酒馆拒绝了上传（HTTP ${status}：登录可能已过期，刷新酒馆页面后再试）`;
+    if (status === 413) return '图片太大，酒馆拒绝接收（HTTP 413）';
+    if (status === 404) return '这个酒馆版本没有图片上传接口（HTTP 404）';
+    if (status === 400) return `酒馆不接受这张图片（HTTP 400${tail}）`;
+    if (status >= 500) return `酒馆保存图片失败（HTTP ${status}${tail}）`;
+    return `上传失败（HTTP ${status}${tail}）`;
+}
+
+/**
+ * 上传一张图片到酒馆（POST /api/images/upload，与酒馆自己的 saveBase64AsFile 一样的请求体，带 CSRF 请求头）。
+ * 酒馆把它存成 user/images/<folder>/<filename>.<format>（文件夹名、文件名按 sanitize-filename 处理；同名覆盖）。
+ * 从不调用删除接口：删掉的立绘仍留在这个角色的图库里。
+ * @param {{base64: string, format: string, folder?: string, filename?: string}} img base64 不带 data: 前缀；format 是扩展名（png / jpg / webp / gif / bmp）
+ * @returns {Promise<string>} 酒馆返回的路径（'/user/images/…'，没有编码）
+ * @throws {ImageUploadError}
+ */
+export async function uploadImageToST({ base64, format, folder = '', filename = '' }) {
+    let h;
+    try {
+        h = headers();
+    } catch {
+        throw new ImageUploadError(uploadErrorText(0), 0);
+    }
+    const body = { image: base64, format };
+    if (folder) body.ch_name = folder;
+    if (filename) body.filename = filename;
+    let res;
+    try {
+        res = await fetch('/api/images/upload', { method: 'POST', headers: h, body: JSON.stringify(body) });
+    } catch {
+        throw new ImageUploadError(uploadErrorText(0), 0);
+    }
+    if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new ImageUploadError(uploadErrorText(res.status, typeof data?.error === 'string' ? data.error : ''), res.status);
+    }
+    const data = await res.json().catch(() => null);
+    if (typeof data?.path !== 'string' || !data.path) throw new ImageUploadError('酒馆没有返回图片的保存路径', res.status);
+    return data.path;
+}
+
 export function toast(type, message, title = 'NovelLoom') {
     const t = globalThis.toastr;
     if (t?.[type]) t[type](message, title);

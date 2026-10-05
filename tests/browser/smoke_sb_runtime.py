@@ -64,7 +64,10 @@ try:
         frame.locator('.card').first.locator('.swap').click()
         r = q("return { src: d.querySelector('.card .pt').getAttribute('src'), clicked: d.body.getAttribute('data-card-clicked'), stored: w.localStorage.getItem('nl-sb:card_rt:莉艾丽') };")
         print(r)
-        assert r['src'] == docs['PNG1'] and r['clicked'] is None and r['stored'] == docs['PNG1']
+        # 内嵌图片（data:）记的是短 id（portraitChoiceId），不把整个 data: 地址塞进酒馆页面的本地存储
+        png1_id = page.evaluate("async (u) => (await import('/src/statusbar-portraits.js')).portraitChoiceId(u)", docs['PNG1'])
+        assert png1_id.startswith('nl#') and len(png1_id) < 30, png1_id
+        assert r['src'] == docs['PNG1'] and r['clicked'] is None and r['stored'] == png1_id
         frame.locator('.card').first.locator('.swap').click()
         r = q("return { src: d.querySelector('.card .pt').getAttribute('src'), stored: w.localStorage.getItem('nl-sb:card_rt:莉艾丽') };")
         assert r['src'] == docs['PNG2'] and r['stored'] is None, '回到默认那张时不再记着'

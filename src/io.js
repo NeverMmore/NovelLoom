@@ -1,7 +1,9 @@
 // 导入导出：任务（完整项目）、配置、世界书、大纲、角色资料
 
-import { VERSION } from './constants.js';
+import { DEFAULT_STATUS_BAR, VERSION } from './constants.js';
 import { buildOutlineText, characterProfileText, getVolumes, mergeEntry, normalizeProject } from './project.js';
+import { PORTRAIT_STORE_MODES } from './statusbar-portraits.js';
+import { templatePortraits } from './statusbar-templates.js';
 import { buildWorldbookEntries, parseExternalWorld, toSTWorld } from './worldbook.js';
 import { downloadFile, safeFileName, structuredCloneSafe, uid } from './utils.js';
 
@@ -31,6 +33,10 @@ export function exportConfig(settings, { includeKeys = false } = {}) {
     downloadFile(JSON.stringify({ type: 'novel_loom_config', version: VERSION, settings: s }, null, 2), 'NovelLoom-config.json');
 }
 
+/**
+ * 导入配置：各部分按字段合并，跨项目共享的列表按 id 合并。
+ * @returns {{warnings: string[]}} 导入时被修正的地方（状态栏模板里超过上限的内嵌立绘等）
+ */
 export function applyConfig(settings, json) {
     const s = json?.type === 'novel_loom_config' ? json.settings : json;
     if (!s || typeof s !== 'object') throw new Error('不是 NovelLoom 配置文件');
@@ -56,12 +62,23 @@ export function applyConfig(settings, json) {
             settings[key] = { ...settings[key], ...structuredCloneSafe(s[key]) };
         }
     }
+    // 立绘「选择本地图片」的默认存法只有两种，其他值回到默认（酒馆服务器）
+    if (settings.statusBar && typeof settings.statusBar === 'object' && !PORTRAIT_STORE_MODES.includes(settings.statusBar.portraitStore)) {
+        settings.statusBar.portraitStore = DEFAULT_STATUS_BAR.portraitStore;
+    }
+    const warnings = [];
     // 跨项目共享的自定义列表：按 id 合并，不覆盖本机已有的其他项
     for (const [key, idKey] of [['customRelationTypes', 'value'], ['relationTemplates', 'id'], ['branchTemplates', 'id'], ['statusBarTemplates', 'id']]) {
         if (!Array.isArray(s[key])) continue;
         const cur = Array.isArray(settings[key]) ? settings[key] : [];
         for (const item of structuredCloneSafe(s[key])) {
             if (!item?.[idKey]) continue;
+            // 状态栏模板带的立绘按模板的内嵌图片上限规整（模板存在扩展设置里，比卡片的上限小），超出的丢掉并提示
+            if (key === 'statusBarTemplates' && item.portraits !== undefined && item.portraits !== null) {
+                const w = [];
+                item.portraits = templatePortraits(item.portraits, w);
+                for (const x of w) warnings.push(`状态栏模板「${String(item.name ?? '').slice(0, 30)}」：${x}`);
+            }
             const i = cur.findIndex((x) => x?.[idKey] === item[idKey]);
             if (i >= 0) cur[i] = item;
             else cur.push(item);
@@ -69,6 +86,7 @@ export function applyConfig(settings, json) {
         settings[key] = cur;
     }
     settings.chatgen.isRunning = false;
+    return { warnings };
 }
 
 /**

@@ -19,8 +19,11 @@ export {
     simulateStRegexReplace, splitPath, unwrapStatusFence, wrapStatusFence,
 } from './statusbar-base.js';
 export {
-    PORTRAIT_DATA_TOTAL_MAX, PORTRAIT_DATA_URL_MAX, PORTRAIT_LIMITS, PORTRAIT_OPS, PORTRAIT_URL_MAX, PORTRAIT_WHEN_TEXT_MAX, emptyPortraits, normalizePortraits,
-    portraitHash, portraitInitial, portraitNameProblem, portraitUrlProblem, portraitsActive, resolvePortrait,
+    NL_SERVER_IMAGE_RE, PORTRAIT_DATA_TOTAL_MAX, PORTRAIT_DATA_URL_MAX, PORTRAIT_LIMITS, PORTRAIT_OPS, PORTRAIT_STORE_MODES, PORTRAIT_URL_MAX,
+    PORTRAIT_WHEN_TEXT_MAX, SERVER_IMAGE_PREFIX, TEMPLATE_PORTRAIT_DATA_TOTAL_MAX, TEMPLATE_PORTRAIT_DATA_URL_MAX, TEMPLATE_PORTRAIT_LIMITS, emptyPortraits,
+    isOwnServerImage, normalizePortraits, normalizeServerPortraitInput, portraitChoiceId, portraitHash, portraitInitial, portraitNameProblem,
+    portraitStorageStats, portraitStoreOf, portraitUrlKind, portraitUrlList, portraitUrlProblem, portraitsActive, resolvePortrait, serverPathProblem,
+    serverPortraitHint, serverPortraitUrl,
 } from './statusbar-portraits.js';
 
 export const STATUS_BAR_VERSION = 1;

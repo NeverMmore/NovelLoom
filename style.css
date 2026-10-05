@@ -782,6 +782,8 @@ h4.nl-role-system, h4.nl-role-user, h4.nl-role-assistant { display: flex; align-
 
 /* 让 hidden 属性在设置了 display 的元素上也生效 */
 .nl-root [hidden], .nl-dialog-overlay [hidden] { display: none !important; }
+/* 只给读屏看（播报处理结果的固定区域） */
+.nl-sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
 
 /* ---------------- 状态栏（MVU 变量） ---------------- */
 .nl-sb-form { margin-top: var(--nl-s2); padding-top: var(--nl-s2); border-top: 1px solid var(--nl-line); }
@@ -881,7 +883,29 @@ h4.nl-role-system, h4.nl-role-user, h4.nl-role-assistant { display: flex; align-
 .nl-sb-pt-name { width: 180px; flex: none; font-weight: 600; }
 .nl-sb-pt-imgs, .nl-sb-pool-vals { display: flex; flex-direction: column; }
 .nl-sb-pt-img { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--nl-s3); align-items: start; padding: var(--nl-s2) 0; border-top: 1px solid var(--nl-line); }
-.nl-sb-pt-img.is-current > .nl-sb-thumb { border-color: var(--nl-accent-line); }
+.nl-sb-pt-img.is-current .nl-sb-pt-thumbcol > .nl-sb-thumb { border-color: var(--nl-accent-line); }
+/* 缩略图一列：图片 + 底下标出存在哪儿（图床 / 酒馆 / 内嵌 + 大小）；固定宽度，每行的地址框对齐 */
+.nl-sb-pt-thumbcol { display: flex; flex-direction: column; align-items: center; gap: var(--nl-s1); width: calc(72px * var(--nl-scale)); }
+/* 宽度随字号放大（「内嵌 37.3K」在各档字号下都放得下）；万一还放不下就省略号，完整大小在 title 里 */
+.nl-sb-kind { display: inline-block; max-width: 100%; height: 18px; padding: 0 6px; overflow: hidden; text-overflow: ellipsis; border-radius: 999px; background: var(--nl-surface-2); color: var(--nl-text-2); font-size: var(--nl-fs-xs); line-height: 18px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* 「本地图片存到」：存法切换、两种存法的区别、内嵌图片用量 */
+.nl-sb-pt-store { display: flex; flex-direction: column; gap: var(--nl-s2); padding: var(--nl-s2) var(--nl-s3) var(--nl-s3); border: 1px solid var(--nl-line); border-radius: var(--nl-r); }
+.nl-sb-pt-store-label { color: var(--nl-text-2); font-weight: 500; }
+.nl-sb-pt-meter { display: inline-flex; align-items: center; gap: var(--nl-s2); color: var(--nl-text-2); }
+.nl-sb-pt-meter-bar { display: block; width: 96px; height: 6px; overflow: hidden; border-radius: 3px; background: var(--nl-surface-2); }
+.nl-sb-pt-meter-bar > i { display: block; height: 100%; border-radius: inherit; background: color-mix(in srgb, var(--nl-accent) 40%, transparent); }
+.nl-sb-pt-meter[data-level="warn"] { color: var(--nl-warn); }
+.nl-sb-pt-meter[data-level="warn"] .nl-sb-pt-meter-bar > i { background: var(--nl-warn); }
+/* 选择本地图片 / 转换的结果：一行图标 + 说明（上传失败时带「改成嵌进卡片」） */
+.nl-sb-pt-local { display: flex; align-items: flex-start; gap: 6px; }
+.nl-sb-pt-local:empty { display: none; }
+.nl-sb-pt-local-ico { display: inline-flex; align-items: center; min-height: 18px; }
+.nl-sb-pt-local > .nl-btn { flex-shrink: 0; }
+/* 相机、截图的文件名常常是一长串不带空格的字：允许在任意处折行，不压到右边的按钮上 */
+.nl-sb-pt-local > .nl-grow { overflow-wrap: anywhere; }
+.nl-sb-pool-local { gap: var(--nl-s2); }
+/* 拖着图片经过可以放下的地方 */
+[data-sb-pt-drop].is-drop { outline: 1px dashed var(--nl-accent-line); outline-offset: 2px; background: color-mix(in srgb, var(--nl-accent) 6%, transparent); border-radius: var(--nl-r); }
 .nl-sb-pt-img.is-bad .nl-input[data-sb-pt="url"] { border-color: color-mix(in srgb, var(--nl-err) 55%, transparent); }
 .nl-sb-pt-fields { display: flex; flex-direction: column; gap: var(--nl-s1); min-width: 0; }
 .nl-sb-pt-label { width: 140px; flex: none; }
@@ -895,6 +919,13 @@ h4.nl-role-system, h4.nl-role-user, h4.nl-role-assistant { display: flex; align-
 .nl-sb-pt-pool > .nl-field { margin: 0; }
 .nl-sb-thumbs { display: flex; flex-wrap: wrap; gap: var(--nl-s1); }
 .nl-sb-thumbs:empty { display: none; }
+/* 图池的文本框：一张图一行不折行（内嵌图片的 base64 很长，横向滚动，行与行的分界看得清）；
+   下面每张缩略图对应一行，带存放位置和删除 */
+.nl-sb-pool-ta { white-space: pre; overflow-x: auto; overflow-wrap: normal; }
+.nl-sb-pool-thumb { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; }
+.nl-sb-pool-thumb-foot { display: flex; align-items: center; gap: 2px; max-width: calc(96px * var(--nl-scale)); }
+.nl-sb-pool-thumb-foot > .nl-sb-kind { min-width: 0; }
+.nl-sb-pool-thumb-foot > .nl-icon-btn { flex-shrink: 0; min-width: 22px; height: 22px; padding: 0 4px; }
 /* 缩略图：底下是名字首字的占位，图片盖在上面；加载失败 / 地址不合法时换成警告图标 */
 .nl-sb-thumb { position: relative; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 48px; height: 64px; overflow: hidden; border: 1px solid var(--nl-line); border-radius: var(--nl-r-sm); background: var(--nl-surface-2); color: var(--nl-text-3); font-size: var(--nl-fs-md); font-weight: 600; }
 .nl-sb-thumb > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
@@ -914,6 +945,10 @@ h4.nl-role-system, h4.nl-role-user, h4.nl-role-assistant { display: flex; align-
     .nl-sb-pt-when > input.nl-input { flex: 1 1 120px; }
     .nl-sb-pool-val { grid-template-columns: minmax(0, 1fr) auto; }
     .nl-sb-pool-val > .nl-sb-pool-urls { grid-column: 1 / -1; grid-row: 2; }
+    /* 窄屏：结果提示里的「改成嵌进卡片」换到下一行靠右，不挤说明文字 */
+    .nl-sb-pt-local { flex-wrap: wrap; }
+    .nl-sb-pt-local > .nl-grow { flex-basis: 160px; }
+    .nl-sb-pt-local > .nl-btn { margin-left: auto; }
 }
 
 /* ---------------- 窄屏 ---------------- */
