@@ -158,9 +158,16 @@ test('buildCardJson：状态栏卡的正则、角色脚本、开场白标签、�
     assert.equal(buildCardJson(c, { statusBar: false }).data.extensions.regex_scripts, undefined);
     // 写进 PNG 的 ccv3 也带着
     const TINY_PNG = Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64'));
-    const png = embedCardInPng(TINY_PNG, json);
-    const text = Buffer.from(png).toString('latin1');
-    const b64 = text.slice(text.indexOf('ccv3') + 5).split('\0')[0].match(/^[A-Za-z0-9+/=]+/)[0];
+    const png = Buffer.from(embedCardInPng(TINY_PNG, json));
+    // 按 PNG chunk 的长度字段取 tEXt 数据（不能用正则截：紧跟的 CRC 字节可能恰好是 base64 字符）
+    let b64 = '';
+    for (let off = 8; off < png.length;) {
+        const len = png.readUInt32BE(off);
+        const type = png.toString('latin1', off + 4, off + 8);
+        const data = png.toString('latin1', off + 8, off + 8 + len);
+        if (type === 'tEXt' && data.startsWith('ccv3\0')) b64 = data.slice(5);
+        off += 12 + len;
+    }
     assert.equal(JSON.parse(Buffer.from(b64, 'base64').toString('utf8')).data.extensions.tavern_helper.scripts.length, 2);
 });
 
