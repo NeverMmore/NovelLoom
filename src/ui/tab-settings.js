@@ -1,7 +1,7 @@
 // 设置页：API、分类、默认条目、状态栏（MVU 变量）与状态栏模板库、提示词模板、配置导入导出
 
 import { app } from '../app.js';
-import { DEFAULT_ANTI_TRUNCATE, DEFAULT_CATEGORIES, DEFAULT_STATUS_BAR, WI_POSITIONS } from '../constants.js';
+import { DEFAULT_ANTI_TRUNCATE, DEFAULT_CATEGORIES, DEFAULT_STATUS_BAR, STATUS_BAR_VAR_CAP, WI_POSITIONS } from '../constants.js';
 import { applyConfig, exportConfig } from '../io.js';
 import { API_MODES, CHAIN_TASKS, DEEPSEEK_DEFAULT_ENDPOINT, DEEPSEEK_MODELS, DEFAULT_CHAIN, GEMINI_SAFETY_OPTIONS, listModels, testApi } from '../llm.js';
 import { DEFAULT_PROMPTS, PROMPT_LABELS, PROMPT_PLACEHOLDERS } from '../prompts.js';
@@ -14,6 +14,8 @@ import {
 } from '../statusbar-templates.js';
 import { downloadFile, pickFile, readFileAsText, structuredCloneSafe } from '../utils.js';
 import { alertDialog, bindSettings, busy, chainPreviewHtml, confirmDialog, emptyState, esc, icon, openDialog, optionList, qs } from './common.js';
+import { listOrientationTemplates } from '../orientation.js';
+import { openOrientationTemplatesDialog } from './orientation-dialog.js';
 import { previewSrcMap } from './portrait-files.js';
 import { templateNameProblem, varCountText } from './statusbar-dialog.js';
 
@@ -62,7 +64,7 @@ const SB_HTML_MODES = [{ value: 'ai', label: 'AI 设计界面' }, { value: 'auto
 const SB_LANGS = [{ value: 'en', label: '英文（省 token）' }, { value: 'zh', label: '中文' }];
 const SB_SHOW_MODES = [{ value: 'one', label: '只最新一层' }, { value: 'n', label: '最新 N 层' }, { value: 'all', label: '每一层' }];
 const SB_KEEP_MODES = [{ value: 'none', label: '全部去掉（省 token）' }, { value: 'k', label: '保留最近 K 轮' }];
-const SB_MAX_VARS = { min: 3, max: 30 };
+const SB_MAX_VARS = STATUS_BAR_VAR_CAP;
 const SB_URL_LABELS = { mvuUrl: 'MVU 脚本地址', zodUrl: '变量结构脚本（mvu_zod）地址' };
 
 function sbConf() {
@@ -112,7 +114,8 @@ function statusBarSection() {
                 <div class="nl-grid2">${urlField('mvuUrl')}${urlField('zodUrl')}</div>
                 <div class="nl-grid3">
                     <div class="nl-field"><label for="nl-sb-maxVars">变量上限 <span class="nl-muted">（${SB_MAX_VARS.min}–${SB_MAX_VARS.max}，记录的每个字段各算一个）</span></label>
-                        <input class="nl-input" id="nl-sb-maxVars" type="number" min="${SB_MAX_VARS.min}" max="${SB_MAX_VARS.max}" step="1" data-sb="maxVars" value="${esc(sb.maxVars ?? DEFAULT_STATUS_BAR.maxVars)}"></div>
+                        <input class="nl-input" id="nl-sb-maxVars" type="number" min="${SB_MAX_VARS.min}" max="${SB_MAX_VARS.max}" step="1" data-sb="maxVars" value="${esc(sb.maxVars ?? DEFAULT_STATUS_BAR.maxVars)}" aria-describedby="nl-sb-maxVars-hint">
+                        <div class="nl-muted nl-small" id="nl-sb-maxVars-hint">变量越多，每轮发送的规则和 AI 输出的更新就越长</div></div>
                     <div class="nl-field"><label for="nl-sb-htmlMode">默认界面</label><select class="nl-input" id="nl-sb-htmlMode" data-setting="statusBar.htmlMode">${optionList(SB_HTML_MODES)}</select></div>
                     <div class="nl-field"><label for="nl-sb-theme">内置排版主题</label><select class="nl-input" id="nl-sb-theme" data-setting="statusBar.theme">${optionList(STATUSBAR_THEMES)}</select></div>
                     <div class="nl-field"><label for="nl-sb-lang">变量分析（Analysis）语言</label><select class="nl-input" id="nl-sb-lang" data-setting="statusBar.analysisLang">${optionList(SB_LANGS)}</select></div>
@@ -131,7 +134,30 @@ function statusBarSection() {
                     <label><input type="checkbox" data-setting="statusBar.foldUpdate"> 聊天里把变量更新块折叠起来</label>
                     <label><input type="checkbox" data-setting="statusBar.greetingTag"> 开场白也显示状态栏</label>
                     <label><input type="checkbox" data-setting="statusBar.usageNote"> 在作者备注里附上使用说明</label>
+                    <label><input type="checkbox" data-setting="cards.autoAllow" aria-describedby="nl-auto-allow-hint"> 写入酒馆后自动允许本卡的局部正则和角色脚本</label>
                 </div>
+                <div class="nl-muted nl-small" id="nl-auto-allow-hint">状态栏要靠本卡的局部正则和酒馆助手脚本运行：勾选后写入时直接替这张卡授权（只改这张卡，不动其他角色），在酒馆里打开时不再逐个询问。</div>
+            </section>`;
+}
+
+// ---------------- 卡的导向模板 ----------------
+
+/** 设置页「卡的导向模板」一节：列出内置与我的模板，按钮打开管理对话框（写卡表单里的「管理导向模板」是同一个） */
+function orientationSection() {
+    const list = listOrientationTemplates(app.settings);
+    const mine = list.filter((t) => !t.builtin);
+    const tag = (t) => `<span class="nl-tag" title="${esc(t.brief)}">${esc(t.name)}</span>`;
+    return `
+            <section class="nl-card" data-orient-settings>
+                <div class="nl-card-head">
+                    <div>
+                        <h3>卡的导向模板</h3>
+                        <div class="nl-card-desc">写卡时可以选一个剧情导向：写卡 AI 按它铺垫性格、场景和开场白，卡自己的世界书里多一条常驻的「剧情导向」词条（默认插在聊天深度 4）。内置模板只读，可以复制成自己的再改；我的模板存在扩展设置里，所有项目共用，可以导入导出。</div>
+                    </div>
+                    <button class="nl-btn nl-sm" data-act="orientation-templates" title="查看、新建、修改、导入导出导向模板">${icon('file')}模板库<span class="nl-muted">（${list.length}）</span></button>
+                </div>
+                <div class="nl-row nl-wrap"><span class="nl-muted nl-small">内置：</span>${list.filter((t) => t.builtin).map(tag).join('')}</div>
+                <div class="nl-row nl-wrap"><span class="nl-muted nl-small">我的：</span>${mine.length ? mine.map(tag).join('') : '<span class="nl-muted nl-small">还没有，在模板库里复制内置模板或新建一个</span>'}</div>
             </section>`;
 }
 
@@ -568,6 +594,7 @@ export const settingsTab = {
                 </div>
             </section>
             ${statusBarSection()}
+            ${orientationSection()}
 
             <section class="nl-card">
                 <div class="nl-card-head"><div><h3>提示词模板</h3></div></div>
@@ -683,6 +710,17 @@ export const settingsTab = {
                     const input = el.querySelector(`[data-setting="statusBar.${key}"]`);
                     if (input) input.value = DEFAULT_STATUS_BAR[key];
                     updateUrlWarn(key);
+                    return;
+                }
+                case 'orientation-templates': {
+                    await openOrientationTemplatesDialog();
+                    const sec = el.querySelector('[data-orient-settings]');
+                    if (sec) {
+                        // 整节重绘会把刚拿回焦点的「模板库」按钮换掉，焦点掉到 <body>：放回新按钮上（键盘用户不会被送回页面顶部）
+                        const hadFocus = sec.contains(document.activeElement);
+                        sec.outerHTML = orientationSection();
+                        if (hadFocus || !document.activeElement || document.activeElement === document.body) el.querySelector('[data-act="orientation-templates"]')?.focus({ preventScroll: true });
+                    }
                     return;
                 }
                 case 'sb-templates': {

@@ -6,6 +6,7 @@
 import { errorText } from '../llm.js';
 import { EMBED_MIN_BUDGET, fmtK, imageFolderName } from '../portrait-image.js';
 import { statusBarWorldName } from '../publish.js';
+import { cardScriptsEnabled } from '../stallow.js';
 import { openCharacterInST, toast } from '../stio.js';
 import {
     GROUP_FIELD_MAX, PORTRAIT_DATA_TOTAL_MAX, PORTRAIT_DATA_URL_MAX, PORTRAIT_LIMITS, PORTRAIT_OPS, RECORD_FIELD_MAX, TEMPLATE_PORTRAIT_DATA_TOTAL_MAX,
@@ -546,6 +547,8 @@ export async function generateStatusBarForCard(card, ctx, { requirement = '', te
 /** 写入酒馆后提示框的正文（底部按钮由 openDialog 提供）；这张卡正是酒馆里当前打开的角色时，最上面提示先换个角色再切回来 */
 export function statusBarPublishHintHtml(card, world = '') {
     const allowed = cardRegexAllowed(card);
+    // 写入时自动授权（设置 cards.autoAllow）已经在酒馆助手里启用了本卡脚本时，这一步标「已启用」
+    const scriptsOn = cardScriptsEnabled(card.stAvatar) === true;
     const jsr = envChecks(card).filter((x) => !x.allow && x.level !== 'ok' && x.level !== 'info');
     const reopen = cardOpenInST(card);
     return `
@@ -555,7 +558,8 @@ export function statusBarPublishHintHtml(card, world = '') {
             <li>${reopen ? '先切换到别的角色，再切回这个角色（或者刷新页面）' : '在酒馆打开这个角色'}。如果弹出「导入内嵌世界书」，选<b>是</b>：变量的初始值和更新规则在世界书「${esc(world)}」里（NovelLoom 已经替你绑定好了）。</li>
             <li>允许本卡的局部正则（酒馆第一次打开时会询问）。
                 ${allowed ? `<span class="nl-ok nl-small">${icon('check', { size: 14 })} 已允许</span>` : '<button class="nl-btn nl-sm" data-act="sb-allow-regex">允许本卡正则</button>'}</li>
-            <li>允许酒馆助手运行本卡的脚本（第一次打开时同样会询问）；拒绝过的话，到 酒馆助手 → 脚本库 → 角色脚本 里启用。</li>
+            <li>允许酒馆助手运行本卡的脚本（第一次打开时同样会询问）；拒绝过的话，到 酒馆助手 → 脚本库 → 角色脚本 里启用。
+                ${scriptsOn ? `<span class="nl-ok nl-small">${icon('check', { size: 14 })} 已启用</span>` : ''}</li>
             <li>使用聊天补全（Chat Completion）接口。</li>
         </ol>
         ${jsr.map(checkLine).join('')}

@@ -353,6 +353,8 @@ try:
         close_dialog(page)
 
         step('写入酒馆：检查导出的卡片与世界书')
+        # 写入后自动授权（设置 cards.autoAllow，默认开）在 smoke_misc_v15.py 里测；这里关掉，测提示框里的「允许本卡正则」
+        page.evaluate('NovelLoom.app.settings.cards.autoAllow = false')
         publish_and_hint(page)
         shot(page, '10-publish-hint')
         card = last_card_json(page)

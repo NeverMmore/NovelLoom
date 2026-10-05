@@ -1,12 +1,20 @@
 // 导入导出：任务（完整项目）、配置、世界书、大纲、角色资料
 
-import { DEFAULT_STATUS_BAR, VERSION } from './constants.js';
+import { DEFAULT_STATUS_BAR, STATUS_BAR_VAR_CAP, VERSION } from './constants.js';
 import { missingNameMarkdown, normalizeNameResolve } from './names.js';
+import { mergeOrientationTemplates } from './orientation.js';
 import { buildOutlineText, characterProfileText, getVolumes, mergeEntry, normalizeProject } from './project.js';
 import { PORTRAIT_STORE_MODES } from './statusbar-portraits.js';
 import { templatePortraits } from './statusbar-templates.js';
 import { buildWorldbookEntries, parseExternalWorld, toSTWorld } from './worldbook.js';
 import { downloadFile, safeFileName, structuredCloneSafe, uid } from './utils.js';
+
+/** 状态栏变量上限（statusBar.maxVars）夹到 3~100 的整数，不是数字时用默认值 */
+export function clampVarCap(v) {
+    const n = Math.round(Number(v));
+    if (v === null || v === '' || typeof v === 'boolean' || !Number.isFinite(n)) return DEFAULT_STATUS_BAR.maxVars;
+    return Math.min(STATUS_BAR_VAR_CAP.max, Math.max(STATUS_BAR_VAR_CAP.min, n));
+}
 
 export function exportTask(project) {
     const data = { type: 'novel_loom_task', version: VERSION, exportedAt: new Date().toISOString(), project };
@@ -67,6 +75,10 @@ export function applyConfig(settings, json) {
     if (settings.statusBar && typeof settings.statusBar === 'object' && !PORTRAIT_STORE_MODES.includes(settings.statusBar.portraitStore)) {
         settings.statusBar.portraitStore = DEFAULT_STATUS_BAR.portraitStore;
     }
+    // 变量上限：3~100 的整数（超出的夹到范围内，旧配置里的 12、30 等原样保留）；不是数字时回到默认
+    if (settings.statusBar && typeof settings.statusBar === 'object' && s.statusBar?.maxVars !== undefined) {
+        settings.statusBar.maxVars = clampVarCap(settings.statusBar.maxVars);
+    }
     // 「AI 推断名称」的选项：候选数 2-6、每批条数、自动填入模式等超出范围的回到合法值
     settings.nameResolve = normalizeNameResolve(settings.nameResolve);
     const warnings = [];
@@ -88,6 +100,8 @@ export function applyConfig(settings, json) {
         }
         settings[key] = cur;
     }
+    // 卡的导向·我的模板：同样按 id 合并，逐个规整（内置模板的 id 跳过）
+    if (Array.isArray(s.orientationTemplates)) mergeOrientationTemplates(settings, structuredCloneSafe(s.orientationTemplates));
     settings.chatgen.isRunning = false;
     return { warnings };
 }

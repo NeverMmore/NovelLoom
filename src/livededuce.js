@@ -142,6 +142,7 @@ export async function generateChatBranches(settings, { signal, count = DEFAULT_B
     const res = await callLLM({
         api: settings.api, system, prompt, ...chainFor(settings, 'card'), expect: 'json', signal,
         maxTokens: Math.max(settings.api.maxTokens || 0, 4000),
+        tavernMacros: true, // 推演的是酒馆当前这个对话：让酒馆照常把 {{char}}/{{user}} 换成这个对话里的名字
     });
     const raw = removeTags(res.text, settings.extraction.filterTags);
     let json;
@@ -225,6 +226,7 @@ export async function generateChatStages(settings, { signal, instruction = '' } 
     const res = await callLLM({
         api: settings.api, system, prompt, ...chainFor(settings, 'card'), expect: 'json', signal,
         maxTokens: Math.max(settings.api.maxTokens || 0, 5000),
+        tavernMacros: true,
     });
     const raw = removeTags(res.text, settings.extraction.filterTags);
     let json;

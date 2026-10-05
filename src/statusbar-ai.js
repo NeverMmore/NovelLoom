@@ -12,7 +12,7 @@
 // 界面提示词的 {LAYOUT_GUIDE} 按本卡变量表给出绑定示例：记录逐项生成、分组（data-nl-group / 点路径）、立绘槽位与换图按钮。
 // 不碰 DOM；调用 AI 走 callLLM + chainFor(settings, 'statusbar')。注意：cards.js 不要反过来引用本模块（避免循环依赖）。
 
-import { DEFAULT_STATUS_BAR } from './constants.js';
+import { DEFAULT_STATUS_BAR, STATUS_BAR_VAR_CAP } from './constants.js';
 import { timepointLabel, worldContext } from './cards.js';
 import { cardContentText } from './deduce.js';
 import { extractJson, removeTags } from './json.js';
@@ -26,6 +26,7 @@ import {
 } from './statusbar.js';
 import { STATUS_BINDING_GUIDE, STATUSBAR_THEMES, cleanFragment, compileStatusDocument, renderDefaultFragment } from './statusbar-runtime.js';
 import { templateVarCap } from './statusbar-templates.js';
+import { userRoleStatusText } from './userrole.js';
 import { abortError, isAbortError, truncate } from './utils.js';
 
 /** generateStatusBar 的 parts 可选值 */
@@ -48,9 +49,10 @@ function statusCfg(settings) {
     return { ...DEFAULT_STATUS_BAR, ...(settings?.statusBar || {}) };
 }
 
+/** 设置里的变量上限（AI 整体设计变量表时用）：最多 100（STATUS_BAR_VAR_CAP.max），无效时用默认值 */
 function maxVarsOf(settings) {
     const n = Number(statusCfg(settings).maxVars);
-    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_STATUS_BAR.maxVars;
+    return Number.isFinite(n) && n >= 1 ? Math.min(STATUS_BAR_VAR_CAP.max, Math.floor(n)) : DEFAULT_STATUS_BAR.maxVars;
 }
 
 /** 路径里 {{char}} 换成的名字：卡片名；世界/旁白卡没有名字时是「旁白」 */
@@ -66,6 +68,7 @@ function cardKindText(card) {
 function castNamesOf(project, card) {
     if (!isWorldCard(card)) return [];
     try {
+        // {{user}} 扮演的原著角色就是主角，worldCastNames 不把 TA 放进主要角色名单
         return worldCastNames(project, card);
     } catch {
         return [];
@@ -190,7 +193,7 @@ function jsonTemplateText(title, vars) {
 
 /**
  * {JSON_TEMPLATE}（世界/旁白卡整体设计时）：世界.* / 主角.* + 「主要角色」记录（带好感阶段与「服饰」分组，init 以第一个主要角色为例）
- * + 「NPC」记录（init 为空，扮演中 insert）。共 10 个叶子，在默认上限 12 以内。
+ * + 「NPC」记录（init 为空，扮演中 insert）。共 10 个叶子，在旧版默认上限 12 以内（现在默认 20）。
  * @param {string} charName 卡片名（标题示例用）
  * @param {string[]} cast 主要角色名
  */
@@ -303,6 +306,10 @@ export function buildStatusSpecPrompt(project, settings, card, { base = null, in
     const guide = world && !base
         ? worldGuideText(settings, 'statusSpecWorld', { CHAR_NAME: charName, CAST: castText(cast, '（项目里还没有主要角色资料，按角色卡内容列出主要角色）') })
         : '';
+    let userRole = '';
+    try {
+        userRole = userRoleStatusText(project, card);
+    } catch { /* 资料不全：不写 */ }
     const vars = {
         BOOK: bookOf(project),
         CHAR_NAME: charName,
@@ -311,6 +318,8 @@ export function buildStatusSpecPrompt(project, settings, card, { base = null, in
         CARD_CONTENT: cardContentText(card),
         CONTEXT: backgroundContext(project, settings, card),
         REQUIREMENT: String(sb.requirement || '').trim() || '（无特别要求）',
+        // 主角（{{user}}）是谁：写卡时选了「{{user}} 扮演」原著角色 / 自定义身份时，主角.* 变量按这个身份设计；原创新身份时为空
+        USER_ROLE: userRole ? `\n${userRole}\n` : '',
         MAX_VARS: base ? countSpecLeaves(base) : maxVarsOf(settings),
         WORLD_GUIDE: guide,
         TEMPLATE_SPEC: base ? keepSection(base, { init, rules, castLine: world ? keepCastLine(base, cast) : '' }) : '',
@@ -319,9 +328,12 @@ export function buildStatusSpecPrompt(project, settings, card, { base = null, in
         INSTRUCTION_LINE: instructionLine(instruction),
     };
     const template = getPrompt(settings, 'statusSpec');
+    let prompt = withWorldGuide(template, render(template, vars), guide);
+    // 用户改过的模板里没有 {USER_ROLE} 时接在末尾，照样生效
+    if (userRole && !String(template).includes('{USER_ROLE}')) prompt = `${prompt}\n\n${userRole}`;
     return {
         system: render(getPrompt(settings, 'statusSpecSystem'), vars),
-        prompt: withWorldGuide(template, render(template, vars), guide),
+        prompt,
     };
 }
 

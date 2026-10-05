@@ -2,7 +2,7 @@
 
 export const MODULE = 'novel_loom';
 export const PREFIX = 'nl';
-export const VERSION = '0.14.0';
+export const VERSION = '0.15.0';
 export const DB_NAME = 'NovelLoomDB';
 export const DB_VERSION = 1;
 
@@ -103,7 +103,7 @@ export const DEFAULT_STYLE_OPTIONS = {
 export const DEFAULT_STATUS_BAR = {
     mvuUrl: 'https://testingcf.jsdelivr.net/gh/MagicalAstrogy/MagVarUpdate/artifact/bundle.js',
     zodUrl: 'https://testingcf.jsdelivr.net/gh/StageDog/tavern_resource/dist/util/mvu_zod.js',
-    maxVars: 12, // 变量（叶子）上限：记录的每个字段各算一个
+    maxVars: 20, // 变量（叶子）上限：记录的每个字段各算一个（v0.15 起默认 20、最多 100；已保存的旧值不变）
     htmlMode: 'ai', // ai = AI 按变量表设计界面（绑定模式 bind）；auto = 内置排版（不调用 AI）
     theme: 'clean', // 内置排版主题：clean | night | paper
     analysisLang: 'en', // <Analysis> 用英文（省 token）或中文 zh
@@ -114,6 +114,9 @@ export const DEFAULT_STATUS_BAR = {
     usageNote: true, // 导出时在作者备注里追加使用说明
     portraitStore: 'server', // 立绘「选择本地图片」存到哪儿：server = 酒馆服务器（user/images/角色名/，不限大小但不随卡分享）；embed = 压缩后嵌进卡片
 };
+
+/** 状态栏变量上限（statusBar.maxVars）与模板自带上限的取值范围：设置页输入框、导入配置、模板都按它夹取 */
+export const STATUS_BAR_VAR_CAP = Object.freeze({ min: 3, max: 100 });
 
 /**
  * 「大纲」页待确认名称的「AI 推断名称」选项（对话框里改了会记住；规整见 names.js 的 normalizeNameResolve）
@@ -177,6 +180,7 @@ export const DEFAULT_SETTINGS = {
         lintAfterGenerate: true,
         statusBar: false, // 写卡时同时生成状态栏（MVU 变量），默认不勾选
         statusBarTemplateId: '', // 写卡时套用的状态栏模板（'' = 自动）
+        autoAllow: true, // 写入酒馆后自动允许本卡的局部正则、在酒馆助手里启用本卡的角色脚本（见 stallow.js）
     },
     planner: {
         count: 10,
@@ -255,4 +259,6 @@ export const DEFAULT_SETTINGS = {
     nameResolve: { ...DEFAULT_NAME_RESOLVE },
     /** 状态栏模板：保存在扩展设置里，跨项目共享（内置模板不存这里） */
     statusBarTemplates: [], // [{id:'sbtpl_…', name, desc, mode, spec|null, html, theme, sample, createdAt, updatedAt}]
+    /** 卡的导向·我的模板：保存在扩展设置里，跨项目共享（内置模板不存这里；见 orientation.js） */
+    orientationTemplates: [], // [{id:'otpl_…', name, brief, cardGuide, entry, depth, role, order, createdAt, updatedAt}]
 };

@@ -4,10 +4,10 @@
 // 内置模板的界面是绑定模式片段（<style> + data-nl-* 绑定 + 可选的 window.nlRender），由 NovelLoom 运行时填值；
 // 它们必须通过 lintStatusHtml（无错误、无警告）并能原样经过酒馆的正则替换与「自动修复 Markdown」——tests/statusbar-templates.test.js 逐个检查。
 // 所以界面代码里每行的 * 与 " 个数都是偶数，* 旁边也不留空格（例如写 .gn :where(*) 而不是 .gn *）。
-// 模板还可以带两样可选的东西：maxVars（模板自带的变量上限，变量多于设置里的上限时套用不截断，最多 30）
+// 模板还可以带两样可选的东西：maxVars（模板自带的变量上限，变量多于设置里的上限时套用不截断，最多 100）
 // 与 portraits（立绘设置，形状同 card.statusBar.portraits；从带立绘的角色卡导入时带上，套用时并进卡片自己的立绘）。
 
-import { DEFAULT_STATUS_BAR } from './constants.js';
+import { DEFAULT_STATUS_BAR, STATUS_BAR_VAR_CAP } from './constants.js';
 import {
     STATUS_MODE_LABELS, TEMPLATE_PORTRAIT_LIMITS, countSpecLeaves, ensureStatusBar, isFrontendText, isWorldCard, lintStatusHtml, normalizePortraits,
     normalizeStatusSpec, portraitsActive, seedWorldCastEntries, statusBarCharName, unwrapStatusFence,
@@ -25,11 +25,16 @@ export const STATUS_TEMPLATE_FILE_TYPE = 'novelloom-statusbar-template';
 export const STATUS_TEMPLATE_NAME_MAX = 30;
 export const STATUS_TEMPLATE_DESC_MAX = 200;
 export const STATUS_TEMPLATE_HTML_MAX = 200000;
-/** 存进模板的变量表不按用户的 maxVars 截断（套用时才按卡片所在设置截断） */
-const STORE_MAX_VARS = 64;
-/** 模板自带的变量上限（maxVars）的取值范围，与设置页「变量上限」一致 */
-export const TEMPLATE_VAR_CAP_MIN = 3;
-export const TEMPLATE_VAR_CAP_MAX = 30;
+/** 模板自带的变量上限（maxVars）的取值范围，与设置页「变量上限」一致（3~100） */
+export const TEMPLATE_VAR_CAP_MIN = STATUS_BAR_VAR_CAP.min;
+export const TEMPLATE_VAR_CAP_MAX = STATUS_BAR_VAR_CAP.max;
+/** 存进模板的变量表不按用户的 maxVars 截断（套用时才按卡片所在设置截断），最多与上限的最大值一样多 */
+const STORE_MAX_VARS = TEMPLATE_VAR_CAP_MAX;
+/**
+ * 变量多于这个数的模板才记下自带的上限（= 变量数）。12 是 v0.15 之前的默认上限：很多人的设置里还是 12，
+ * 这样「多人群像」（15 个变量）这类模板套用时也不会被截掉；默认上限改成 20 后这个界线不跟着变。
+ */
+export const TEMPLATE_OWN_CAP_ABOVE = 12;
 
 const THEMES = STATUSBAR_THEMES.map((t) => t.value);
 
@@ -1008,10 +1013,10 @@ const ENSEMBLE_HTML = `<style>
 })();
 </script>`;
 
-/** 变量表需要的上限：叶子数超过默认上限（12）时就是叶子数（最多 30），否则 null（跟随设置） */
+/** 变量表需要的上限：叶子数超过 12（TEMPLATE_OWN_CAP_ABOVE）时就是叶子数（最多 100），否则 null（跟随设置） */
 function neededVarCap(spec) {
     const n = spec ? countSpecLeaves(spec) : 0;
-    return n > DEFAULT_STATUS_BAR.maxVars ? Math.min(TEMPLATE_VAR_CAP_MAX, n) : null;
+    return n > TEMPLATE_OWN_CAP_ABOVE ? Math.min(TEMPLATE_VAR_CAP_MAX, n) : null;
 }
 
 function makeBuiltin({ id, name, desc, theme, spec, html, sample }) {
@@ -1042,7 +1047,7 @@ export const BUILTIN_STATUSBAR_TEMPLATES = Object.freeze([
     }),
     makeBuiltin({
         id: 'builtin_ensemble', name: '多人群像', theme: 'night', spec: ENSEMBLE_SPEC, html: ENSEMBLE_HTML, sample: ENSEMBLE_SAMPLE,
-        desc: '顶栏显示时间、地点与主角身份；「主要角色 / NPC」分页的角色卡片（立绘位、分段好感条、心情），点开看分组详情（基础、状态与心理活动、服饰）。适合世界/旁白卡。共 15 个变量，套用时按模板自带的上限全部保留。',
+        desc: '顶栏显示时间、地点与主角身份；「主要角色 / NPC」分页的角色卡片（立绘位、分段好感条、心情），点开看分组详情（基础、状态与心理活动、服饰）。适合世界/旁白卡。共 15 个变量，设置里的变量上限低于 15 时，套用也按模板自带的上限全部保留。',
     }),
 ]);
 
@@ -1066,7 +1071,7 @@ function normalizeTemplateSpec(spec) {
     return s.variables.length ? s : null;
 }
 
-/** 模板自带的变量上限：3~30 的整数，其他值（没有、不是数字）为 null */
+/** 模板自带的变量上限：3~100 的整数，其他值（没有、不是数字）为 null */
 function templateCapValue(v) {
     const n = Number(v);
     if (v === null || v === undefined || v === '' || typeof v === 'boolean' || !Number.isFinite(n) || n < 1) return null;
@@ -1087,14 +1092,14 @@ export function templatePortraits(raw, warnings = null) {
     return portraitsActive(p) ? p : null;
 }
 
-/** 设置里的变量上限（statusBar.maxVars），无效时用默认的 12 */
+/** 设置里的变量上限（statusBar.maxVars，最多 100），无效时用默认值（20） */
 function settingsVarCap(settings) {
     const n = Math.floor(Number(settings?.statusBar?.maxVars));
-    return Number.isFinite(n) && n >= 1 ? n : DEFAULT_STATUS_BAR.maxVars;
+    return Number.isFinite(n) && n >= 1 ? Math.min(TEMPLATE_VAR_CAP_MAX, n) : DEFAULT_STATUS_BAR.maxVars;
 }
 
 /**
- * 套用模板（沿用结构）时实际使用的变量上限：设置里的上限；模板自带的上限（template.maxVars）更大时用模板的（最多 30）。
+ * 套用模板（沿用结构）时实际使用的变量上限：设置里的上限；模板自带的上限（template.maxVars）更大时用模板的（最多 100）。
  * 状态栏对话框、AI 按模板补全初始值与规则时也应该用它，否则会把套用时保留下来的变量又截掉。
  * @param {object|null} template
  * @param {object|null} settings 扩展设置（取 statusBar.maxVars）
@@ -1125,7 +1130,7 @@ export function statusBarVarCap(card, settings = null, { leaves = null } = {}) {
 
 /**
  * 把任意来源的模板数据规整成存储形状（不含 id/时间）；strict 时缺名称、没内容、界面过大会抛错。
- * maxVars：模板自带的变量上限（3~30）或 null；portraits：至少有一张图的立绘设置或 null（按模板的内嵌图片上限，见 templatePortraits）。
+ * maxVars：模板自带的变量上限（3~100）或 null；portraits：至少有一张图的立绘设置或 null（按模板的内嵌图片上限，见 templatePortraits）。
  * warnings：收集立绘被丢掉的原因（内嵌图片超过模板的上限等）。
  * @returns {{name:string, desc:string, mode:string, spec:object|null, html:string, theme:string, sample:object|null, maxVars:number|null, portraits:object|null}}
  */
@@ -1266,7 +1271,7 @@ export function duplicateStatusBarTemplate(settings, id, name = '') {
 
 /**
  * 把卡片当前的状态栏做成模板数据（还没保存；保存用 addStatusBarTemplate）。
- * 变量多于默认上限（12）时记下模板自带的上限 maxVars（= 变量数，最多 30），别处套用时不会被截掉。
+ * 变量多于 12 个（TEMPLATE_OWN_CAP_ABOVE）时记下模板自带的上限 maxVars（= 变量数，最多 100），别处套用时不会被截掉。
  * 立绘是用户自己的图片地址，默认不带；portraits: true 时连同立绘设置一起（至少有一张图才带）。
  * 模板的内嵌图片上限比卡片小（TEMPLATE_PORTRAIT_LIMITS）：超出的内嵌图片丢掉，原因写进 warnings（建议先改存到酒馆服务器）。
  */

@@ -1,7 +1,10 @@
 // 角色卡页：生成、编辑、审稿、写入酒馆、导出
 
 import { app } from '../app.js';
-import { buildCardPrompt, buildPngCard, fixCardWithAI, generateCard, imageToPng, lintCardFor, regenerateCardField, timepointLabel } from '../cards.js';
+import {
+    buildCardPrompt, buildPngCard, cardPromptOpt, fixCardWithAI, generateCard, imageToPng, lintCardFor, regenerateCardField, regenerateOrientationNotes,
+    timepointLabel,
+} from '../cards.js';
 import {
     addBranch, addBranchTemplate, addStage, branchTemplates, deductionMarkdown, DEFAULT_BRANCH_COUNT, ensureProjection,
     generateBranches, generateStages, removeBranch, removeBranchTemplate, removeStage, setSelectedBranches, updateBranch,
@@ -10,14 +13,19 @@ import {
 import { buildGroupPrompt, generateGroupCard, groupCardMarkdown, publishGroupCard } from '../group.js';
 import { getVolumes, IMPORTANCE_RANK } from '../project.js';
 import { errorText } from '../llm.js';
-import { blobToDataUrl, dataUrlToBlob, defaultWorldName, prepareCard, publishCard, statusBarWorldName } from '../publish.js';
+import {
+    ORIENTATION_CUSTOM, getOrientationTemplate, listOrientationTemplates, normalizeCardOrientation, orientationEntryTitle, orientationFromPick,
+} from '../orientation.js';
+import { blobToDataUrl, cardOwnWorld, dataUrlToBlob, defaultWorldName, prepareCard, publishCard, statusBarWorldName } from '../publish.js';
 import { characterExistsInST, openCharacterInST } from '../stio.js';
 import { castRecordPath, serverPortraitHint, statusBarActive } from '../statusbar.js';
 import { getStatusBarTemplate } from '../statusbar-templates.js';
 import { bannedRulesFor, getStyleProfile } from '../style.js';
 import { greetingText, testChatReply } from '../testchat.js';
+import { USER_ROLE_KINDS, normalizeUserRole, userRoleLabel } from '../userrole.js';
 import { downloadFile, estimateTokens, pickFile, safeFileName, truncate, uniq } from '../utils.js';
 import { alertDialog, bindSettings, busy, chainPreviewHtml, confirmDialog, emptyState, esc, fmtTime, icon, importanceLabel, openDialog, optionList, promptDialog, rerollBtn } from './common.js';
+import { openOrientationTemplatesDialog } from './orientation-dialog.js';
 import { generateStatusBarForCard, openStatusBarDialog, openStatusBarPublishHint, statusBarTagHtml, statusBarTemplateOptions } from './statusbar-dialog.js';
 
 const GREETING_SEP = '\n\n=====\n\n';
@@ -37,31 +45,37 @@ function lintSummary(lint = []) {
 
 /**
  * 编辑框里“绑定世界书名称”这一栏显示什么：带状态栏的卡写入它自己的一本世界书（statusBar.worldName），
- * 这一栏显示并修改的是那个名字；其他卡是 card.worldName（留空 = 默认命名）。
- * @returns {{sb: boolean, shown: string}} sb：显示的是不是状态栏专用世界书；shown：显示出来的值
+ * 这一栏显示并修改的是那个名字；带剧情导向 / {{user}} 身份条目（或以前写入过专用世界书）的卡同样用自己的一本（ownWorldName，own: true）；
+ * 其他卡是 card.worldName（留空 = 默认命名）。
+ * @returns {{sb: boolean, shown: string, own?: true}} sb：显示的是不是卡片专用的世界书；own：专用世界书不是因为状态栏；shown：显示出来的值
  */
 export function cardWorldField(project, settings, card) {
     const sb = statusBarActive(card);
+    if (!sb && cardOwnWorld(card)) return { sb: true, own: true, shown: statusBarWorldName(project, settings, card) };
     return { sb, shown: sb ? statusBarWorldName(project, settings, card) : (card.worldName || defaultWorldName(project, settings, card.timepoint)) };
 }
 
-/** “绑定世界书名称”这一栏的标签 */
-export function cardWorldLabelHtml(sb) {
+/** “绑定世界书名称”这一栏的标签（own：专用世界书不是因为状态栏，而是因为本卡条目） */
+export function cardWorldLabelHtml(sb, own = false) {
+    if (sb && own) return '绑定世界书名称 <span class="nl-muted" title="带剧情导向或 {{user}} 身份条目的卡写入并绑定自己专用的一本世界书（资料条目 + 本卡条目）">（本卡专用）</span>';
     return sb ? '绑定世界书名称 <span class="nl-muted" title="带状态栏的卡总是写入并绑定自己专用的一本世界书（资料条目 + 状态栏条目）">（状态栏卡专用）</span>' : '绑定世界书名称';
 }
 
 /**
  * 保存编辑框时把“绑定世界书名称”写回：写哪个字段由这一栏**显示时**的模式（field.sb）决定，不看保存时状态栏开没开——
  * 在编辑框里打开状态栏设置把状态栏关掉后原样保存，不会把状态栏专用世界书的名字写进 card.worldName（反过来也一样）。
+ * 专用世界书的名字写回它当前的来源：已经记着状态栏专用名（或显示时是状态栏卡）写 statusBar.worldName，否则写 ownWorldName。
  * @param {object} card
- * @param {{sb: boolean, shown: string}} field cardWorldField() 的结果（显示这一栏时的模式与值）
+ * @param {{sb: boolean, shown: string, own?: boolean}} field cardWorldField() 的结果（显示这一栏时的模式与值）
  * @param {string} input 输入框的值
  */
 export function applyCardWorldInput(card, field, input) {
     const v = String(input ?? '').trim();
     if (field.sb) {
-        // 没改动就不写死（statusBar.worldName 留空 = 跟随默认命名）；清空也是回到默认
-        if (v !== String(field.shown).trim() && card.statusBar) card.statusBar.worldName = v;
+        // 没改动就不写死（留空 = 跟随默认命名）；清空也是回到默认
+        if (v === String(field.shown).trim()) return;
+        if (card.statusBar && (card.statusBar.worldName || !field.own)) card.statusBar.worldName = v;
+        else card.ownWorldName = v;
         return;
     }
     card.worldName = v;
@@ -144,9 +158,75 @@ function exportPortraitHint(card) {
     if (hint) app.log(`「${card.data?.name || ''}」：${hint}`, 'warn');
 }
 
+/**
+ * 「卡的导向」下拉框的选项：不限、内置、我的、自定义（只这一次）。
+ * @param {object} settings
+ * @param {string} selected
+ * @param {{current?: object|null}} opt current：卡片上的导向快照（编辑框用；模板已删除或是自定义时也列出来）
+ */
+export function orientationOptionsHtml(settings, selected, { current = null, custom = true } = {}) {
+    const all = listOrientationTemplates(settings);
+    const opt = (list) => optionList(list.map((t) => ({ value: t.id, label: t.name })), selected);
+    const mine = all.filter((t) => !t.builtin);
+    const cur = normalizeCardOrientation(current);
+    const orphan = cur && !all.some((t) => t.id === cur.templateId)
+        ? `<option value="${esc(cur.templateId || ORIENTATION_CUSTOM)}" ${selected === (cur.templateId || ORIENTATION_CUSTOM) ? 'selected' : ''}>${esc(cur.name)}（这张卡上的）</option>`
+        : '';
+    return [
+        `<option value="" ${selected ? '' : 'selected'}>不限</option>`,
+        orphan,
+        `<optgroup label="内置">${opt(all.filter((t) => t.builtin))}</optgroup>`,
+        mine.length ? `<optgroup label="我的模板">${opt(mine)}</optgroup>` : '',
+        custom && !orphan.includes(`value="${ORIENTATION_CUSTOM}"`) ? `<option value="${ORIENTATION_CUSTOM}" ${selected === ORIENTATION_CUSTOM ? 'selected' : ''}>自定义（只这一次：输入名称和说明）</option>` : '',
+    ].join('');
+}
+
+/**
+ * 「{{user}} 扮演」下面的说明
+ * @param {string} kind new | character | custom
+ * @param {string} charName {{user}} 扮演的原著角色
+ * @param {string} cardKind character | world
+ */
+export function userRoleFormNote(kind, charName = '', cardKind = 'character') {
+    const who = charName ? `「${charName}」` : '这个角色';
+    // 选了原著角色 / 自定义时身份以这里为准，上面的「你的要求」里不用再写（写了冲突时也以这里为准）
+    const noDup = '上面的要求里不用再写 {{user}} 的身份。';
+    if (kind === 'character' && cardKind === 'world') return `AI 会把${who}写成 {{user}}，原著里其他角色和 TA 的关系就是和你的关系，主要角色一览里不再单独列出 TA；卡自己的世界书里会加一条「{{user}} 的身份」。${noDup}`;
+    if (kind === 'character') return `AI 会把${who}写成 {{user}}，原著里 TA 和 {{char}} 的关系就是你和 {{char}} 的关系（选了卡的导向时以导向为准）；卡自己的世界书里会加一条「{{user}} 的身份」。${noDup}`;
+    if (kind === 'custom') return `按这段身份写卡；卡自己的世界书里会加一条「{{user}} 的身份」。${noDup}`;
+    return '{{user}} 不是原著里的任何人；具体身份（如“刚转学来的同桌”）可以写在上面的要求里。';
+}
+
+/** 卡片列表里的「剧情导向」标签（没有导向时为空） */
+export function orientationTagHtml(card) {
+    const o = normalizeCardOrientation(card?.orientation);
+    return o ? `<span class="nl-tag" title="剧情导向（写入酒馆时是卡自己世界书里的常驻条目）">导向：${esc(o.name)}</span>` : '';
+}
+
+/**
+ * 写卡表单里记住的选择（切换页面后保留）。{{user}} 扮演（方式、角色、自定义的身份）和卡名只在同一个项目里沿用：
+ * 换了项目还沿用「原著角色」的话，会默默选中新项目的第一个角色当 {{user}}。
+ */
+let lastCardForm = null;
+const REMEMBERED_FORM_KEYS = ['userRoleKind', 'userRoleChar', 'userRoleText', 'orientationId', 'orientationCustomName', 'orientationCustomBrief', 'orientationRefine', 'cardName'];
+const PROJECT_FORM_KEYS = new Set(['userRoleKind', 'userRoleChar', 'userRoleText', 'cardName']);
+
 export const cardsTab = {
     mount(el, { switchTab }) {
-        const form = { kind: 'character', charName: app.pendingCardChar || '', timepoint: '', requirement: '', greetings: app.settings.cards.greetings, firstMesLen: '400-800 字', avatarDataUrl: '', statusBarRequirement: '' };
+        const form = {
+            kind: 'character', charName: app.pendingCardChar || '', cardName: '', timepoint: '', requirement: '', greetings: app.settings.cards.greetings, firstMesLen: '400-800 字', avatarDataUrl: '', statusBarRequirement: '',
+            userRoleKind: 'new', userRoleChar: '', userRoleText: '',
+            orientationId: '', orientationCustomName: '', orientationCustomBrief: '', orientationRefine: true,
+        };
+        if (lastCardForm) {
+            for (const k of REMEMBERED_FORM_KEYS) {
+                if (PROJECT_FORM_KEYS.has(k) && lastCardForm.projectId !== app.project?.id) continue;
+                if (lastCardForm[k] !== undefined) form[k] = lastCardForm[k];
+            }
+        }
+        const rememberForm = () => {
+            lastCardForm = { projectId: app.project?.id, ...Object.fromEntries(REMEMBERED_FORM_KEYS.map((k) => [k, form[k]])) };
+        };
         delete app.pendingCardChar;
         const groupForm = { members: new Set(), timepoint: '', requirement: '' };
         /** 状态栏对话框的上下文（见 statusbar-dialog.js） */
@@ -175,10 +255,41 @@ export const cardsTab = {
             return opts;
         };
 
+        /** 「{{user}} 扮演 → 原著角色」可选的角色：单人卡不能选卡片本人 */
+        const userRoleChars = () => charOptions().filter((c) => form.kind === 'world' || c.value !== form.charName);
+        /** 记住的「{{user}} 扮演」角色在当前可选列表里时返回它，否则空串 */
+        const userRoleCharValid = () => (userRoleChars().some((c) => c.value === form.userRoleChar) ? form.userRoleChar : '');
+        const userRoleCharHtml = () => {
+            const list = userRoleChars();
+            if (!list.length) return '<option value="">（没有别的角色）</option>';
+            // 记住的角色不在这个项目里（或正好是这张单人卡本人）时不要悄悄换成第一个角色：显示「请选择」，生成前会提示；
+            // 记住的值不清掉——换回别的卡片角色后它又有效时照样选中
+            const cur = userRoleCharValid();
+            return `${cur ? '' : '<option value="" selected>请选择角色…</option>'}${optionList(list, cur)}`;
+        };
+
+        /** 「{{user}} 扮演」「卡的导向」切换后只更新这几处显示，不整页重绘（否则“写卡选项”会收起来） */
+        const syncFormExtras = () => {
+            const kind = form.userRoleKind;
+            el.querySelector('[data-ur-char]')?.toggleAttribute('hidden', kind !== 'character');
+            el.querySelector('[data-ur-custom]')?.toggleAttribute('hidden', kind !== 'custom');
+            const note = el.querySelector('[data-ur-note]');
+            if (note) note.textContent = userRoleFormNote(kind, userRoleCharValid(), form.kind);
+            const id = form.orientationId;
+            el.querySelector('[data-orient-custom]')?.toggleAttribute('hidden', id !== ORIENTATION_CUSTOM);
+            el.querySelector('[data-orient-refine]')?.toggleAttribute('hidden', !id);
+            const brief = el.querySelector('[data-orient-brief]');
+            if (brief) {
+                const t = id && id !== ORIENTATION_CUSTOM ? getOrientationTemplate(app.settings, id) : null;
+                brief.textContent = t ? t.brief : id === ORIENTATION_CUSTOM ? '输入这次的导向名称和说明（不存成模板）。' : '不加导向，按原著和你的要求写。';
+            }
+        };
+
         const render = () => {
             const p = app.project;
             const chars = charOptions();
             if (!form.charName && chars.length) form.charName = chars[0].value;
+            if (form.orientationId && form.orientationId !== ORIENTATION_CUSTOM && !getOrientationTemplate(app.settings, form.orientationId)) form.orientationId = '';
             const sbTpls = cardStatusBarTemplateOptions(app.settings, form.kind);
             if (!sbTpls.some((t) => t.value === (app.settings.cards.statusBarTemplateId || ''))) app.settings.cards.statusBarTemplateId = '';
             const sbTplId = app.settings.cards.statusBarTemplateId || '';
@@ -199,11 +310,34 @@ export const cardsTab = {
                 <div class="nl-grid2">
                     <div class="nl-field"><label>卡片类型</label><select class="nl-input" data-form="kind">${optionList([{ value: 'character', label: '单人角色卡（{{char}} = 某个角色）' }, { value: 'world', label: '世界/旁白卡（{{char}} = 叙述者，扮演所有 NPC）' }], form.kind)}</select></div>
                     <div class="nl-field" ${form.kind === 'world' ? 'hidden' : ''}><label>角色</label><select class="nl-input" data-form="charName">${optionList(chars, form.charName)}</select></div>
+                    <div class="nl-field" ${form.kind === 'world' ? '' : 'hidden'}><label for="nl-card-name">卡名 <span class="nl-muted">（留空 = 书名）</span></label><input class="nl-input" id="nl-card-name" data-form="cardName" value="${esc(form.cardName)}" placeholder="${esc(p.bookName)}"></div>
                     <div class="nl-field"><label>故事时间点（防剧透：只用该时间点之前的资料）</label><select class="nl-input" data-form="timepoint">${optionList(timeOptions(), form.timepoint)}</select></div>
                     <div class="nl-field"><label>备选开场白数量 / 开场白长度</label><div class="nl-row"><input class="nl-input" type="number" min="0" max="6" data-form="greetings" value="${form.greetings}"><input class="nl-input" data-form="firstMesLen" value="${esc(form.firstMesLen)}"></div></div>
                 </div>
-                <div class="nl-field"><label>你的要求（{{user}} 的身份、与角色的关系、开场场景、尺度、视角等）</label>
-                    <textarea class="nl-input nl-textarea" rows="3" data-form="requirement" placeholder="例如：{{user}} 是刚转学来的同桌；开场在放学后的天台；第二人称叙述">${esc(form.requirement)}</textarea></div>
+                <div class="nl-field"><label>你的要求（与角色的关系、开场场景、尺度、视角等）</label>
+                    <textarea class="nl-input nl-textarea" rows="3" data-form="requirement" placeholder="例如：开场在放学后的天台；{{char}} 对 {{user}} 还有戒心；第二人称叙述">${esc(form.requirement)}</textarea></div>
+                <div class="nl-grid2">
+                    <div class="nl-field">
+                        <label for="nl-ur-kind">{{user}} 扮演</label>
+                        <select class="nl-input" id="nl-ur-kind" data-form="userRoleKind" aria-describedby="nl-ur-note">${optionList(USER_ROLE_KINDS, form.userRoleKind)}</select>
+                        <select class="nl-input" data-form="userRoleChar" data-ur-char aria-label="{{user}} 扮演的原著角色" ${form.userRoleKind === 'character' ? '' : 'hidden'}>${userRoleCharHtml()}</select>
+                        <textarea class="nl-input nl-textarea" rows="2" data-form="userRoleText" data-ur-custom aria-label="{{user}} 的身份" placeholder="例如：{{user}} 是莉莉丝新雇的调酒师，二十岁，刚搬到下城区" ${form.userRoleKind === 'custom' ? '' : 'hidden'}>${esc(form.userRoleText)}</textarea>
+                        <div class="nl-muted nl-small" id="nl-ur-note" data-ur-note>${esc(userRoleFormNote(form.userRoleKind, userRoleCharValid(), form.kind))}</div>
+                    </div>
+                    <div class="nl-field">
+                        <label for="nl-orient">卡的导向</label>
+                        <div class="nl-row">
+                            <select class="nl-input nl-grow" id="nl-orient" data-form="orientationId" aria-describedby="nl-orient-brief">${orientationOptionsHtml(app.settings, form.orientationId)}</select>
+                            <button class="nl-btn nl-sm" data-act="orientation-manage" title="查看内置导向，新建、修改、导入导出自己的导向模板">${icon('settings', { size: 14 })}管理导向模板</button>
+                        </div>
+                        <div class="nl-orient-custom" data-orient-custom ${form.orientationId === ORIENTATION_CUSTOM ? '' : 'hidden'}>
+                            <input class="nl-input" data-form="orientationCustomName" aria-label="导向名称" maxlength="20" placeholder="导向名称，例如「师徒禁忌」" value="${esc(form.orientationCustomName)}">
+                            <textarea class="nl-input nl-textarea" rows="2" data-form="orientationCustomBrief" aria-label="导向说明" maxlength="200" placeholder="说明这次想要的剧情方向，例如：{{user}} 是 {{char}} 的徒弟，师徒之间暗生情愫，但谁都不敢说破">${esc(form.orientationCustomBrief)}</textarea>
+                        </div>
+                        <div class="nl-muted nl-small" id="nl-orient-brief" data-orient-brief></div>
+                        <label class="nl-check-line" data-orient-refine ${form.orientationId ? '' : 'hidden'}><input type="checkbox" data-form="orientationRefine" ${form.orientationRefine ? 'checked' : ''}> 让 AI 结合本书细化导向词条</label>
+                    </div>
+                </div>
                 <details>
                     <summary>写卡选项</summary>
                     <div class="nl-grid2">
@@ -246,7 +380,7 @@ export const cardsTab = {
                     <div class="nl-cardbox" data-id="${esc(c.id)}">
                         ${c.avatarDataUrl ? `<img class="nl-avatar" src="${c.avatarDataUrl}" alt="">` : avatarEmpty()}
                         <div class="nl-grow">
-                            <div><b>${esc(c.data.name)}</b> <span class="nl-tag">${c.kind === 'world' ? '世界卡' : '角色卡'}</span> ${statusBarTagHtml(c)} ${c.stAvatar ? (characterExistsInST(c.stAvatar) ? '<span class="nl-tag nl-ok">已在酒馆</span>' : '<span class="nl-tag">酒馆中已删除</span>') : ''}</div>
+                            <div><b>${esc(c.data.name)}</b> <span class="nl-tag">${c.kind === 'world' ? '世界卡' : '角色卡'}</span> ${statusBarTagHtml(c)} ${orientationTagHtml(c)} ${c.stAvatar ? (characterExistsInST(c.stAvatar) ? '<span class="nl-tag nl-ok">已在酒馆</span>' : '<span class="nl-tag">酒馆中已删除</span>') : ''}</div>
                             <div class="nl-muted nl-small">${esc(timepointLabel(p, Number.isFinite(c.timepoint) ? c.timepoint : Infinity))} · ${fmtTime(c.updatedAt)} · 约 ${estimateTokens(c.data.description + c.data.first_mes)} tokens</div>
                             <div class="nl-small">${lintSummary(c.lint)}</div>
                             <div class="nl-small nl-clamp">${esc(truncate(c.data.first_mes, 120))}</div>
@@ -303,16 +437,30 @@ export const cardsTab = {
                 </div>
             </section>`;
             bindSettings(el, app.settings, () => app.saveSettings());
+            syncFormExtras();
         };
 
         const opts = () => ({
             kind: form.kind,
             charName: form.charName,
+            cardName: form.kind === 'world' ? form.cardName : '',
             timepoint: form.timepoint === '' ? Infinity : Number(form.timepoint),
             requirement: form.requirement,
             greetings: Number(form.greetings) || 0,
             firstMesLen: form.firstMesLen,
+            userRole: { kind: form.userRoleKind, charKey: form.userRoleKind === 'character' ? form.userRoleChar : '', text: form.userRoleKind === 'custom' ? form.userRoleText : '' },
+            orientation: orientationFromPick(app.settings, {
+                id: form.orientationId, customName: form.orientationCustomName, customBrief: form.orientationCustomBrief, refine: form.orientationRefine,
+            }),
         });
+
+        /** 生成前检查表单里「{{user}} 扮演」「卡的导向」是否填完整；有问题返回提示文字 */
+        const formProblem = () => {
+            if (form.userRoleKind === 'character' && !userRoleChars().some((c) => c.value === form.userRoleChar)) return '请选择 {{user}} 扮演的原著角色';
+            if (form.userRoleKind === 'custom' && !String(form.userRoleText || '').trim()) return '请填写 {{user}} 的身份，或改回「原创新身份」';
+            if (form.orientationId === ORIENTATION_CUSTOM && !String(form.orientationCustomName || '').trim() && !String(form.orientationCustomBrief || '').trim()) return '请填写自定义导向的名称和说明，或选择别的导向';
+            return '';
+        };
 
         const editCard = async (card) => {
             const d = card.data;
@@ -321,16 +469,29 @@ export const cardsTab = {
             // 带状态栏的卡写入它自己的一本世界书（statusBar.worldName），编辑框显示并修改的是这个名字；
             // 保存时按这一栏显示时的模式写回（见 applyCardWorldInput），不按保存那一刻状态栏开没开
             let worldField = cardWorldField(app.project, app.settings, card);
+            // 剧情导向：编辑框里的草稿（换导向、改词条正文 / 本书落点都先改草稿，保存时写回 card.orientation）
+            const savedOrient = normalizeCardOrientation(card.orientation);
+            const orientId = (o) => (o ? o.templateId || ORIENTATION_CUSTOM : '');
+            /** 编辑框里剧情导向一节的当前内容 → 导向快照；选了「不限」返回 null */
+            const readOrientEdit = (r) => {
+                const id = r.querySelector('[data-orient-pick]')?.value || '';
+                if (!id) return null;
+                const base = id === orientId(savedOrient) ? savedOrient : orientationFromPick(app.settings, { id, refine: true });
+                if (!base) return null;
+                const entry = r.querySelector('[data-orient-entry]')?.value ?? base.entry;
+                const notes = r.querySelector('[data-orient-notes]')?.value ?? base.notes;
+                return normalizeCardOrientation({ ...base, entry, notes, refine: base.refine || !!String(notes).trim() });
+            };
             const { value, root } = await openDialog({
                 title: `编辑角色卡：${d.name}`,
                 wide: true,
                 body: `
-                    <div class="nl-row nl-wrap">
+                    <div class="nl-row nl-wrap nl-card-edit-head">
                         ${card.avatarDataUrl ? `<img class="nl-avatar" src="${card.avatarDataUrl}" data-avatar-img>` : avatarEmpty('data-avatar-img')}
                         <button class="nl-btn nl-sm" data-card-act="avatar">${icon('upload', { size: 14 })}上传头像</button>
                         <button class="nl-btn nl-sm" data-card-act="avatar-clear">清除头像</button>
                         <div class="nl-field nl-grow"><label>名称</label><input class="nl-input" data-card="name" value="${esc(d.name)}"></div>
-                        <div class="nl-field nl-grow"><label data-card-world-label>${cardWorldLabelHtml(worldField.sb)}</label><input class="nl-input" data-card-world value="${esc(worldField.shown)}"></div>
+                        <div class="nl-field nl-grow"><label data-card-world-label>${cardWorldLabelHtml(worldField.sb, worldField.own)}</label><input class="nl-input" data-card-world value="${esc(worldField.shown)}"></div>
                     </div>
                     <details class="nl-lint-box" open><summary>审稿（本地规则，不耗 token）</summary><div data-lint>${lintHtml(card.lint)}</div>
                         <div class="nl-row"><button class="nl-btn nl-sm" data-card-act="lint">重新扫描</button><button class="nl-btn nl-sm" data-card-act="fix">AI 按审稿意见修正</button></div></details>
@@ -340,6 +501,19 @@ export const cardsTab = {
                     ${field('first_mes', '开场白（first_mes）', 10)}
                     ${field('alternate_greetings', '备选开场白（用 ===== 分隔）', 8, d.alternate_greetings.join(GREETING_SEP))}
                     ${field('mes_example', '示例对话（mes_example）', 8)}
+                    <section class="nl-orient-edit" data-orient-edit>
+                        <div class="nl-row nl-wrap">
+                            <label class="nl-orient-edit-title" for="nl-oe-pick">剧情导向</label>
+                            <select class="nl-input nl-grow" id="nl-oe-pick" data-orient-pick>${orientationOptionsHtml(app.settings, orientId(savedOrient), { current: savedOrient, custom: false })}</select>
+                            ${rerollBtn('reroll-orient-notes', savedOrient ? '' : 'disabled', { label: '重新生成本书落点', title: '只让 AI 结合本书重新写【本书落点】，词条正文和卡片其余部分不变' })}
+                        </div>
+                        <div class="nl-muted nl-small" data-orient-edit-note>${savedOrient ? `写入酒馆时放进这张卡自己的世界书：常驻条目「${esc(orientationEntryTitle(savedOrient))}」，插在聊天深度 ${esc(savedOrient.depth)}。` : '不限：不加剧情导向词条。'}</div>
+                        <div data-orient-edit-body ${savedOrient ? '' : 'hidden'}>
+                            <div class="nl-field"><label for="nl-oe-entry">词条正文</label><textarea class="nl-input nl-textarea" id="nl-oe-entry" rows="6" data-orient-entry>${esc(savedOrient?.entry || '')}</textarea></div>
+                            <div class="nl-field"><label for="nl-oe-notes">本书落点 <span class="nl-muted">（接在词条正文后面的【本书落点】；留空就只有正文）</span></label><textarea class="nl-input nl-textarea" id="nl-oe-notes" rows="4" data-orient-notes placeholder="- 原伴侣是……&#10;- 关键阻碍是……">${esc(savedOrient?.notes || '')}</textarea></div>
+                        </div>
+                        <div class="nl-muted nl-small">{{user}} 扮演：${esc(userRoleLabel(app.project, card.userRole))}${normalizeUserRole(card.userRole).kind !== 'new' ? '（写成卡自己世界书里的「{{user}} 的身份」条目）' : ''}</div>
+                    </section>
                     <details><summary>更多字段</summary>
                         ${field('system_prompt', '系统提示词覆盖（system_prompt）', 3)}
                         ${field('post_history_instructions', '历史后指令（post_history_instructions）', 3)}
@@ -355,7 +529,54 @@ export const cardsTab = {
                         const tok = k && r.querySelector(`[data-tok="${k}"]`);
                         if (tok) tok.textContent = `${estimateTokens(e.target.value)} tokens`;
                     });
+                    // 每个导向在这个编辑框里改过的正文和落点（按下拉框的值记）：换导向前先记下当前的，误换了再换回来时恢复刚才的编辑
+                    // （取消对话框则全部不保存）
+                    const orientDrafts = {};
+                    let prevOrientId = orientId(savedOrient);
+                    // 换导向：换回改过的导向时恢复刚才的正文和落点；第一次换到卡上原来的导向时用卡上的；
+                    // 换成别的模板时正文换成模板的、落点清空（可以再点骰子重新生成）
+                    r.querySelector('[data-orient-pick]')?.addEventListener('change', (e) => {
+                        const id = e.target.value;
+                        const body = r.querySelector('[data-orient-edit-body]');
+                        const note = r.querySelector('[data-orient-edit-note]');
+                        const reroll = r.querySelector('[data-act="reroll-orient-notes"]');
+                        const entryEl = r.querySelector('[data-orient-entry]');
+                        const notesEl = r.querySelector('[data-orient-notes]');
+                        if (prevOrientId) orientDrafts[prevOrientId] = { entry: entryEl.value, notes: notesEl.value };
+                        prevOrientId = id;
+                        const next = !id ? null : id === orientId(savedOrient) ? savedOrient : orientationFromPick(app.settings, { id, refine: true });
+                        body?.toggleAttribute('hidden', !next);
+                        if (reroll) reroll.disabled = !next;
+                        if (note) note.textContent = next ? `写入酒馆时放进这张卡自己的世界书：常驻条目「${orientationEntryTitle(next)}」，插在聊天深度 ${next.depth}。${next === savedOrient ? '' : '换了导向，可以点「重新生成本书落点」让 AI 按新导向写。'}` : '不限：不加剧情导向词条。';
+                        if (!next) return;
+                        const kept = orientDrafts[id];
+                        entryEl.value = kept ? kept.entry : next.entry;
+                        notesEl.value = kept ? kept.notes : next === savedOrient ? next.notes : '';
+                    });
                     r.addEventListener('click', async (e) => {
+                        const rerollNotes = e.target.closest('[data-act="reroll-orient-notes"]');
+                        if (rerollNotes) {
+                            const draft = readOrientEdit(r);
+                            if (!draft) return undefined;
+                            if (app.isBusy()) return app.log('已有任务在运行', 'warn');
+                            const instruction = await promptDialog('可选：对本书落点的额外要求（留空则让 AI 自行发挥）', '', { title: '重新生成本书落点', multiline: true });
+                            if (instruction === null) return undefined;
+                            const pick = r.querySelector('[data-orient-pick]');
+                            const pickedId = pick?.value || '';
+                            await busy(rerollNotes, async () => {
+                                const notes = await regenerateOrientationNotes(app.project, app.settings, { ...card, data: collect() }, { orientation: draft, instruction });
+                                // 生成期间换了导向：这份落点是按原来的导向写的，不填进现在的导向；记在原来导向的草稿里，换回去就能看到
+                                if ((pick?.value || '') !== pickedId) {
+                                    orientDrafts[pickedId] = { ...(orientDrafts[pickedId] || { entry: draft.entry }), notes };
+                                    app.log(`本书落点已按「${draft.name}」生成，但剧情导向已经换了，没有填进去；换回「${draft.name}」就能看到`, 'warn');
+                                    return;
+                                }
+                                r.querySelector('[data-orient-notes]').value = notes;
+                            }, '生成中…');
+                            // busy 结束会把按钮重新启用；现在选的是「不限」时保持禁用
+                            rerollNotes.disabled = !pick?.value;
+                            return undefined;
+                        }
                         const rerollField = e.target.closest('[data-act="reroll-field"]');
                         if (rerollField) {
                             const k = rerollField.dataset.field;
@@ -428,6 +649,7 @@ export const cardsTab = {
             });
             if (!value) return;
             card.data = readCardForm(root, card);
+            card.orientation = readOrientEdit(root);
             applyCardWorldInput(card, worldField, root.querySelector('[data-card-world]').value);
             card.lint = lintCardFor(app.project, app.settings, card.data);
             card.updatedAt = Date.now();
@@ -898,9 +1120,11 @@ export const cardsTab = {
 
         const doPublish = async (card, btn) => {
             const r = await busy(btn, async () => {
-                const res = await publishCard(app.project, app.settings, card, { overwrite: true });
+                const res = await publishCard(app.project, app.settings, card, { overwrite: true, onLog: () => {} });
                 await app.saveNow();
-                app.log(`🎴 已写入酒馆：角色「${card.data.name}」${app.settings.cards.linkWorldbook || res.statusBar ? `，绑定世界书「${res.worldName}」（${res.entryCount} 条）` : ''}${res.statusBar ? '，带状态栏' : ''}`, 'success');
+                app.log(`🎴 已写入酒馆：角色「${card.data.name}」${app.settings.cards.linkWorldbook || res.statusBar || res.ownWorld ? `，绑定世界书「${res.worldName}」（${res.entryCount} 条）` : ''}${res.statusBar ? '，带状态栏' : ''}${normalizeCardOrientation(card.orientation) ? `，剧情导向「${normalizeCardOrientation(card.orientation).name}」` : ''}`, 'success');
+                // 写入后自动允许本卡的局部正则 / 角色脚本（设置页「状态栏」一节可关）的结果，排在写入结果后面
+                if (res.allow) app.log(res.allow.message, res.allow.level);
                 globalThis.toastr?.success(`角色「${card.data.name}」已写入酒馆`, 'NovelLoom');
                 return res;
             }, '写入中…');
@@ -916,18 +1140,24 @@ export const cardsTab = {
             switch (btn.dataset.act) {
                 case 'generate':
                 case 'regen': {
-                    const o = card ? { kind: card.kind, charName: card.charName, timepoint: Number.isFinite(card.timepoint) ? card.timepoint : Infinity, requirement: card.requirement, greetings: card.data.alternate_greetings.length, firstMesLen: form.firstMesLen } : opts();
+                    // 整卡重新生成沿用这张卡生成时的选项（{{user}} 的身份、卡的导向快照、世界卡的卡名）
+                    const o = card ? { ...cardPromptOpt(card), firstMesLen: form.firstMesLen } : opts();
                     if (o.kind !== 'world' && !p.characters[o.charName]) return app.log('请选择角色', 'warn');
+                    if (!card) {
+                        const problem = formProblem();
+                        if (problem) return app.log(problem, 'warn');
+                    }
                     // 新建时按“写卡选项”接着生成状态栏；整卡重新生成只沿用旧状态栏（标记为过时），不重新生成
                     const withStatusBar = !card && wantStatusBar();
                     const sbOpt = { requirement: form.statusBarRequirement, templateId: app.settings.cards.statusBarTemplateId || '' };
                     const result = await busy(btn, async () => {
-                        const r = await generateCard(p, app.settings, o, { onLog: (m) => app.log(m) });
+                        const r = await generateCard(p, app.settings, o, { onLog: (m, l) => app.log(m, l) });
                         if (card) {
                             r.id = card.id;
                             r.avatarDataUrl = card.avatarDataUrl;
                             r.stAvatar = card.stAvatar;
                             r.worldName = card.worldName;
+                            if (card.ownWorldName) r.ownWorldName = card.ownWorldName;
                             if (card.statusBar) {
                                 r.statusBar = card.statusBar;
                                 if (r.statusBar.spec?.variables?.length) r.statusBar.stale = true;
@@ -964,6 +1194,16 @@ export const cardsTab = {
                 case 'form-avatar-clear':
                     form.avatarDataUrl = '';
                     return render();
+                case 'orientation-manage': {
+                    await openOrientationTemplatesDialog({ select: form.orientationId && form.orientationId !== ORIENTATION_CUSTOM ? form.orientationId : '' });
+                    // 模板可能新增、改名或删除：只刷新下拉框（选中的被删掉了就回到「不限」），不整页重绘
+                    if (form.orientationId && form.orientationId !== ORIENTATION_CUSTOM && !getOrientationTemplate(app.settings, form.orientationId)) form.orientationId = '';
+                    const sel = el.querySelector('[data-form="orientationId"]');
+                    if (sel) sel.innerHTML = orientationOptionsHtml(app.settings, form.orientationId);
+                    rememberForm();
+                    syncFormExtras();
+                    return;
+                }
                 case 'preview': {
                     try {
                         const { system, prompt } = buildCardPrompt(p, app.settings, opts());
@@ -1102,7 +1342,15 @@ export const cardsTab = {
             const k = e.target.dataset.form;
             if (!k) return;
             form[k] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
-            if (k === 'kind') render();
+            if (REMEMBERED_FORM_KEYS.includes(k)) rememberForm();
+            if (k === 'kind') return render();
+            if (k === 'charName' && e.type === 'change') {
+                // 单人卡换了角色：「{{user}} 扮演」的原著角色列表里去掉新的卡片角色
+                const sel = el.querySelector('[data-ur-char]');
+                if (sel) sel.innerHTML = userRoleCharHtml();
+                rememberForm();
+            }
+            if (['userRoleKind', 'userRoleChar', 'orientationId', 'charName'].includes(k)) syncFormExtras();
         };
 
         el.addEventListener('click', onClick);

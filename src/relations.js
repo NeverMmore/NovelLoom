@@ -1,10 +1,12 @@
 // 人物关系图谱：结构化的角色关系边，AI 分析、手动编辑、防剧透过滤、接入角色卡
+// 关系类型是自由文本：内置 8 种 + 用户的自定义类型只是参考（建议），AI 和用户都可以直接写更贴切的短类型
+// （师兄妹、青梅竹马、主仆……）。与已知类型的 value 或显示名相同时存成那个 value，否则存这段文字本身（见 normalizeRelationType）。
 
 import { callLLM, chainFor } from './llm.js';
 import { extractJson, removeTags } from './json.js';
 import { getPrompt, render } from './prompts.js';
 import { characterAt, characterProfileText, IMPORTANCE_RANK } from './project.js';
-import { truncate, uid, uniq } from './utils.js';
+import { hashString, truncate, uid, uniq } from './utils.js';
 
 export const RELATIONSHIP_TYPES = [
     { value: 'romantic', label: '爱慕/恋人', color: '#e0668f' },
@@ -17,15 +19,26 @@ export const RELATIONSHIP_TYPES = [
     { value: 'other', label: '其他', color: '#8a8a8a' },
 ];
 
+/**
+ * 自由类型（不是已知类型）按关键词归到一个内置大类，只用来给它配颜色（以前也用来把 AI 写的中文类型换成内置类型）。
+ * 同门、师徒、主仆放在「家人」前面：师兄妹、徒弟、弟子里的「兄」「弟」不是亲属。
+ */
 const TYPE_GUESS = [
     [/恋|爱慕|喜欢|夫妻|情侣|暗恋|前男友|前女友|未婚妻|未婚夫/, 'romantic'],
+    [/同门|师兄|师姐|师弟|师妹/, 'ally'],
+    [/师徒|师父|师傅|师尊|徒弟|弟子|主仆|主人|仆|侍从|侍女|护卫|上级|下属|上司|老板|下级/, 'mentor'],
     [/家人|父|母|兄|弟|姐|妹|子|女儿|儿子|亲人|夫人|丈夫|妻子/, 'family'],
-    [/师徒|师父|师傅|徒弟|上级|下属|上司|老板|下级/, 'mentor'],
     [/同伴|盟友|队友|战友|搭档/, 'ally'],
     [/对手|竞争|情敌/, 'rival'],
     [/敌|仇|恨/, 'enemy'],
-    [/朋友|挚友|好友|同学|同事/, 'friend'],
+    [/朋友|挚友|好友|同学|同事|青梅|竹马|发小|闺蜜|知己/, 'friend'],
 ];
+
+/** 自由填写的关系类型最多几个字 */
+export const RELATION_TYPE_MAX = 8;
+/** 自定义类型的 value（ctype_…）：类型被删除后，已有关系仍保留这个编号 */
+const CUSTOM_VALUE_RE = /^ctype_[\w-]+$/;
+const OTHER_COLOR = '#8a8a8a';
 
 // ---------------- 自定义关系类型（保存在扩展设置里，跨项目共享） ----------------
 
@@ -90,7 +103,7 @@ export function addRelationTemplate(settings, { name, type = 'other', mutual = f
     const n = String(name || '').trim();
     if (!n) throw new Error('请输入模板名称');
     if (relationTemplates(settings).some((t) => t.name === n)) throw new Error('已存在同名的关系模板');
-    const t = { id: uid('rtpl_'), name: n, type: String(type || 'other'), mutual: !!mutual, label: String(label || '').trim(), createdAt: Date.now() };
+    const t = { id: uid('rtpl_'), name: n, type: normalizeRelationType(type, settings), mutual: !!mutual, label: String(label || '').trim(), createdAt: Date.now() };
     settings.relationTemplates.push(t);
     return t;
 }
@@ -102,7 +115,7 @@ export function updateRelationTemplate(settings, id, patch = {}) {
         const n = String(patch.name).trim();
         if (n && !relationTemplates(settings).some((x) => x.id !== id && x.name === n)) t.name = n;
     }
-    if (patch.type !== undefined) t.type = String(patch.type || 'other');
+    if (patch.type !== undefined) t.type = normalizeRelationType(patch.type, settings);
     if (patch.mutual !== undefined) t.mutual = !!patch.mutual;
     if (patch.label !== undefined) t.label = String(patch.label).trim();
     return t;
@@ -123,20 +136,102 @@ export function applyRelationTemplate(template, from = '', to = '') {
     return { type: template?.type || 'other', mutual: !!template?.mutual, label };
 }
 
-/** 「AI 分析关系」提示词里的 {TYPES}：可用类型，加上用户的关系模板（没有模板时与原来一致） */
+/**
+ * 「AI 分析关系」提示词里的 {TYPES}：参考类型（内置 + 自定义）与「可以写更贴切的短类型」的说明，加上用户的关系模板。
+ * 说明写在这里而不只在主提示里，用户改过的旧提示词（用 {TYPES}）也能拿到。
+ */
 export function relationTypesPromptText(settings) {
     const types = allRelationTypes(settings).map((t) => `${t.value}=${t.label}`).join('、');
+    const head = `参考类型（type 写等号前的代码或等号后的中文名都可以）：${types}\n这些只是参考：参考类型不够贴切时，type 直接写一个更准确的简短关系词（2-6 个字，最多 ${RELATION_TYPE_MAX} 个字），如 师兄妹、青梅竹马、主仆、宿敌、养父女；不要为了套用参考类型写成笼统的 other。`;
     const tpls = relationTemplates(settings);
-    if (!tpls.length) return types;
-    const lines = tpls.map((t) => `- ${t.name}：type=${t.type}（${relationTypeLabel(t.type, settings)}），${t.mutual ? '双向' : '单向 A→B'}${t.label ? `，说明写法参考：${t.label}` : ''}`);
-    return `${types}\n\n用户常用的关系模板（判断关系时优先套用这些模板的类型与方向；说明可参照写法，把 {A}/{B} 换成具体角色并写出本书的具体情节）：\n${lines.join('\n')}`;
+    if (!tpls.length) return head;
+    const typeText = (v) => (findRelationType(v, settings) ? `${v}（${relationTypeLabel(v, settings)}）` : v);
+    const lines = tpls.map((t) => `- ${t.name}：type=${typeText(t.type)}，${t.mutual ? '双向' : '单向 A→B'}${t.label ? `，说明写法参考：${t.label}` : ''}`);
+    return `${head}\n\n用户常用的关系模板（判断关系时优先套用这些模板的类型与方向；说明可参照写法，把 {A}/{B} 换成具体角色并写出本书的具体情节）：\n${lines.join('\n')}`;
 }
 
-export function relationTypeLabel(v, settings) {
-    return allRelationTypes(settings).find((t) => t.value === v)?.label || '其他';
+/** 已知类型（内置 + 自定义）里 value 为 v 的那个；没有时按显示名找 */
+function findRelationType(v, settings) {
+    const s = String(v ?? '').trim();
+    if (!s) return null;
+    const types = allRelationTypes(settings);
+    return types.find((t) => t.value === s) || types.find((t) => t.label === s) || null;
 }
+
+/**
+ * 关系类型规整（AI 分析、手动填写、关系模板、导入共用）：去掉首尾空白和括号引号，最多 8 个字；
+ * 与已知类型（内置 + 自定义）的 value（不分大小写）或显示名相同时换成它的 value，否则把这段文字本身当作类型。空值为 other。
+ * 自定义类型的编号（ctype_…）即使那个类型已被删除也原样保留（删除自定义类型不改动已有关系）。
+ */
+export function normalizeRelationType(v, settings) {
+    const raw = String(v ?? '').replace(/\s+/g, ' ').trim();
+    const types = allRelationTypes(settings);
+    const known = (x) => types.find((t) => t.value.toLowerCase() === x.toLowerCase() || t.label === x);
+    const exact = raw && known(raw);
+    if (exact) return exact.value;
+    // 整个包在引号或括号里时去掉（「师兄妹」→ 师兄妹）；只有一边的不动（养父女（改））
+    const s = raw.replace(/^[「『“"'（(【[]([^]*)[」』”"'）)】\]]$/, '$1').trim();
+    if (!s) return 'other';
+    const hit = known(s);
+    if (hit) return hit.value;
+    if (CUSTOM_VALUE_RE.test(s)) return s;
+    const short = Array.from(s).slice(0, RELATION_TYPE_MAX).join('').trim();
+    return known(short)?.value || short;
+}
+
+/** 类型的显示名：已知类型用它的名字，自由类型就是它自己；已删除的自定义类型（只剩编号）和空值显示为「其他」 */
+export function relationTypeLabel(v, settings) {
+    const t = findRelationType(v, settings);
+    if (t) return t.label;
+    const s = String(v ?? '').trim();
+    return !s || CUSTOM_VALUE_RE.test(s) ? '其他' : s;
+}
+
+/**
+ * 类型的颜色：已知类型用它的颜色；自由类型按关键词归到内置大类时用那一类的颜色（师兄妹 → 同伴/盟友），
+ * 归不了类时按文字算一个固定的颜色（同一个类型每次都一样）；已删除的自定义类型和空值是「其他」的灰色。
+ */
 export function relationTypeColor(v, settings) {
-    return allRelationTypes(settings).find((t) => t.value === v)?.color || '#8a8a8a';
+    const t = findRelationType(v, settings);
+    if (t) return t.color || OTHER_COLOR;
+    const s = String(v ?? '').trim();
+    if (!s || CUSTOM_VALUE_RE.test(s)) return OTHER_COLOR;
+    const g = guessType(s);
+    if (g) return RELATIONSHIP_TYPES.find((x) => x.value === g).color;
+    return hashedTypeColor(s);
+}
+
+function hslToRgb(h, s, l) {
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = l - c / 2;
+    const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+    return [r + m, g + m, b + m].map((v) => Math.round(v * 255));
+}
+
+/** WCAG 相对亮度（0~1） */
+function relLuminance([r, g, b]) {
+    const lin = (v) => {
+        const c = v / 255;
+        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    };
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+/**
+ * 按文字算的固定颜色：色相取哈希，饱和度 55%，明度按色相调到相对亮度约 0.17——
+ * 不管什么色相，在深色和浅色聊天主题上的对比度都在 3.5 左右（和内置类型的颜色一样是中等明度）。返回 #rrggbb。
+ */
+export function hashedTypeColor(text) {
+    const h = parseInt(hashString(text), 16) % 360;
+    let lo = 0.15;
+    let hi = 0.85;
+    for (let i = 0; i < 18; i++) {
+        const mid = (lo + hi) / 2;
+        if (relLuminance(hslToRgb(h, 0.55, mid)) < 0.17) lo = mid;
+        else hi = mid;
+    }
+    return `#${hslToRgb(h, 0.55, (lo + hi) / 2).map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
 function guessType(text) {
@@ -145,12 +240,50 @@ function guessType(text) {
     return '';
 }
 
+/**
+ * 筛选、图例、计数用的类型键：已知类型（含按显示名存下的自由文字）归到它的 value，其余就是文字本身，空值为 other。
+ * 例如 AI 先写了自由类型「师兄妹」，之后用户新建了同名的自定义类型（ctype_…）：旧关系存的还是文字「师兄妹」、
+ * 新关系存的是 ctype_…，两者在筛选和图例里算同一类（设置跨项目共用，在读取时归并，不改动已存的数据）。
+ */
+export function relationTypeKey(v, settings) {
+    const s = String(v ?? '').trim();
+    return findRelationType(s, settings)?.value || s || 'other';
+}
+
+/**
+ * 项目里实际用到的关系类型（筛选、图例用，按 relationTypeKey 归并）：已知类型按内置 / 自定义的顺序在前，
+ * 自由类型按条数多少、再按名字排在后面。
+ * @param {object[]} list 关系边（通常是 project.relationships）
+ * @returns {{value:string, label:string, color:string, count:number, known:boolean}[]}
+ */
+export function relationTypesInUse(list, settings) {
+    const counts = new Map();
+    for (const r of list || []) {
+        const v = relationTypeKey(r?.type, settings);
+        counts.set(v, (counts.get(v) || 0) + 1);
+    }
+    const known = allRelationTypes(settings).filter((t) => counts.has(t.value)).map((t) => ({ value: t.value, label: t.label, color: relationTypeColor(t.value, settings), count: counts.get(t.value), known: true }));
+    const knownValues = new Set(known.map((t) => t.value));
+    const free = [...counts.keys()]
+        .filter((v) => !knownValues.has(v))
+        .map((v) => ({ value: v, label: CUSTOM_VALUE_RE.test(v) ? '其他（已删除的类型）' : relationTypeLabel(v, settings), color: relationTypeColor(v, settings), count: counts.get(v), known: false }))
+        .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'zh'));
+    return [...known, ...free];
+}
+
+/** 关系类型输入框的候选（datalist）：已知类型的显示名，再加上项目里已经用过的自由类型（去重） */
+export function relationTypeSuggestions(settings, list = []) {
+    const out = allRelationTypes(settings).map((t) => t.label);
+    for (const t of relationTypesInUse(list, settings)) if (!t.known && !out.includes(t.label)) out.push(t.label);
+    return out;
+}
+
 export function normalizeRelationship(r = {}, settings) {
     return {
         id: r.id || uid('rel_'),
         from: String(r.from || '').trim(),
         to: String(r.to || '').trim(),
-        type: allRelationTypes(settings).some((t) => t.value === r.type) ? r.type : (guessType(r.type) || 'other'),
+        type: normalizeRelationType(r.type, settings),
         label: String(r.label || '').trim(),
         mutual: !!r.mutual,
         notes: String(r.notes || '').trim(),
@@ -233,7 +366,9 @@ export function mergeRelationships(project, list, chunkIndex = 0, settings) {
             skipped++;
             continue;
         }
-        const type = allRelationTypes(settings).some((t) => t.value === item.type) ? item.type : (guessType(item.type ?? item.关系) || 'other');
+        // 有 type 时按自由类型规整（已知类型换成它的 value，其他保留原文）；只有一句「关系」描述时按关键词归类
+        const rawType = item.type ?? item.类型;
+        const type = String(rawType ?? '').trim() ? normalizeRelationType(rawType, settings) : (guessType(item.关系) || 'other');
         const label = String(item.label ?? item.关系 ?? item.说明 ?? '').trim();
         const mutual = item.mutual !== undefined ? !!item.mutual : true;
         const existing = project.relationships.find((r) => (r.from === from && r.to === to) || (r.mutual && mutual && r.from === to && r.to === from));

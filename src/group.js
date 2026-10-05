@@ -11,7 +11,7 @@ import { createGroupInST, updateGroupInST } from './stio.js';
 import { uid } from './utils.js';
 
 /** 群聊里两两之间已确立的关系（去重：A-B 只显示一次） */
-function pairRelations(project, names, upto) {
+function pairRelations(project, names, upto, settings) {
     const set = new Set(names);
     const seen = new Set();
     const lines = [];
@@ -20,7 +20,7 @@ function pairRelations(project, names, upto) {
         const key = [r.from, r.to].sort().join('\u0001');
         if (seen.has(key)) continue;
         seen.add(key);
-        const line = relationLine(project, r.from, r.to, r, upto);
+        const line = relationLine(project, r.from, r.to, r, upto, settings);
         if (line) lines.push(line);
     }
     return lines.join('\n') || '（没有已确立的明确关系，按角色各自的性格自然互动）';
@@ -36,7 +36,7 @@ export function buildGroupPrompt(project, settings, opt = {}) {
         BOOK: project.bookName,
         TIMEPOINT: Number.isFinite(upto) && upto < project.chunks.length - 1 ? `第 ${upto + 1} 段结束时` : '全书结束时',
         PROFILES: profiles,
-        RELATIONS: pairRelations(project, names, upto),
+        RELATIONS: pairRelations(project, names, upto, settings),
         WORLD: worldContext(project, settings, profiles, upto),
         REQUIREMENT: opt.requirement?.trim() || '（无特别要求，自然设计一个这几个角色会同时在场的场景）',
         FIRST_MES_LEN: opt.firstMesLen || '300-600 字',

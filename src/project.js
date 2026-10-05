@@ -967,7 +967,10 @@ export function renameCharacter(project, oldName, newName) {
     ch.name = newName;
     ch.aliases = uniq([...ch.aliases.filter((a) => a !== newName), oldName]);
     project.characters[newName] = ch;
-    for (const card of project.cards) if (card.charName === oldName) card.charName = newName;
+    for (const card of project.cards) {
+        if (card.charName === oldName) card.charName = newName;
+        if (card.userRole?.charKey === oldName) card.userRole.charKey = newName; // {{user}} 扮演的原著角色
+    }
     renameInRelationships(project, oldName, newName);
     renameInGroupCards(project, oldName, newName);
     renameInPov(project, oldName, newName);
@@ -1019,7 +1022,10 @@ export function mergeCharactersInto(project, targetName, sourceNames) {
         target.lastChunk = Math.max(target.lastChunk, s.lastChunk);
         if (IMPORTANCE_RANK[s.importance] > IMPORTANCE_RANK[target.importance]) target.importance = s.importance;
         delete project.characters[n];
-        for (const card of project.cards) if (card.charName === n) card.charName = targetName;
+        for (const card of project.cards) {
+            if (card.charName === n) card.charName = targetName;
+            if (card.userRole?.charKey === n) card.userRole.charKey = targetName;
+        }
         renameInRelationships(project, n, targetName);
         renameInGroupCards(project, n, targetName);
         renameInPov(project, n, targetName);

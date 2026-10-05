@@ -250,7 +250,10 @@ const CAST_RANK = { main: 3, support: 2, minor: 1 };
  */
 export function worldCastNames(project, card, { limit = 8, all = false } = {}) {
     const upto = Number.isFinite(card?.timepoint) ? card.timepoint : Infinity;
+    // {{user}} 扮演的原著角色就是主角（主角.*），不算进主要角色（card.userRole，见 userrole.js）
+    const me = card?.userRole?.kind === 'character' ? String(card.userRole.charKey || '').trim() : '';
     const list = Object.entries(project?.characters || {})
+        .filter(([key, c]) => !me || (key !== me && String(c?.name || '').trim() !== me))
         .map(([key, c]) => ({ name: String(c?.name || key).trim(), rank: CAST_RANK[c?.importance] || 0, first: Number.isFinite(c?.firstChunk) ? c.firstChunk : 0 }))
         .filter((c) => c.name && !(c.first > upto) && !segmentProblem(c.name, { allowSpace: true }))
         .sort((a, b) => b.rank - a.rank || a.first - b.first);
@@ -707,7 +710,7 @@ function normVariable(raw, ctx) {
  * 规范化 AI 返回（或用户编辑）的变量表。
  * @param {object|object[]} raw {title, variables:[…]} 或直接是变量数组
  * @param {{charName?: string, maxVars?: number, warnings?: string[]}} opt
- *   charName：{{char}}/<char> 在路径里替换成的名字；maxVars：叶子数上限（默认 12）；
+ *   charName：{{char}}/<char> 在路径里替换成的名字；maxVars：叶子数上限（默认 DEFAULT_STATUS_BAR.maxVars，20）；
  *   warnings：传入数组时收集被丢弃/修正的原因（包括 min 大于 max 被对调、初始值超出范围被夹取）
  * @returns {{title: string, variables: object[]}}
  */

@@ -812,7 +812,8 @@ test('ensureStatusBar / createStatusBar：默认值来自设置、id 稳定、�
     const settings = mergeDefaults({}, DEFAULT_SETTINGS);
     assert.equal(settings.cards.statusBar, false);
     assert.equal(settings.cards.statusBarTemplateId, '');
-    assert.equal(settings.statusBar.maxVars, 12);
+    assert.equal(settings.statusBar.maxVars, 20, 'v0.15 起默认上限 20');
+    assert.equal(mergeDefaults({ statusBar: { maxVars: 12 } }, DEFAULT_SETTINGS).statusBar.maxVars, 12, '已保存的旧值不变');
     assert.equal(settings.statusBar.showDepth, 1);
     assert.equal(settings.statusBar.analysisLang, 'en');
     assert.deepEqual(settings.statusBarTemplates, []);

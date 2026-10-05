@@ -71,7 +71,7 @@ export const DEFAULT_PROMPTS = {
 
 # 用户要求
 {REQUIREMENT}
-
+{USER_ROLE}{ORIENTATION}
 # 字段写法
 - description：角色档案，数据库格式，依次包含
   基本信息（姓名/年龄/性别/身份/与{{user}}的关系）
@@ -105,7 +105,7 @@ export const DEFAULT_PROMPTS = {
   "mes_example": "<START>\\n{{user}}: ……\\n{{char}}: ……",
   "system_prompt": "",
   "post_history_instructions": "",
-  "creator_notes": "……",
+  "creator_notes": "……",{ORIENTATION_JSON}
   "tags": ["……"]
 }
 只输出 JSON。`,
@@ -326,6 +326,35 @@ export const DEFAULT_PROMPTS = {
 
 只输出新的「{FIELD_LABEL}」字段文本，不要输出字段名、JSON、代码块标记或任何额外说明。`,
 
+    orientationNotesSystem: `你是熟悉《{BOOK}》的角色卡作者，负责把一个剧情导向落到这本书的具体人物和设定上。你只写设定，不写剧情过程。你只输出一个 JSON 对象。`,
+
+    orientationNotes: `# 任务
+为《{BOOK}》的{CARD_KIND}「{CHAR_NAME}」写世界书「剧情导向」词条里的【本书落点】部分。
+
+# 导向
+【卡的导向：{ORIENTATION_NAME}】{ORIENTATION_BRIEF}
+词条正文（已经写好，不用重复）：
+<词条正文>
+{ORIENTATION_ENTRY}
+</词条正文>
+{USER_ROLE}
+# 角色卡内容（以这里为准）
+<角色卡内容>
+{CARD_CONTENT}
+</角色卡内容>
+
+# 原著资料（到故事时间点 {TIMEPOINT} 为止）
+{CONTEXT}
+
+# 要求
+- 结合本书的人物与设定，写出这个导向在本书里的具体落点，3-6 行，每行以“- ”开头：例如谁是原伴侣或第三者、哪些角色可能倾心于 {{user}}、关键阻碍或冲突是什么。
+- 只写设定，不写剧情过程；用 {{char}} 指代角色本人、{{user}} 指代用户，其他角色写原著里的名字。
+{INSTRUCTION_LINE}
+
+# 输出 JSON 模板
+{"orientation_notes": "- ……\\n- ……"}
+只输出 JSON。`,
+
     deduceBranchesSystem: `你是经验丰富的故事编辑/游戏策划，擅长从一张角色卡当前的设定出发，推演故事可能的发展方向。你只输出一个 JSON 数组，不要有任何其他文字、代码块标记或说明。`,
 
     deduceBranches: `这是一张角色卡当前的实际内容（以这里为准，优先于下面的背景资料）：
@@ -512,7 +541,7 @@ export const DEFAULT_PROMPTS = {
 # 要求
 - 只输出资料中已经明确成立的关系，不要推测或杜撰还未发生的关系。
 - from / to 必须使用角色资料中的规范名（不用别名）。
-- type 从上面的关系类型中选一个最贴切的；找不到贴切类型用 other。
+- type 写一个简短、准确的关系类型：上面的类型只是参考，贴切就直接用；不够贴切时写更准确的关系词（2-6 个字，最多 8 个字，如 师兄妹、青梅竹马、主仆），实在说不清才用 other。
 - mutual：双方视角一致（如朋友、家人、盟友）为 true；单方面或不对等（如暗恋、师徒、上下级）为 false，此时 from 是关系的发起方/主导方，to 是承受方。
 - label 用一句话具体说明这段关系，写具体画面而不是空泛评价（✗“感情深厚” ✓“从小一起长大，互相救过对方性命”）。
 - 已记录的关系里已经存在的（相同 from/to/type），不要重复输出。
@@ -520,7 +549,8 @@ export const DEFAULT_PROMPTS = {
 # 输出 JSON 模板
 {
   "relationships": [
-    {"from": "角色名", "to": "角色名", "type": "romantic", "mutual": true, "label": "一句话说明"}
+    {"from": "角色名", "to": "角色名", "type": "romantic", "mutual": false, "label": "一句话说明"},
+    {"from": "角色名", "to": "角色名", "type": "师兄妹", "mutual": true, "label": "一句话说明"}
   ]
 }
 只输出 JSON。`,
@@ -664,10 +694,10 @@ export const DEFAULT_PROMPTS = {
 
 # 用户要求
 {REQUIREMENT}
-
+{USER_ROLE}
 # 设计要求
 - 只选扮演中会变化、对剧情或互动有意义的状态：时间与地点、关系数值（好感、信任等）、心情、着装、所在位置、持有物品、剧情阶段等。姓名、年龄、身份背景这类固定设定已经写在角色卡里，不要做成变量。
-- 变量总数不超过 {MAX_VARS} 个（记录类型按字段计：每个字段各算一个，分组里的字段也各算一个；记录里有多少条目不影响计数）。宁少勿滥，通常 6-10 个就够。
+- 变量总数不超过 {MAX_VARS} 个（记录类型按字段计：每个字段各算一个，分组里的字段也各算一个；记录里有多少条目不影响计数）。{MAX_VARS} 只是允许的最多个数，不必用满：宁少勿滥，单人卡通常 6-12 个就够；变量越多，每轮发送的规则和输出的更新就越长。
 - 每个数字都要有范围（min / max），并在 check 里写清单轮的变化幅度（例如“单次变化 ±(1~5)”）。
 - 记录（record）条目的字段较多时，可以把同类字段收进一层分组（如 服饰：上衣 / 下装 / 配饰，状态：心情 / 心理活动），写法见类型说明；字段不多时不用分组。
 - 初始值 init 必须符合角色卡开场白里的情境，不剧透 {TIMEPOINT} 之后才发生的事。
@@ -800,6 +830,8 @@ export const PROMPT_LABELS = {
     fix: '审稿修订 · 主提示',
     cardFieldRegenSystem: '角色卡单字段重roll · 系统提示',
     cardFieldRegen: '角色卡单字段重roll · 主提示',
+    orientationNotesSystem: '剧情导向 · 本书落点 · 系统提示',
+    orientationNotes: '剧情导向 · 本书落点 · 主提示',
     deduceBranchesSystem: '剧情推演 · 走向 · 系统提示',
     deduceBranches: '剧情推演 · 走向 · 主提示',
     deduceStagesSystem: '剧情推演 · 分阶段 · 系统提示',
@@ -834,8 +866,12 @@ export const PROMPT_LABELS = {
 
 export const PROMPT_PLACEHOLDERS = {
     extract: ['{BOOK}', '{CHUNK_NO}', '{CHUNK_TITLE}', '{CHUNK_TEXT}', '{CATEGORY_GUIDE}', '{OPTIONAL_GUIDE}', '{KNOWN}', '{KNOWN_RULE}', '{JSON_TEMPLATE}', '{WRITING_RULES}', '{SUFFIX}'],
-    card: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}', '{TIMEPOINT}', '{CHAR_PROFILE}', '{RELATED}', '{WORLD}', '{OUTLINE}', '{STYLE}', '{REQUIREMENT}', '{GREETINGS}', '{FIRST_MES_LEN}', '{WRITING_RULES}'],
+    // {USER_ROLE}「{{user}} 的身份」、{ORIENTATION} 卡的导向：自定义模板里没有这两个占位符时，相应内容会追加在末尾；
+    // {ORIENTATION_JSON}：只在开了「让 AI 结合本书细化导向词条」时填，JSON 模板里多一行 orientation_notes，其他时候为空
+    card: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}', '{TIMEPOINT}', '{CHAR_PROFILE}', '{RELATED}', '{WORLD}', '{OUTLINE}', '{STYLE}', '{REQUIREMENT}', '{USER_ROLE}', '{ORIENTATION}', '{ORIENTATION_JSON}', '{GREETINGS}', '{FIRST_MES_LEN}', '{WRITING_RULES}'],
     cardFieldRegen: ['{CONTEXT}', '{FIELD_LABEL}', '{CURRENT}', '{FORMAT_NOTE}', '{INSTRUCTION_LINE}', '{WRITING_RULES}'],
+    orientationNotesSystem: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}'],
+    orientationNotes: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}', '{TIMEPOINT}', '{ORIENTATION_NAME}', '{ORIENTATION_BRIEF}', '{ORIENTATION_ENTRY}', '{USER_ROLE}', '{CARD_CONTENT}', '{CONTEXT}', '{INSTRUCTION_LINE}'],
     deduceBranches: ['{CARD_CONTENT}', '{CONTEXT}', '{COUNT}', '{DIRECTIONS}', '{INSTRUCTION_LINE}', '{WRITING_RULES}'],
     deduceStages: ['{CARD_CONTENT}', '{CONTEXT}', '{BRANCHES}', '{INSTRUCTION_LINE}', '{WRITING_RULES}'],
     deduceChatBranches: ['{CARD_CONTENT}', '{CONTEXT}', '{COUNT}', '{DIRECTIONS}', '{INSTRUCTION_LINE}', '{WRITING_RULES}'],
@@ -852,8 +888,8 @@ export const PROMPT_PLACEHOLDERS = {
     continuity: ['{BOOK}', '{CHAPTER_TITLE}', '{CONTEXT}', '{TEXT}'],
     rewrite: ['{BOOK}', '{STYLE}', '{BEFORE}', '{SELECTED}', '{AFTER}', '{INSTRUCTION}'],
     // 系统提示与主提示用同一组变量渲染，占位符列表相同；世界卡附加说明只在世界/旁白卡时渲染，结果填进主提示的 {WORLD_GUIDE}
-    statusSpecSystem: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}', '{TIMEPOINT}', '{CARD_CONTENT}', '{CONTEXT}', '{REQUIREMENT}', '{MAX_VARS}', '{WORLD_GUIDE}', '{TEMPLATE_SPEC}', '{TYPE_GUIDE}', '{JSON_TEMPLATE}', '{INSTRUCTION_LINE}'],
-    statusSpec: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}', '{TIMEPOINT}', '{CARD_CONTENT}', '{CONTEXT}', '{REQUIREMENT}', '{MAX_VARS}', '{WORLD_GUIDE}', '{TEMPLATE_SPEC}', '{TYPE_GUIDE}', '{JSON_TEMPLATE}', '{INSTRUCTION_LINE}'],
+    statusSpecSystem: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}', '{TIMEPOINT}', '{CARD_CONTENT}', '{CONTEXT}', '{REQUIREMENT}', '{USER_ROLE}', '{MAX_VARS}', '{WORLD_GUIDE}', '{TEMPLATE_SPEC}', '{TYPE_GUIDE}', '{JSON_TEMPLATE}', '{INSTRUCTION_LINE}'],
+    statusSpec: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}', '{TIMEPOINT}', '{CARD_CONTENT}', '{CONTEXT}', '{REQUIREMENT}', '{USER_ROLE}', '{MAX_VARS}', '{WORLD_GUIDE}', '{TEMPLATE_SPEC}', '{TYPE_GUIDE}', '{JSON_TEMPLATE}', '{INSTRUCTION_LINE}'],
     statusSpecWorld: ['{CHAR_NAME}', '{CAST}'],
     statusHtmlSystem: ['{CHAR_NAME}', '{CARD_KIND}', '{SPEC_SUMMARY}', '{SAMPLE_JSON}', '{BINDING_GUIDE}', '{LAYOUT_GUIDE}', '{STYLE_REF}', '{WORLD_GUIDE}', '{REQUIREMENT}', '{INSTRUCTION_LINE}'],
     statusHtml: ['{CHAR_NAME}', '{CARD_KIND}', '{SPEC_SUMMARY}', '{SAMPLE_JSON}', '{BINDING_GUIDE}', '{LAYOUT_GUIDE}', '{STYLE_REF}', '{WORLD_GUIDE}', '{REQUIREMENT}', '{INSTRUCTION_LINE}'],

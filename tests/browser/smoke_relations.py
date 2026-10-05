@@ -74,7 +74,8 @@ try:
         page.wait_for_selector('.nl-dialog select[data-f="from"]')
         page.select_option('.nl-dialog select[data-f="from"]', '江酒')
         page.select_option('.nl-dialog select[data-f="to"]', '莉莉丝')
-        page.select_option('.nl-dialog select[data-f="type"]', 'romantic')
+        # 关系类型是带候选的文本框：填已知类型的名字时存成它的 value
+        page.fill('.nl-dialog input[data-f="type"]', '爱慕/恋人')
         page.uncheck('.nl-dialog [data-f="mutual"]')
         page.fill('.nl-dialog [data-f="label"]', '曾经的恋人')
         ok_dialog(page, '保存')
@@ -82,6 +83,7 @@ try:
         page.wait_for_selector('.nl-rel-svg circle')
         assert page.locator('.nl-table tbody tr').count() == 1
         assert '曾经的恋人' in page.inner_text('.nl-table')
+        assert ev(page, 'NovelLoom.app.project.relationships[0].type') == 'romantic'
         shot(page, '02-manual-add')
 
         # 编辑该关系
@@ -168,7 +170,7 @@ try:
         page.wait_for_selector('.nl-dialog [data-rt-new-name]')
         assert '还没有关系模板' in page.inner_text('.nl-dialog')
         page.fill('.nl-dialog [data-rt-new-name]', '青梅竹马')
-        page.select_option('.nl-dialog [data-rt-new-type]', 'friend')
+        page.fill('.nl-dialog [data-rt-new-type]', '朋友')
         page.check('.nl-dialog [data-rt-new-mutual]')
         page.fill('.nl-dialog [data-rt-new-label]', '{A}和{B}从小一起长大')
         page.click('.nl-dialog [data-rt-add]')
@@ -191,12 +193,13 @@ try:
         # 添加关系时套用模板：类型/方向/说明被填好，{A}/{B} 换成所选角色；改角色 B 时说明跟着更新
         page.click('[data-act="add"]')
         page.wait_for_selector('.nl-dialog select[data-f="template"]')
+        page.wait_for_selector('.nl-dialog input[data-f="type"]')
         page.select_option('.nl-dialog select[data-f="from"]', '莉莉丝')
         page.select_option('.nl-dialog select[data-f="to"]', '江酒')
-        page.select_option('.nl-dialog select[data-f="type"]', 'enemy')
+        page.fill('.nl-dialog input[data-f="type"]', '敌对')
         page.uncheck('.nl-dialog [data-f="mutual"]')
         page.select_option('.nl-dialog select[data-f="template"]', label='青梅竹马')
-        assert page.input_value('.nl-dialog select[data-f="type"]') == 'friend'
+        assert page.input_value('.nl-dialog input[data-f="type"]') == '朋友'
         assert page.is_checked('.nl-dialog [data-f="mutual"]')
         assert page.input_value('.nl-dialog [data-f="label"]') == '莉莉丝和江酒从小一起长大', page.input_value('.nl-dialog [data-f="label"]')
         page.select_option('.nl-dialog select[data-f="to"]', '姜小白')

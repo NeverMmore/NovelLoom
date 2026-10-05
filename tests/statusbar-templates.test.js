@@ -8,7 +8,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 
 import {
-    BUILTIN_STATUSBAR_TEMPLATES, STATUS_TEMPLATE_FILE_TYPE, STATUS_TEMPLATE_MODE_LABELS, TEMPLATE_VAR_CAP_MAX, addStatusBarTemplate,
+    BUILTIN_STATUSBAR_TEMPLATES, STATUS_TEMPLATE_FILE_TYPE, STATUS_TEMPLATE_MODE_LABELS, TEMPLATE_OWN_CAP_ABOVE, TEMPLATE_VAR_CAP_MAX, addStatusBarTemplate,
     applyStatusBarTemplate, duplicateStatusBarTemplate, exportStatusBarTemplate, findStatusBarRegex, getStatusBarTemplate,
     importStatusBarTemplate, isBuiltinStatusBarTemplate, listStatusBarTemplates, parseStatusBarTemplate, removeStatusBarTemplate,
     statusBarTemplateFileName, statusBarVarCap, templateFromCardJson, templateFromStatusBar, templatePreviewCard, templateStyleRef,
@@ -94,11 +94,13 @@ test('模式显示名：模板列表与状态栏编辑器共用一份，bind 叫
     assert.ok(Object.isFrozen(STATUS_MODE_LABELS));
 });
 
-test('内置模板：变量表不超过各自的上限（默认 12，模板自带的 maxVars 最多 30），经 normalizeStatusSpec 不变且没有警告', () => {
+test('内置模板：变量表不超过各自的上限（变量多于 12 个的带自带上限，最多 100），经 normalizeStatusSpec 不变且没有警告', () => {
+    assert.equal(TEMPLATE_OWN_CAP_ABOVE, 12, '界线是旧版默认上限 12，默认上限改成 20 后不跟着变（老用户的设置里还是 12）');
+    assert.equal(TEMPLATE_VAR_CAP_MAX, 100);
     for (const t of BUILTIN_STATUSBAR_TEMPLATES) {
         const n = countSpecLeaves(t.spec);
-        // 只有变量多于默认上限的模板才带自己的上限，而且正好是它需要的数
-        assert.equal(t.maxVars, n > DEFAULT_STATUS_BAR.maxVars ? n : null, t.name);
+        // 只有变量多于 12 个的模板才带自己的上限，而且正好是它需要的数
+        assert.equal(t.maxVars, n > TEMPLATE_OWN_CAP_ABOVE ? n : null, t.name);
         assert.ok(n >= 6 && n <= (t.maxVars ?? DEFAULT_STATUS_BAR.maxVars) && n <= TEMPLATE_VAR_CAP_MAX, `${t.name}：${n} 个叶子`);
         const warnings = [];
         const again = normalizeStatusSpec(t.spec, { maxVars: t.maxVars ?? DEFAULT_STATUS_BAR.maxVars, warnings });
@@ -855,12 +857,16 @@ test('多人群像模板：预览页面（模板预览卡）带上立绘配置�
 
 test('模板自带的变量上限：套用「多人群像」时按 15 保留全部变量（并提示），显式 maxVars 仍然截断；templateVarCap / statusBarVarCap', () => {
     const s = settings();
-    assert.equal(s.statusBar.maxVars, 12);
+    assert.equal(s.statusBar.maxVars, 20, '新默认 20');
+    assert.equal(templateVarCap(ENS, s), 20, '默认设置下「多人群像」的 15 个变量本来就放得下');
+    s.statusBar.maxVars = 12; // 老用户的设置：v0.15 之前的默认上限 12
     assert.equal(templateVarCap(ENS, s), 15);
     assert.equal(templateVarCap(BUILTIN_STATUSBAR_TEMPLATES[0], s), 12);
     assert.equal(templateVarCap(ENS, { statusBar: { maxVars: 20 } }), 20, '设置里的上限更大时用设置的');
-    assert.equal(templateVarCap({ maxVars: 99 }, s), TEMPLATE_VAR_CAP_MAX);
-    assert.equal(templateVarCap({ maxVars: 'x' }, null), 12);
+    assert.equal(templateVarCap({ maxVars: 99 }, s), 99);
+    assert.equal(templateVarCap({ maxVars: 150 }, s), TEMPLATE_VAR_CAP_MAX);
+    assert.equal(templateVarCap({ maxVars: 'x' }, null), DEFAULT_STATUS_BAR.maxVars);
+    assert.equal(templateVarCap(null, { statusBar: { maxVars: 500 } }), TEMPLATE_VAR_CAP_MAX, '设置里的上限也最多 100');
     assert.equal(templateVarCap(null, { statusBar: { maxVars: 5 } }), 5);
 
     const c = card();
@@ -895,8 +901,9 @@ test('模板自带的变量上限：套用「多人群像」时按 15 保留全�
     assert.equal('portraits' in out, false);
     assert.equal('maxVars' in exportStatusBarTemplate(BUILTIN_STATUSBAR_TEMPLATES[0]), false);
     assert.equal(parseStatusBarTemplate(JSON.stringify(out)).maxVars, 15);
-    const u = addStatusBarTemplate(s, { ...USER_TPL, name: '上限', maxVars: 99 });
-    assert.equal(u.maxVars, 30);
+    const u = addStatusBarTemplate(s, { ...USER_TPL, name: '上限', maxVars: 150 });
+    assert.equal(u.maxVars, 100);
+    assert.equal(updateStatusBarTemplate(s, u.id, { maxVars: 64 }).maxVars, 64);
     assert.equal(updateStatusBarTemplate(s, u.id, { maxVars: 1 }).maxVars, 3);
     assert.equal(updateStatusBarTemplate(s, u.id, { maxVars: '无' }).maxVars, null);
     assert.equal(addStatusBarTemplate(s, { ...USER_TPL, name: '没写上限' }).maxVars, null);
@@ -909,6 +916,7 @@ test('模板自带的变量上限：套用「多人群像」时按 15 保留全�
 
 test('卡片自己的变量上限（statusBar.maxVars）：沿用结构「多人群像」后再「只借外观」换模板，上限仍是 15，变量表校验不丢 NPC（审查复现 t4）', () => {
     const s = settings();
+    s.statusBar.maxVars = 12; // 老用户的设置：v0.15 之前的默认上限 12
     const c = { id: 'c1', kind: 'world', data: { name: '旁白', first_mes: 'x', alternate_greetings: [] } };
     applyStatusBarTemplate(c, getStatusBarTemplate(s, 'builtin_ensemble'), 'structure', { settings: s });
     assert.equal(countSpecLeaves(c.statusBar.spec), 15);
@@ -934,6 +942,7 @@ test('卡片自己的变量上限（statusBar.maxVars）：沿用结构「多人
 
 test('statusBarVarCap：取设置里的上限、卡片记着的上限、现有变量数三者的最大值；leaves 可指定（例如打开对话框时的变量数）', () => {
     const s = settings();
+    s.statusBar.maxVars = 12; // 老用户的设置：v0.15 之前的默认上限 12
     const c = card();
     ensureStatusBar(c, s);
     assert.equal(c.statusBar.maxVars, null, '新建的状态栏跟随设置');
@@ -945,9 +954,11 @@ test('statusBarVarCap：取设置里的上限、卡片记着的上限、现有�
     assert.equal(statusBarVarCap(c, s), 15);
     assert.equal(statusBarVarCap(c, s, { leaves: 18 }), 18);
     assert.equal(statusBarVarCap(c, s, { leaves: 3 }), 12);
-    // 卡上记的上限：超出 3~30 的按 3~30，无效的忽略
+    // 卡上记的上限：超出 3~100 的按 3~100，无效的忽略
     c.statusBar.spec = { title: 't', variables: [] };
     c.statusBar.maxVars = 99;
+    assert.equal(statusBarVarCap(c, s), 99);
+    c.statusBar.maxVars = 150;
     assert.equal(statusBarVarCap(c, s), TEMPLATE_VAR_CAP_MAX);
     c.statusBar.maxVars = '很多';
     assert.equal(statusBarVarCap(c, s), 12);

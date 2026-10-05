@@ -64,9 +64,11 @@ function installST(handler) {
         getContext: () => ({
             async generateRaw({ prompt }) {
                 const messages = Array.isArray(prompt) ? prompt : [{ role: 'user', content: String(prompt) }];
-                const text = messages.map((m) => m.content).join('\n');
+                // 酒馆当前连接模式下 NovelLoom 给 {{ }} 中间插了零宽空格（见 llm.js shieldMacros）；模拟的 AI 照常读出原文
+                const plain = (t) => String(t).replace(/​/g, '');
+                const text = plain(messages.map((m) => m.content).join('\n'));
                 const kind = text.includes('data-nl-bar="路径"') ? 'html' : 'spec';
-                const call = { messages, text, kind, last: messages[messages.length - 1].content, n: calls.filter((c) => c.kind === kind).length };
+                const call = { messages, text, kind, last: plain(messages[messages.length - 1].content), n: calls.filter((c) => c.kind === kind).length };
                 calls.push(call);
                 return handler(call);
             },
@@ -155,7 +157,8 @@ test('buildStatusSpecPrompt / buildStatusHtmlPrompt：占位符全部替换，�
     assert.match(spec.prompt, /《雨夜》的角色卡「林小雨」/);
     assert.match(spec.prompt, /雨停了。林小雨把最后一把椅子倒扣在桌上/, '带上开场白');
     assert.match(spec.prompt, /咖啡馆店员/, '带上原著角色资料');
-    assert.match(spec.prompt, /不超过 12 个/);
+    assert.match(spec.prompt, /不超过 20 个/, '默认上限 20');
+    assert.match(spec.prompt, /20 只是允许的最多个数，不必用满/, '上限调大后也提醒 AI 宁少勿滥');
     assert.match(spec.prompt, /突出好感变化/);
     assert.match(spec.prompt, /额外要求（优先满足）：加一个天气变量/);
     assert.match(spec.prompt, /"path":"林小雨\.好感度"/, 'JSON 模板用角色名');
@@ -174,7 +177,7 @@ test('buildStatusSpecPrompt / buildStatusHtmlPrompt：占位符全部替换，�
     assert.match(html.prompt, /额外要求（优先满足）：霓虹风/);
 
     s.prompts = { statusSpec: '自定义：{CHAR_NAME} 最多 {MAX_VARS} 个' };
-    assert.equal(buildStatusSpecPrompt(p, s, c).prompt, '自定义：林小雨 最多 12 个', '用户在设置里改过的提示词生效');
+    assert.equal(buildStatusSpecPrompt(p, s, c).prompt, '自定义：林小雨 最多 20 个', '用户在设置里改过的提示词生效');
 });
 
 // ---------------- 解析工具 ----------------
@@ -1017,7 +1020,7 @@ test('statusLayoutGuide：示例片段本身通过检查、能在运行时渲染
 test('套用「多人群像」（模板自带上限 15）后让 AI 调整：15 个变量全部保留，不按设置上限 12 截掉 NPC；世界卡补上主要角色；撤销连同模板带来的立绘一起换回', async () => {
     const { applyStatusBarTemplate, getStatusBarTemplate } = await import('../src/statusbar-templates.js');
     const s = settings();
-    assert.equal(s.statusBar.maxVars, 12);
+    s.statusBar.maxVars = 12; // 老用户的设置：v0.15 之前的默认上限 12（新默认 20 时 15 个变量本来就放得下）
     const p = castProject();
     const c = worldCard();
     const own = { characters: { 林小雨: [{ url: 'https://img.example.com/lin.png' }] }, pools: [] };
@@ -1073,6 +1076,7 @@ test('套用「多人群像」（模板自带上限 15）后让 AI 调整：15 �
 test('卡片自己的变量上限：沿用结构的 AI 调整记下模板的上限；之后按别的模板「只借外观」重写界面、只重写规则都不降低；整体重新设计时回到设置里的', async () => {
     const { applyStatusBarTemplate, getStatusBarTemplate, statusBarVarCap } = await import('../src/statusbar-templates.js');
     const s = settings();
+    s.statusBar.maxVars = 12; // 老用户的设置：v0.15 之前的默认上限 12
     const p = castProject();
     const c = worldCard();
     const ens = getStatusBarTemplate(s, 'builtin_ensemble');

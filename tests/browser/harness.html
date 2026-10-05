@@ -146,6 +146,8 @@ const mock = (prompt) => {
     return '【改写】' + sel.replace(/仿佛/g, '') + '（' + instr + '）';
   }
   if (prompt.includes('梳理角色之间已经明确建立的关系')) {
+    // smoke_misc_v15.py 用 window.__relMock 返回自由填写的关系类型（师兄妹、主仆……）
+    if (typeof window.__relMock === 'function') return window.__relMock(prompt);
     const has = (n) => prompt.includes('姓名: ' + n);
     const rel = [];
     if (has('江酒') && has('莉莉丝')) rel.push({ from: '江酒', to: '莉莉丝', type: 'romantic', mutual: false, label: '曾是恋人，如今在她的酒吧当女仆' });
@@ -160,7 +162,8 @@ const ctx = {
   saveSettingsDebounced() { window.__settingsSaved = (window.__settingsSaved || 0) + 1; },
   getRequestHeaders: ({ omitContentType } = {}) => omitContentType ? { 'X-CSRF-Token': 't' } : { 'Content-Type': 'application/json', 'X-CSRF-Token': 't' },
   async generateRaw({ prompt, systemPrompt }) {
-    const text = Array.isArray(prompt) ? prompt.map((m) => m.content).join('\n') : prompt;
+    // NovelLoom 在酒馆当前连接模式下给 {{ }} 中间插了零宽空格（防止酒馆替换宏，见 src/llm.js shieldMacros）；模拟的 AI 照常读出原文
+    const text = (Array.isArray(prompt) ? prompt.map((m) => m.content).join('\n') : prompt).replace(/​/g, '');
     window.__roles = (window.__roles || []).concat([Array.isArray(prompt) ? prompt.map((m) => m.role) : ['string']]);
     window.__prompts = (window.__prompts || []).concat([text]);
     await new Promise((r) => setTimeout(r, 30));

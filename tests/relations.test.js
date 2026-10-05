@@ -58,14 +58,15 @@ function installST(mockFn) {
 
 // ---------------- 数据模型 / CRUD ----------------
 
-test('normalizeRelationship：默认值、按中文关系词猜测类型', () => {
+test('normalizeRelationship：默认值；类型是自由文本（已知类型的名字换成 value，其他原样保留，最多 8 个字）', () => {
     const r = normalizeRelationship({ from: '江酒', to: '莉莉丝', type: '前男友' });
-    assert.equal(r.type, 'romantic');
+    assert.equal(r.type, '前男友', '更贴切的短类型原样保留，不再归成内置类型');
     assert.equal(r.mutual, false);
     assert.equal(r.auto, false);
     assert.ok(r.id.startsWith('rel_'));
-    const r2 = normalizeRelationship({ from: 'a', to: 'b', type: '完全无法识别的类型' });
-    assert.equal(r2.type, 'other');
+    assert.equal(normalizeRelationship({ from: 'a', to: 'b', type: '家人' }).type, 'family', '已知类型的名字换成它的 value');
+    assert.equal(normalizeRelationship({ from: 'a', to: 'b', type: '完全无法识别的一种类型' }).type, '完全无法识别的一');
+    assert.equal(normalizeRelationship({ from: 'a', to: 'b' }).type, 'other');
 });
 
 test('addRelationship：写入并拒绝同一角色', () => {
@@ -145,7 +146,8 @@ test('自定义关系类型：新增/改名改色/删除，保存在扩展设置
     const r = addRelationship(p, { from: '江酒', to: '莉莉丝', type: t.value, chunk: 0 }, s);
     assert.equal(r.type, t.value, '自定义类型应原样保留，而不是被判定为 other');
     const rNoSettings = normalizeRelationship({ from: 'a', to: 'b', type: t.value });
-    assert.equal(rNoSettings.type, 'other', '不传 settings 时无法识别自定义类型，回退到 other');
+    assert.equal(rNoSettings.type, t.value, '不传 settings 时也不改掉自定义类型的编号（只是显示成「其他」）');
+    assert.equal(normalizeRelationship({ from: 'a', to: 'b', type: '养父女（改）' }, s).type, t.value, '填自定义类型的名字时存成它的 value');
 
     assert.equal(removeCustomRelationType(s, t.value), true);
     assert.equal(s.customRelationTypes.length, 0);

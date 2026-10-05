@@ -172,6 +172,9 @@ try:
         page.wait_for_selector('[data-act="generate"]')
         page.select_option('[data-form="kind"]', 'world')
         page.wait_for_selector('[data-form="charName"]', state='hidden')
+        # 世界卡的卡名不用 AI 写的 name：这里在「卡名」里填「魔女旁白」（留空时是书名「魔女」，见 smoke_cards_v2）
+        assert page.locator('[data-form="cardName"]').get_attribute('placeholder') == '魔女'
+        page.fill('[data-form="cardName"]', '魔女旁白')
         page.click('details:has(> summary:has-text("写卡选项")) > summary')
         page.check('[data-setting="cards.statusBar"]')
         assert page.locator('[data-sb-form-opts]').is_visible()
@@ -229,7 +232,7 @@ try:
         sb = sbar(page)
         assert sb['spec']['variables'][3]['init']['莉莉丝']['服饰'] == {'上衣': '黑色长裙', '下装': '', '配饰': ''}, '已有条目补上新字段的初始值'
         assert '算 5 个变量' in page.locator('tr.nl-sb-fields-row[data-sb-fields-row="3"] [data-sb-fields-count]').inner_text()
-        assert '10 / 12 个变量' in page.locator('[data-sb-count]').inner_text()
+        assert '10 / 20 个变量' in page.locator('[data-sb-count]').inner_text(), '默认上限 20'
         # 填入主要角色：都已经在了
         page.click('[data-act="sb-seed-cast"][data-sb-i="3"]')
         page.wait_for_selector('[data-sb-flash]')
@@ -356,6 +359,8 @@ try:
         shot(page, '06-preview-updated')
 
         step('套用「多人群像」（沿用结构 + AI 调整）：模板自带上限 15，不截掉 NPC')
+        # 老用户的设置：v0.15 之前的默认上限 12（新默认 20 时 15 个变量本来就放得下，就看不到「自带上限」了）
+        page.evaluate('NovelLoom.app.settings.statusBar.maxVars = 12')
         tab(page, 'vars')
         page.click('.nl-sb-toolbar [data-act="sb-templates"]')
         page.wait_for_selector('.nl-dialog-overlay [data-tpl-id="builtin_ensemble"]')

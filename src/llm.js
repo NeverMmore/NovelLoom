@@ -346,9 +346,51 @@ async function httpJson(url, init, signal) {
     }
 }
 
+// ---------------- 酒馆宏保护 ----------------
+
+const ZWSP = '​';
+/** 酒馆旧式的非花括号宏（<USER> <BOT> <CHAR> <GROUP> <CHARIFNOTGROUP>，不分大小写） */
+const LEGACY_MACRO_RE = /<(?=(?:user|bot|char|charifnotgroup|group)>)/gi;
+const LEGACY_MACRO_RESTORE_RE = /<​+(?=(?:user|bot|char|charifnotgroup|group)>)/gi;
+
+/**
+ * 酒馆当前连接（generateRaw）会在 createRawPrompt（public/script.js）里对每条消息的内容跑 substituteParams：
+ * 写卡提示词里原样保留给 AI 看的 {{char}} / {{user}} 会被换成酒馆里**当前打开**的角色名 / 用户名，
+ * AI 就照着写出酒馆当前聊天的名字（卡名、示例对话的说话人都对不上小说）。
+ * 这里在两个连续的花括号之间插入零宽空格（{{ → {​{、}} → }​}）：旧宏引擎的正则（/{{user}}/gi …、content.includes('{{') 短路）
+ * 和新宏引擎（macros/engine/MacroLexer.js 的 Macro.Start /\{\{/、Macro.End /\}\}/）都要求两个花括号紧挨着，插入后都不再识别；
+ * 新引擎的后处理会把 \{ \} 的反斜杠去掉，所以反斜杠与花括号之间也插一个；旧式的 <USER> 等标记同样在 < 后插入。
+ * 连接配置档（ConnectionManagerRequestService）不做宏替换，不需要。
+ */
+export function shieldMacros(text) {
+    return String(text ?? '')
+        .replace(/\{(?=\{)/g, `{${ZWSP}`)
+        .replace(/\}(?=\})/g, `}${ZWSP}`)
+        .replace(/\\(?=[{}])/g, `\\${ZWSP}`)
+        .replace(LEGACY_MACRO_RE, `<${ZWSP}`);
+}
+
+/** shieldMacros 的逆操作，用在 AI 的回复上：去掉花括号前后的零宽空格（AI 照抄过来的），还原 {{char}} / {{user}} */
+export function unshieldMacros(text) {
+    return String(text ?? '')
+        .replace(/​+(?=[{}])/g, '')
+        .replace(/(?<=[{}])​+/g, '')
+        .replace(LEGACY_MACRO_RESTORE_RE, '<');
+}
+
+/**
+ * 发给酒馆 generateRaw 的消息：新对象（酒馆会直接改写传进去的消息），内容做宏保护。
+ * noNames：每条消息带上空的 name。文本补全（mainApi 不是 'openai'）时 createRawPrompt 会在每条消息前加「用户名: 」「角色名: 」
+ * （name 为空时用酒馆当前的 name1 / name2；开了指令模式且 names_behavior 为“总是”时 formatInstructModeChat 同样加名字），
+ * 酒馆当前的用户名 / 打开的角色名就又混进了提示词；name 为空字符串时两处都不加。聊天补全不要传：有的后端不接受空的 name 字段。
+ */
+export function shieldMessages(list, { noNames = false } = {}) {
+    return list.map((m) => ({ role: m.role, content: shieldMacros(m.content), ...(noNames ? { name: '' } : {}) }));
+}
+
 // ---------------- 各模式实现 ----------------
 
-async function callTavern({ list, signal, userSignal }) {
+async function callTavern({ list, signal, userSignal, tavernMacros = false }) {
     const c = ctx();
     if (!c?.generateRaw) throw new LLMError('无法访问酒馆 generateRaw，请确认 SillyTavern 版本');
     // 只有用户主动停止时才调用 stopGeneration（它会停止酒馆内所有生成）；超时只放弃等待
@@ -358,22 +400,44 @@ async function callTavern({ list, signal, userSignal }) {
         } catch { /* ignore */ }
     };
     userSignal?.addEventListener('abort', onAbort, { once: true });
+    // tavernMacros：调用方有意让酒馆按当前聊天替换宏（剧情推演·当前对话），不做保护
+    // 文本补全时消息带空的 name，酒馆不再在每条前面加当前的用户名 / 角色名（见 shieldMessages）
+    const textCompletion = !!c.mainApi && c.mainApi !== 'openai';
+    const msgs = tavernMacros ? list.map((m) => ({ ...m })) : shieldMessages(list, { noNames: textCompletion });
+    const restore = tavernMacros ? (t) => t : unshieldMacros;
     try {
         let result;
+        // 聊天补全且酒馆提供 generateRawData：拿原始回复自己取正文，不经过 generateRaw 的 cleanUpMessage——
+        // 它会删掉回复里所有行首的「当前角色名:」（allow_name2_display 关着时，没有开关能关掉），
+        // 示例对话里「林黛玉: …」这样的行就被删了名字，规整不回 {{char}}:；还会跑酒馆的输出正则、合并空行、修 Markdown，可能改坏 JSON。
+        // 文本补全不走这条：那里还要靠 cleanUpMessage 去掉停止串和指令模式的序列。
+        if (!tavernMacros && c.mainApi === 'openai' && typeof c.generateRawData === 'function' && typeof c.extractMessageFromData === 'function') {
+            try {
+                const data = await withAbort(c.generateRawData({ prompt: msgs }), signal);
+                result = c.extractMessageFromData(data, 'openai');
+            } catch (e) {
+                if (isAbortError(e) || e instanceof LLMError) throw e;
+                throw tavernError('酒馆生成失败', e);
+            }
+            if (!String(result ?? '').trim()) throw new LLMError('酒馆生成失败：No message generated', { retryable: true });
+            return { text: restore(String(result ?? '')) };
+        }
         try {
             // 注意：不传 responseLength。酒馆用全局变量临时替换回复长度，并发调用时可能把用户的设置永久改掉；
             // 因此酒馆模式沿用用户在酒馆里设置的“最大回复长度”。
-            result = await withAbort(c.generateRaw({ prompt: list }), signal);
+            // trimNames: false：不让酒馆在回复里遇到「当前用户名:」就截断（或整条删掉）、不去掉开头的「角色名:」（旧版酒馆忽略这个参数）；
+            // tavernMacros（剧情推演·当前对话，有意按酒馆当前聊天生成）照旧用酒馆的默认值
+            result = await withAbort(c.generateRaw({ prompt: msgs, trimNames: tavernMacros }), signal);
         } catch (e) {
             if (isAbortError(e) || e instanceof LLMError) throw e;
             // 旧版酒馆：位置参数 + 字符串
             if (/is not a function|Cannot read|prompt\.map|substring|trim/i.test(String(e?.message))) {
-                result = await withAbort(c.generateRaw(flatten(list)), signal);
+                result = await withAbort(c.generateRaw(tavernMacros ? flatten(list) : shieldMacros(flatten(list))), signal);
             } else {
                 throw tavernError('酒馆生成失败', e);
             }
         }
-        return { text: String(result ?? '') };
+        return { text: restore(String(result ?? '')) };
     } finally {
         userSignal?.removeEventListener('abort', onAbort);
     }
@@ -507,6 +571,7 @@ async function requestWithRetry(impl, list, req, api) {
                 signal: linked.signal,
                 userSignal: req.signal,
                 api,
+                tavernMacros: !!req.tavernMacros,
             });
             if (!res.text || !String(res.text).trim()) throw new LLMError('AI 返回了空内容（empty response；可能是服务商过滤，或酒馆里的回复长度设得太小）', { retryable: true });
             return { ...res, attempts: attempt + 1 };
@@ -534,6 +599,7 @@ async function requestWithRetry(impl, list, req, api) {
  *   expect?: 'json'|'prose'}} req
  *   chain：消息链（{SYSTEM}/{PROMPT}/{BOOK} 占位符）；followUps：追加在链之后的消息（如 JSON 修复重试）
  *   antiTruncate：被截断时自动接续；expect：输出类型，用于在没有结束原因时判断是否中途断开、是否为拒绝
+ *   tavernMacros：酒馆当前连接模式下让酒馆照常替换 {{char}}/{{user}} 等宏（默认会保护起来原样发给 AI，见 shieldMacros）
  * @returns {Promise<{text:string, reasoning?:string, finish?:string, ms:number, attempts:number, continues:number}>}
  */
 export async function callLLM(req) {

@@ -262,7 +262,7 @@ A borrowed palette: three theme roots, everything else mixed from them at fixed 
 - **Cornflower Blue** (`info`; default ≈ #669edf): constant (常驻) world-book entries.
 - **White on Accent** (#ffffff): text and check glyphs on Accent Solid and on completed pipeline marks.
 
-Status tags tint their own color at 14% behind the text. In prompt and message-chain previews the three roles borrow the status hues as labels: system blue, user green, assistant amber. Relation-type colors in the relations page are user data (each type carries a user-chosen color), not system tokens.
+Status tags tint their own color at 14% behind the text. In prompt and message-chain previews the three roles borrow the status hues as labels: system blue, user green, assistant amber. Relation-type colors in the relations page are user data (each built-in or custom type carries its own color), not system tokens; a free-text type (师兄妹, 主仆) borrows the color of the built-in category it resembles, or else a stable hue hashed from its text at a fixed mid luminance so it reads on light and dark themes. The legend under the graph lists the types in use as segmented filters, each led by a 7px dot in the type's color.
 
 ### Named Rules
 **The Borrowed Palette Rule.** Every UI color is a `color-mix` of the theme's ink, accent or glass. The only fixed values are the four status hues (always pulled 18% toward ink), white on accent, and the black scrim. Borders derive from ink, not from SillyTavern's border color variable.
@@ -362,7 +362,7 @@ Compact, neutral and quiet until one of them matters.
 **The Rows Not Boxes Rule.** Inside a card, collections are rows (hairline-separated for projects, world-book entries, plan chapters, style samples and character cards; 2px-gapped hover rows for chunks), never a grid of filled, bordered mini-cards.
 
 ### Inputs / Fields
-- **Style:** Field Veil well, 1px Strong Hairline border, 6px radius, min 32px tall, 5px × 10px padding, 14px text; placeholders in Faint Ink. Textareas use 1.65 line height and resize vertically. Selects draw their own two-stroke chevron in Quiet Ink.
+- **Style:** Field Veil well, 1px Strong Hairline border, 6px radius, min 32px tall, 5px × 10px padding, 14px text; placeholders in Faint Ink. Textareas use 1.65 line height and resize vertically. Selects draw their own two-stroke chevron in Quiet Ink. Text inputs with a suggestion list (`list=`, e.g. relation types) draw the same chevron at rest, with the native list button transparent over it; on focus the current text moves into the placeholder so the whole list shows, and it comes back on blur if nothing was typed.
 - **Hover:** border to 30% ink.
 - **Focus:** Accent Edge border plus the 3px field focus halo; no browser outline.
 - **Disabled / read-only:** First Veil fill and Quiet Ink text.

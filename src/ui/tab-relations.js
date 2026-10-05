@@ -3,20 +3,24 @@
 import { app } from '../app.js';
 import { getVolumes, IMPORTANCE_RANK } from '../project.js';
 import {
+    RELATION_TYPE_MAX,
     addCustomRelationType,
     addRelationship,
     addRelationTemplate,
-    allRelationTypes,
     analyzeRelationships,
     applyRelationTemplate,
     customRelationTypes,
     exportRelationshipsJson,
     mergeRelationships,
+    normalizeRelationType,
     parseRelationshipsJson,
     relationsAt,
     relationTemplates,
     relationTypeColor,
+    relationTypeKey,
     relationTypeLabel,
+    relationTypesInUse,
+    relationTypeSuggestions,
     removeCustomRelationType,
     removeRelationship,
     removeRelationTemplate,
@@ -49,6 +53,59 @@ function layoutNodes(names, w, h) {
     });
 }
 
+/**
+ * 关系类型输入框：自由填写，datalist 给出已知类型的名字和项目里用过的类型（填已知类型的名字时存成它的 value）。
+ * 不限制长度：自定义类型的名字可能超过 8 个字，要能完整写出来才认得；自由类型保存时由 normalizeRelationType 截到 8 个字。
+ * 聚焦时把当前文字挪到占位文字里、清空输入框（浏览器只列出与已填文字匹配的候选，不清空就看不到完整列表），
+ * 离开时还是空的就放回原来的文字，见 bindTypeInputs；读值用 typeInputText。
+ * @param {string} attrs 输入框上的 data-* 等属性
+ */
+function typeInputHtml(attrs, value, listId) {
+    return `<input class="nl-input" ${attrs} data-type-input list="${listId}" value="${esc(value)}" placeholder="${esc(TYPE_PLACEHOLDER)}" title="可以从列表选，也可以直接写（最多 ${RELATION_TYPE_MAX} 个字，已有类型的名字不限）" autocomplete="off" spellcheck="false">`;
+}
+
+const TYPE_PLACEHOLDER = '例如：朋友、师兄妹';
+
+/** 关系类型输入框当前代表的文字：正在编辑、还没输入时是聚焦前的文字 */
+export function typeInputText(input) {
+    if (!input) return '';
+    return String(input.value || '').trim() || String(input.dataset.typePrev || '').trim();
+}
+
+/** 给 root 里的关系类型输入框挂上聚焦清空 / 离开恢复（事件委托，对话框里重绘的行也有效） */
+export function bindTypeInputs(root) {
+    root.addEventListener('focusin', (e) => {
+        const input = e.target.closest?.('input[data-type-input]');
+        if (!input || input.dataset.typePrev !== undefined) return;
+        input.dataset.typePrev = input.value;
+        if (input.value.trim()) {
+            input.placeholder = input.value;
+            input.value = '';
+        }
+    });
+    root.addEventListener('focusout', (e) => {
+        const input = e.target.closest?.('input[data-type-input]');
+        if (!input || input.dataset.typePrev === undefined) return;
+        if (!input.value.trim()) input.value = input.dataset.typePrev;
+        delete input.dataset.typePrev;
+        input.placeholder = TYPE_PLACEHOLDER;
+    });
+}
+
+function typeDatalistHtml(listId, settings, list) {
+    return `<datalist id="${listId}">${relationTypeSuggestions(settings, list).map((l) => `<option value="${esc(l)}"></option>`).join('')}</datalist>`;
+}
+
+/** 图谱下的图例：图里出现的类型（颜色、名字、条数），点一下只看这一类，再点一下取消 */
+function legendHtml(edges, typeFilter, settings) {
+    const types = relationTypesInUse(edges, settings);
+    if (!types.length) return '';
+    return `<div class="nl-seg nl-rel-legend" role="group" aria-label="关系类型图例（点一下只看这一类）">${types.map((t) => {
+        const on = typeFilter === t.value;
+        return `<button class="nl-seg-btn ${on ? 'active' : ''}" data-act="legend-type" data-type="${esc(t.value)}" aria-pressed="${on}" title="${on ? '显示全部类型' : `只看「${esc(t.label)}」`}"><span class="nl-dot" style="background:${esc(t.color)}" aria-hidden="true"></span>${esc(t.label)}<span class="nl-muted nl-num">${t.count}</span></button>`;
+    }).join('')}</div>`;
+}
+
 /** 圆形关系图：节点按名称环形排布，边按类型着色，非双向的边带箭头 */
 function buildSvg(edges, names, focus, settings) {
     if (!names.length) {
@@ -59,8 +116,10 @@ function buildSvg(edges, names, focus, settings) {
     const H = 420;
     const nodes = layoutNodes(names, W, H);
     const pos = new Map(nodes.map((n) => [n.name, n]));
+    // 箭头按类型编号（类型是自由文本，可能带空格、括号等，不能直接放进 id 和 url(#…) 里）
     const types = [...new Set(edges.map((e) => e.type))];
-    const defs = types.map((t) => `<marker id="nl-arrow-${esc(t)}" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L6,3 L0,6 Z" fill="${relationTypeColor(t, settings)}"></path></marker>`).join('');
+    const markerOf = new Map(types.map((t, i) => [t, `nl-arrow-${i}`]));
+    const defs = types.map((t) => `<marker id="${markerOf.get(t)}" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L6,3 L0,6 Z" fill="${esc(relationTypeColor(t, settings))}"></path></marker>`).join('');
     const lines = edges.map((r) => {
         const a = pos.get(r.from);
         const b = pos.get(r.to);
@@ -74,7 +133,7 @@ function buildSvg(edges, names, focus, settings) {
         const y1 = a.y + (dy / len) * pad;
         const x2 = b.x - (dx / len) * pad;
         const y2 = b.y - (dy / len) * pad;
-        return `<line data-id="${r.id}" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${relationTypeColor(r.type, settings)}" stroke-width="2" opacity="${dim ? 0.2 : 0.9}" ${r.mutual ? '' : `marker-end="url(#nl-arrow-${esc(r.type)})"`} class="nl-rel-edge"><title>${esc(r.from)} ${r.mutual ? '↔' : '→'} ${esc(r.to)}：${esc(relationTypeLabel(r.type, settings))}${r.label ? `，${esc(r.label)}` : ''}</title></line>`;
+        return `<line data-id="${esc(r.id)}" data-type="${esc(r.type)}" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${esc(relationTypeColor(r.type, settings))}" stroke-width="2" opacity="${dim ? 0.2 : 0.9}" ${r.mutual ? '' : `marker-end="url(#${markerOf.get(r.type)})"`} class="nl-rel-edge"><title>${esc(r.from)} ${r.mutual ? '↔' : '→'} ${esc(r.to)}：${esc(relationTypeLabel(r.type, settings))}${r.label ? `，${esc(r.label)}` : ''}</title></line>`;
     }).join('');
     const dots = nodes.map((n) => {
         const dim = focus && n.name !== focus;
@@ -98,7 +157,8 @@ export const relationsTab = {
         const edgesAll = () => relationsAt(app.project, uptoNum());
         const edgesFiltered = () => {
             let list = edgesAll();
-            if (typeFilter !== 'all') list = list.filter((r) => r.type === typeFilter);
+            // 按归并后的类型比较：自由文字「师兄妹」与同名的自定义类型算同一类（见 relationTypeKey）
+            if (typeFilter !== 'all') list = list.filter((r) => relationTypeKey(r.type, app.settings) === typeFilter);
             if (focus) list = list.filter((r) => r.from === focus || r.to === focus);
             return list;
         };
@@ -124,12 +184,13 @@ export const relationsTab = {
             const tplField = tpls.length
                 ? `<div class="nl-field" style="grid-column:1 / -1"><label>套用模板（填好类型、方向和说明，之后仍可修改）</label><select class="nl-input" data-f="template">${optionList([{ value: '', label: '不使用模板' }, ...tpls.map((t) => ({ value: t.id, label: t.name }))], '')}</select></div>`
                 : '';
+            const typeLabel0 = relationTypeLabel(r.type, app.settings);
             const body = `
                 <div class="nl-grid2">
                     <div class="nl-field"><label>角色 A</label><select class="nl-input" data-f="from">${optionList(names, r.from)}</select></div>
                     <div class="nl-field"><label>角色 B</label><select class="nl-input" data-f="to">${optionList(names, r.to)}</select></div>
                     ${tplField}
-                    <div class="nl-field"><label>关系类型</label><select class="nl-input" data-f="type">${optionList(allRelationTypes(app.settings), r.type)}</select></div>
+                    <div class="nl-field"><label for="nl-rel-type">关系类型 <span class="nl-muted">（从列表选，或直接写更贴切的）</span></label>${typeInputHtml('id="nl-rel-type" data-f="type"', typeLabel0, 'nl-rel-type-options')}${typeDatalistHtml('nl-rel-type-options', app.settings, p.relationships)}</div>
                     <div class="nl-field"><label><input type="checkbox" data-f="mutual" ${r.mutual ? 'checked' : ''}> 双向（不勾选表示 A → B 单向，如暗恋、师徒）</label></div>
                 </div>
                 <div class="nl-field"><label>说明（一句话，写具体画面而不是空泛评价）</label><input class="nl-input" data-f="label" value="${esc(r.label)}" placeholder="例如：从小一起长大，互相救过对方性命"></div>
@@ -141,6 +202,7 @@ export const relationsTab = {
                 wide: true,
                 buttons: [{ label: '取消', value: null }, { label: '保存', value: 'ok', primary: true }],
                 onMount: (root) => {
+                    bindTypeInputs(root);
                     const tplSel = root.querySelector('[data-f="template"]');
                     if (!tplSel) return;
                     const f = (k) => root.querySelector(`[data-f="${k}"]`);
@@ -159,8 +221,7 @@ export const relationsTab = {
                                 return;
                             }
                             const res = applyRelationTemplate(t, f('from').value, f('to').value);
-                            const typeSel = f('type');
-                            typeSel.value = [...typeSel.options].some((o) => o.value === res.type) ? res.type : 'other';
+                            f('type').value = relationTypeLabel(res.type, app.settings);
                             f('mutual').checked = res.mutual;
                             // 模板没写说明时，不清掉用户自己写的说明（但上一个模板填的说明照样换掉）
                             const lbl = f('label');
@@ -175,10 +236,12 @@ export const relationsTab = {
             });
             if (value !== 'ok') return;
             const v = (f) => root.querySelector(`[data-f="${f}"]`);
+            // 类型框里填已知类型的名字时存成它的 value，其他文字原样作为类型；没改动时保留原来的值（例如已删除的自定义类型）
+            const typeText = typeInputText(v('type'));
             const data = {
                 from: v('from').value,
                 to: v('to').value,
-                type: v('type').value,
+                type: existing && typeText === typeLabel0 ? existing.type : normalizeRelationType(typeText, app.settings),
                 mutual: v('mutual').checked,
                 label: v('label').value.trim(),
                 notes: v('notes').value.trim(),
@@ -260,31 +323,35 @@ export const relationsTab = {
             if (value === 'refresh') await openTypesDialog();
         };
 
-        /** 类型下拉选项；当前值若是已删除的自定义类型，补一个占位选项，免得下拉框默默显示成另一个类型 */
-        const typeOptions = (value) => {
-            const types = allRelationTypes(app.settings);
-            return optionList(types.some((t) => t.value === value) ? types : [...types, { value, label: '（已删除的类型）' }], value);
+        /** 模板里关系类型输入框的初始文字（已知类型显示名字；已删除的自定义类型显示「其他」，没改动时保存会保留原值） */
+        const tplTypeText = (t) => relationTypeLabel(t.type, app.settings);
+        /** 模板类型框的文字 → 存储的类型：没改动（与初始文字相同）时保留原值，否则按自由类型规整 */
+        const tplTypeValue = (id, text) => {
+            const t = relationTemplates(app.settings).find((x) => x.id === id);
+            return t && String(text).trim() === tplTypeText(t) ? t.type : normalizeRelationType(text, app.settings);
         };
 
         /** 关系模板管理：新增/修改/删除，保存在扩展设置里，跨项目共享；「AI 分析关系」也会参考 */
         const openTemplatesDialog = async ({ focusNew = false } = {}) => {
             const tpls = relationTemplates(app.settings);
+            const typeAttrs = (extra) => `${extra} style="min-width:7.5em"`;
             const body = `
-                <div class="nl-muted nl-small">关系模板保存在扩展设置里，所有项目共用。说明里的 {A}、{B} 代表两个角色，套用时换成所选的角色名；「AI 分析关系」也会参考这些模板来归类。</div>
+                <div class="nl-muted nl-small">关系模板保存在扩展设置里，所有项目共用。说明里的 {A}、{B} 代表两个角色，套用时换成所选的角色名；「AI 分析关系」也会参考这些模板来归类。关系类型可以从列表里选，也可以直接写（如 师兄妹、主仆）。</div>
+                ${typeDatalistHtml('nl-rtpl-type-options', app.settings, app.project?.relationships)}
                 <div style="overflow-x:auto;margin-top:8px">
                 <table class="nl-table">
                     <thead><tr><th>名称</th><th>关系类型</th><th>双向</th><th>说明</th><th></th></tr></thead>
                     <tbody>
                         ${tpls.map((t) => `<tr data-rtpl="${esc(t.id)}">
                             <td><input class="nl-input" data-rt-name value="${esc(t.name)}" aria-label="模板名称" style="min-width:7em"></td>
-                            <td><select class="nl-input" data-rt-type aria-label="关系类型" style="min-width:7.5em">${typeOptions(t.type)}</select></td>
+                            <td>${typeInputHtml(typeAttrs('data-rt-type aria-label="关系类型"'), tplTypeText(t), 'nl-rtpl-type-options')}</td>
                             <td style="vertical-align:middle"><input type="checkbox" data-rt-mutual ${t.mutual ? 'checked' : ''} aria-label="双向"></td>
                             <td><input class="nl-input" data-rt-label value="${esc(t.label)}" placeholder="{A} 从小和 {B} 一起长大" aria-label="说明" style="min-width:12em"></td>
                             <td style="vertical-align:middle"><button class="nl-icon-btn nl-danger" data-rt-del title="删除模板" aria-label="删除模板「${esc(t.name)}」">${icon('trash')}</button></td>
                         </tr>`).join('') || '<tr><td colspan="5" class="nl-muted">还没有关系模板</td></tr>'}
                         <tr>
                             <td><input class="nl-input" data-rt-new-name placeholder="新模板名称，例如「青梅竹马」" aria-label="新模板名称" style="min-width:7em"></td>
-                            <td><select class="nl-input" data-rt-new-type aria-label="新模板的关系类型" style="min-width:7.5em">${typeOptions('friend')}</select></td>
+                            <td>${typeInputHtml(typeAttrs('data-rt-new-type aria-label="新模板的关系类型"'), relationTypeLabel('friend', app.settings), 'nl-rtpl-type-options')}</td>
                             <td style="vertical-align:middle"><input type="checkbox" data-rt-new-mutual checked aria-label="新模板是否双向"></td>
                             <td><input class="nl-input" data-rt-new-label placeholder="{A} 从小和 {B} 一起长大" aria-label="新模板的说明" style="min-width:12em"></td>
                             <td style="vertical-align:middle"><button class="nl-btn nl-sm" data-rt-add>添加</button></td>
@@ -312,11 +379,12 @@ export const relationsTab = {
                 body,
                 buttons: [{ label: '关闭', value: null }],
                 onMount: (r, close) => {
+                    bindTypeInputs(r);
                     const add = () => {
                         try {
                             addRelationTemplate(app.settings, {
                                 name: r.querySelector('[data-rt-new-name]').value,
-                                type: r.querySelector('[data-rt-new-type]').value,
+                                type: typeInputText(r.querySelector('[data-rt-new-type]')),
                                 mutual: r.querySelector('[data-rt-new-mutual]').checked,
                                 label: r.querySelector('[data-rt-new-label]').value,
                             });
@@ -331,7 +399,7 @@ export const relationsTab = {
                         if (!tr) return;
                         const id = tr.dataset.rtpl;
                         if (e.target.matches('[data-rt-name]')) return rename(id, e.target);
-                        if (e.target.matches('[data-rt-type]')) updateRelationTemplate(app.settings, id, { type: e.target.value });
+                        if (e.target.matches('[data-rt-type]')) updateRelationTemplate(app.settings, id, { type: tplTypeValue(id, typeInputText(e.target)) });
                         else if (e.target.matches('[data-rt-mutual]')) updateRelationTemplate(app.settings, id, { mutual: e.target.checked });
                         else if (e.target.matches('[data-rt-label]')) updateRelationTemplate(app.settings, id, { label: e.target.value });
                         else return;
@@ -364,7 +432,7 @@ export const relationsTab = {
             for (const tr of root.querySelectorAll('[data-rtpl]')) {
                 updateRelationTemplate(app.settings, tr.dataset.rtpl, {
                     name: tr.querySelector('[data-rt-name]').value,
-                    type: tr.querySelector('[data-rt-type]').value,
+                    type: tplTypeValue(tr.dataset.rtpl, typeInputText(tr.querySelector('[data-rt-type]'))),
                     mutual: tr.querySelector('[data-rt-mutual]').checked,
                     label: tr.querySelector('[data-rt-label]').value,
                 });
@@ -376,16 +444,21 @@ export const relationsTab = {
 
         const render = () => {
             const p = app.project;
+            // 类型筛选只列项目里实际用到的类型（含 AI / 手动写的自由类型）；筛选的类型已经不存在时回到全部
+            const usedTypes = relationTypesInUse(p.relationships, app.settings);
+            if (typeFilter !== 'all' && !usedTypes.some((t) => t.value === typeFilter)) typeFilter = 'all';
             const edges = edgesFiltered();
-            const graphEdges = focus ? edgesAll().filter((r) => typeFilter === 'all' || r.type === typeFilter) : edges;
+            const graphEdges = focus ? edgesAll().filter((r) => typeFilter === 'all' || relationTypeKey(r.type, app.settings) === typeFilter) : edges;
             const names = [...new Set(graphEdges.flatMap((r) => [r.from, r.to]))].sort((a, b) => a.localeCompare(b, 'zh'));
+            // 图例按时间点（和聚焦的角色）列出类型，不受类型筛选影响，方便直接换一类看
+            const legendEdges = focus ? edgesAll().filter((r) => r.from === focus || r.to === focus) : edgesAll();
             el.innerHTML = `
             <div class="nl-row nl-wrap">
                 <div class="nl-field"><label>故事时间点（防剧透：只显示此前已建立的关系）</label><select class="nl-input nl-inline" data-act-input="upto">${optionList(timeOptions(p), upto)}</select></div>
-                <div class="nl-field"><label>类型筛选</label><div class="nl-row"><select class="nl-input nl-inline" data-act-input="type">${optionList([{ value: 'all', label: '全部类型' }, ...allRelationTypes(app.settings)], typeFilter)}</select><button class="nl-btn nl-sm" data-act="manage-types">${icon('settings', { size: 14 })}自定义类型</button><button class="nl-btn nl-sm" data-act="manage-templates" title="常用关系的类型、方向和说明写法，添加关系时一键套用">${icon('file', { size: 14 })}关系模板</button></div></div>
+                <div class="nl-field"><label>类型筛选</label><div class="nl-row"><select class="nl-input nl-inline" data-act-input="type">${optionList([{ value: 'all', label: '全部类型' }, ...usedTypes.map((t) => ({ value: t.value, label: `${t.label}（${t.count}）` }))], typeFilter)}</select><button class="nl-btn nl-sm" data-act="manage-types">${icon('settings', { size: 14 })}自定义类型</button><button class="nl-btn nl-sm" data-act="manage-templates" title="常用关系的类型、方向和说明写法，添加关系时一键套用">${icon('file', { size: 14 })}关系模板</button></div></div>
             </div>
             ${focus ? `<div class="nl-row nl-muted nl-small">${icon('filter', { size: 14 })}只看「${esc(focus)}」的关系 <button class="nl-icon-btn" data-act="clear-focus" title="清除" aria-label="清除">${icon('close', { size: 14 })}</button></div>` : ''}
-            <section class="nl-card nl-rel-graph">${buildSvg(graphEdges, names, focus, app.settings)}</section>
+            <section class="nl-card nl-rel-graph">${buildSvg(graphEdges, names, focus, app.settings)}${names.length ? legendHtml(legendEdges, typeFilter, app.settings) : ''}</section>
             <section class="nl-card">
                 <div class="nl-card-head"><div><h3>关系列表（${edges.length}）</h3></div><button class="nl-btn nl-sm nl-primary" data-act="add">${icon('plus', { size: 14 })}添加关系</button></div>
                 ${edges.length ? `<table class="nl-table"><thead><tr><th>角色</th><th></th><th>角色</th><th>类型</th><th>说明</th><th>建立于</th><th></th></tr></thead><tbody>
@@ -393,7 +466,7 @@ export const relationsTab = {
                         <td><a data-act="focus-name" data-name="${esc(r.from)}">${esc(r.from)}</a></td>
                         <td>${r.mutual ? '↔' : '→'}</td>
                         <td><a data-act="focus-name" data-name="${esc(r.to)}">${esc(r.to)}</a></td>
-                        <td><span class="nl-tag" style="border-color:${relationTypeColor(r.type, app.settings)};color:${relationTypeColor(r.type, app.settings)}">${esc(relationTypeLabel(r.type, app.settings))}</span>${r.auto ? `<span class="nl-muted" title="AI 自动分析得出">${icon('wand', { size: 14, label: 'AI 自动分析得出' })}</span>` : ''}</td>
+                        <td><span class="nl-tag nl-rel-type" data-type="${esc(r.type)}" style="border-color:${esc(relationTypeColor(r.type, app.settings))};color:${esc(relationTypeColor(r.type, app.settings))}">${esc(relationTypeLabel(r.type, app.settings))}</span>${r.auto ? `<span class="nl-muted" title="AI 自动分析得出">${icon('wand', { size: 14, label: 'AI 自动分析得出' })}</span>` : ''}</td>
                         <td>${esc(r.label || '')}</td>
                         <td class="nl-muted nl-small">第 ${r.chunk + 1} 段</td>
                         <td><div class="nl-row"><button class="nl-icon-btn" data-act="edit" data-id="${esc(r.id)}" title="编辑" aria-label="编辑">${icon('edit')}</button><button class="nl-icon-btn nl-danger" data-act="del" data-id="${esc(r.id)}" title="删除" aria-label="删除">${icon('trash')}</button></div></td>
@@ -446,6 +519,11 @@ export const relationsTab = {
                 case 'clear-focus':
                     focus = null;
                     render();
+                    break;
+                case 'legend-type':
+                    typeFilter = typeFilter === btn.dataset.type ? 'all' : btn.dataset.type;
+                    render();
+                    el.querySelector(`[data-act="legend-type"][data-type="${CSS.escape(btn.dataset.type)}"]`)?.focus();
                     break;
                 case 'manage-types':
                     await openTypesDialog();

@@ -762,6 +762,7 @@ test('portraitsPanelHtml：候选角色（记录条目 + 固定分组）、默�
 
 test('模板自带上限（「多人群像」15）：模板库 / 套用对话框按 templateVarCap 比较；套用 + AI 调整保留全部变量；变量表按 statusBarVarCap 校验', async () => {
     const s = settings();
+    s.statusBar.maxVars = 12; // 老用户的设置：v0.15 之前的默认上限 12
     const ens = BUILTIN_STATUSBAR_TEMPLATES.find((t) => t.id === 'builtin_ensemble');
     assert.deepEqual(templateCapInfo(ens, s), { n: 15, cap: 15, base: 12, over: false, raised: true }, '不再标「超过上限 12」');
     const cyber = BUILTIN_STATUSBAR_TEMPLATES.find((t) => t.id === 'builtin_cyberpunk');
@@ -1015,7 +1016,8 @@ test('预览发来的 nl-store 带着预览的数据（opt.stat）：造出来�
 });
 
 test('变量表上限按卡片规则（statusBarVarCap）：设置、卡上记着的 maxVars、打开时的变量数取最大；删掉几个后还能加回来', () => {
-    const s = settings(); // 设置里的上限 12
+    const s = settings();
+    s.statusBar.maxVars = 12; // 设置里的上限 12（老用户的设置；新默认是 20）
     const c = card();
     const sb = ensureStatusBar(c, s);
     const vars = Array.from({ length: 14 }, (_, k) => ({ path: `世界.v${k}`, type: 'number', init: 1, min: 0, max: 9 }));
@@ -1039,7 +1041,8 @@ test('变量表上限按卡片规则（statusBarVarCap）：设置、卡上记�
 });
 
 test('撤销也换回卡片自己的变量上限（maxVars）：撤销套用「多人群像」回到跟随设置，再点一次（重做）又是 15；对话框的撤销与 restoreStatusBarPrev 一致', async () => {
-    const s = settings(); // 设置里的上限 12
+    const s = settings();
+    s.statusBar.maxVars = 12; // 设置里的上限 12（老用户的设置；新默认是 20）
     const ens = BUILTIN_STATUSBAR_TEMPLATES.find((t) => t.id === 'builtin_ensemble');
     const c = card({ kind: 'world', charName: '', data: { ...card().data, name: '雾港' } });
     ensureStatusBar(c, s);

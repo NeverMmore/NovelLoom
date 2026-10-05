@@ -2,7 +2,7 @@
 // 先给出几个并列的可能走向，用户选定其中一个或几个后，再推演出具体的分阶段发展。
 // 结果挂在卡片自己身上（card.plotProjection），不写回卡片字段，也不写入 project.plan。
 
-import { buildCardPrompt } from './cards.js';
+import { buildCardPrompt, cardPromptOpt } from './cards.js';
 import { extractJson, removeTags } from './json.js';
 import { callLLM, chainFor } from './llm.js';
 import { WRITING_RULES, getPrompt, render } from './prompts.js';
@@ -38,13 +38,8 @@ export function cardContentText(card) {
 
 /** 复用写卡提示词的完整输出（人物设定/相关角色/世界观/大纲/文风）作为背景参考，不重复实现一遍上下文收集 */
 function backgroundContext(project, settings, card) {
-    const opt = {
-        kind: card.kind,
-        charName: card.charName,
-        timepoint: Number.isFinite(card.timepoint) ? card.timepoint : Infinity,
-        requirement: card.requirement,
-        greetings: card.data.alternate_greetings.length,
-    };
+    // 与写卡时一致（含 {{user}} 的身份、卡的导向）；只作背景资料，不要求输出 orientation_notes
+    const opt = { ...cardPromptOpt(card), askNotes: false };
     const { system, prompt } = buildCardPrompt(project, settings, opt);
     return `${system}\n\n${prompt}`;
 }

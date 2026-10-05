@@ -255,6 +255,8 @@ try:
         page.click('.nl-nav-btn[data-tab="cards"]')
         page.wait_for_selector('[data-act="generate"]')
         page.select_option('[data-form="kind"]', 'world')
+        # 世界卡的卡名不用 AI 写的 name：在「卡名」里填（留空时是书名「魔女」）
+        page.fill('[data-form="cardName"]', CARD_NAME)
         page.click('details:has(> summary:has-text("写卡选项")) > summary')
         page.check('[data-setting="cards.statusBar"]')
         page.click('[data-act="generate"]')
