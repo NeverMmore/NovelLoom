@@ -8,15 +8,20 @@ import { DEFAULT_STATUS_BAR } from './constants.js';
 import { extractJson } from './json.js';
 import { estimateTokens } from './utils.js';
 import {
-    STATUS_TAG, buildInitialState, cloneJson, decodeFenceText, encodeFenceText, isFrontendText, isPlainObj, jsLit, jsStr,
-    simulateStRegexReplace, splitPath, unwrapStatusFence, wrapStatusFence,
+    STATUS_TAG, buildInitialState, cloneJson, decodeFenceText, encodeFenceText, getPath, isFrontendText, isPlainObj, jsLit, jsStr,
+    setPath, simulateStRegexReplace, splitPath, unwrapStatusFence, wrapStatusFence,
 } from './statusbar-base.js';
 import { cleanFragment, compileStatusDocument } from './statusbar-runtime.js';
+import { emptyPortraits, normalizePortraits } from './statusbar-portraits.js';
 
 export {
     STATUS_TAG, buildInitialState, decodeFenceText, encodeFenceText, getPath, htmlSafe, isFrontendText, jsLit, jsStr, setPath,
     simulateStRegexReplace, splitPath, unwrapStatusFence, wrapStatusFence,
 } from './statusbar-base.js';
+export {
+    PORTRAIT_DATA_TOTAL_MAX, PORTRAIT_DATA_URL_MAX, PORTRAIT_LIMITS, PORTRAIT_OPS, PORTRAIT_URL_MAX, PORTRAIT_WHEN_TEXT_MAX, emptyPortraits, normalizePortraits,
+    portraitHash, portraitInitial, portraitNameProblem, portraitUrlProblem, portraitsActive, resolvePortrait,
+} from './statusbar-portraits.js';
 
 export const STATUS_BAR_VERSION = 1;
 /** 状态栏界面模式的显示名（编辑器与模板列表共用）：bind = AI 按变量表设计的绑定片段，auto = 内置排版，raw = 自定义 HTML */
@@ -37,6 +42,9 @@ export const TYPE_WIDGETS = {
 /** 路径段里不能使用的名字（与 MVU 的数据结构或 JS 原型冲突） */
 export const RESERVED_NAMES = ['stat_data', 'display_data', 'delta_data', 'schema', 'status_current_variables', 'status_current_variable', '__proto__', 'constructor', 'prototype'];
 export const MAX_PATH_DEPTH = 3;
+/** 记录的对象值最多几个字段（分组算一个），每个分组里最多几个字段；分组只能有一层 */
+export const RECORD_FIELD_MAX = 8;
+export const GROUP_FIELD_MAX = 6;
 export const STATUS_BAR_IDS = ['regexBar', 'regexHideTag', 'regexStrip', 'regexFoldStreaming', 'regexFoldDone', 'scriptMvu', 'scriptSchema'];
 
 /** 四个世界书条目的 comment（MVU 按 comment 识别：[initvar] 不分大小写包含即可，[mvu_update] 不锚定） */
@@ -152,6 +160,9 @@ export function createStatusBar(settings) {
         enabled: true,
         mode: g.htmlMode === 'auto' ? 'auto' : 'bind',
         templateId: null,
+        // 卡片自己的变量上限：沿用结构套用模板时记下模板的上限（templateVarCap），null = 跟随设置；
+        // 实际用的上限见 statusbar-templates.js 的 statusBarVarCap（设置里的上限、它、现有变量数取最大）
+        maxVars: null,
         requirement: '',
         spec: { title: '状态栏', variables: [] },
         html: '',
@@ -159,6 +170,7 @@ export function createStatusBar(settings) {
         sample: null,
         options: defaultStatusBarOptions(settings),
         overrides: { schemaScript: null, updateRules: null, initvar: null },
+        portraits: emptyPortraits(),
         ids: newIds(),
         worldName: '',
         stale: false,
@@ -192,6 +204,10 @@ export function ensureStatusBar(card, settings) {
     sb.options.keepUpdateDepth = normalizeFloorCount(sb.options.keepUpdateDepth);
     if (!isPlainObj(sb.overrides)) sb.overrides = { schemaScript: null, updateRules: null, initvar: null };
     for (const k of ['schemaScript', 'updateRules', 'initvar']) if (sb.overrides[k] === undefined) sb.overrides[k] = null;
+    // 立绘：只补齐结构，不重新校验地址（编辑器保存时用 normalizePortraits，编译文档时也会再校验一次）
+    if (!isPlainObj(sb.portraits)) sb.portraits = emptyPortraits();
+    if (!isPlainObj(sb.portraits.characters)) sb.portraits.characters = {};
+    if (!Array.isArray(sb.portraits.pools)) sb.portraits.pools = [];
     if (!isPlainObj(sb.ids)) sb.ids = {};
     for (const k of STATUS_BAR_IDS) if (!sb.ids[k]) sb.ids[k] = uuidv4();
     if (!isPlainObj(sb.lint)) sb.lint = { errors: [], warnings: [] };
@@ -204,6 +220,97 @@ export function ensureStatusBar(card, settings) {
 export function statusBarActive(card) {
     const sb = card?.statusBar;
     return !!(sb && sb.enabled && Array.isArray(sb.spec?.variables) && sb.spec.variables.length);
+}
+
+/** 世界/旁白卡（card.kind === 'world'）：{{char}} 是旁白本身，状态栏要照顾整个群像 */
+export function isWorldCard(card) {
+    return card?.kind === 'world';
+}
+
+/**
+ * 变量路径里 {{char}} 要换成的名字（normalizeStatusSpec 的 charName）：卡片名，没有时用 charName；
+ * 世界/旁白卡的 {{char}} 就是旁白，名字缺失时用「旁白」，角色卡用「角色」。
+ */
+export function statusBarCharName(card) {
+    return String(card?.data?.name || card?.charName || '').trim() || (isWorldCard(card) ? '旁白' : '角色');
+}
+
+const CAST_RANK = { main: 3, support: 2, minor: 1 };
+
+/**
+ * 世界/旁白卡的主要角色名（用来预先填进「主要角色」这类记录的初始条目）：到卡片时间点为止已经出场的角色，
+ * 按重要度（main > support > minor）排序；有 main 时只取 main。名字不能当记录键的（含 . / 引号等）跳过。
+ * @param {object} project
+ * @param {object} card
+ * @param {{limit?: number, all?: boolean}} opt limit：最多几个（默认 8）；all：不只取 main
+ * @returns {string[]}
+ */
+export function worldCastNames(project, card, { limit = 8, all = false } = {}) {
+    const upto = Number.isFinite(card?.timepoint) ? card.timepoint : Infinity;
+    const list = Object.entries(project?.characters || {})
+        .map(([key, c]) => ({ name: String(c?.name || key).trim(), rank: CAST_RANK[c?.importance] || 0, first: Number.isFinite(c?.firstChunk) ? c.firstChunk : 0 }))
+        .filter((c) => c.name && !(c.first > upto) && !segmentProblem(c.name, { allowSpace: true }))
+        .sort((a, b) => b.rank - a.rank || a.first - b.first);
+    const mains = list.filter((c) => c.rank === CAST_RANK.main);
+    return (all || !mains.length ? list : mains).slice(0, Math.max(0, limit)).map((c) => c.name);
+}
+
+// 按角色名记录的多人数据（主要角色 / NPC / 队友…）：立绘候选、界面示例里的立绘槽位、世界卡预填主要角色都只认它们；物品、任务这类记录不算
+const CAST_WORD_RE = /角色|人物|成员|群像|女主|男主|伙伴|队友|同伴|NPC|人名|姓名/i;
+const NOT_CAST_RE = /物品|道具|任务|技能|装备|地点|势力|属性|背包|库存/;
+const NPC_RE = /NPC|路人|配角|龙套|群众/i;
+
+function castRecordText(v) {
+    return `${String(v.path || '').split('.').pop()} ${v.keyDesc || ''} ${v.label || ''}`;
+}
+
+/** 这个记录变量的键是不是角色名（按路径最后一段、keyDesc、label 判断） */
+export function isCastRecord(v) {
+    if (v?.type !== 'record') return false;
+    const text = castRecordText(v);
+    return CAST_WORD_RE.test(text) && !NOT_CAST_RE.test(text);
+}
+
+/**
+ * 存放主要角色的记录路径：最后一段叫「主要角色」的优先，否则取第一个键是角色名、又不是 NPC/路人的记录；没有返回 ''。
+ * @param {{variables: object[]}} spec
+ */
+export function castRecordPath(spec) {
+    const recs = (spec?.variables || []).filter((v) => v?.type === 'record');
+    const exact = recs.find((v) => String(v.path || '').split('.').pop() === '主要角色');
+    if (exact) return exact.path;
+    return recs.find((v) => isCastRecord(v) && !NPC_RE.test(castRecordText(v)))?.path || '';
+}
+
+/** 键是角色名的记录变量：castRecordPath 指向的那个 + isCastRecord 认出的（主要角色、NPC、队友…；物品、任务这类不算） */
+export function castRecords(spec) {
+    const main = castRecordPath(spec);
+    return (spec?.variables || []).filter((v) => v?.type === 'record' && (v.path === main || isCastRecord(v)));
+}
+
+/**
+ * 世界/旁白卡：把项目里的主要角色（worldCastNames）预先填进主要角色记录（castRecordPath）的初始条目，已有的条目保持原样。
+ * 不是世界卡、没有这样的记录或拿不到角色名时原样返回。不修改传入的 spec。
+ * @param {object} project
+ * @param {object} card
+ * @param {object} spec 规范化后的变量表
+ * @param {{names?: string[], warnings?: string[]}} opt names：直接给出角色名（不给时用 worldCastNames(project, card)）
+ * @returns {{spec: object, path: string, added: string[]}}
+ */
+export function seedWorldCastEntries(project, card, spec, { names = null, warnings = [] } = {}) {
+    const path = isWorldCard(card) ? castRecordPath(spec) : '';
+    if (!path) return { spec, path: '', added: [] };
+    let list = names;
+    if (!Array.isArray(list)) {
+        try {
+            list = worldCastNames(project, card);
+        } catch {
+            list = [];
+        }
+    }
+    if (!list.length) return { spec, path, added: [] };
+    const r = seedRecordEntries(spec, path, list, { warnings });
+    return { spec: r.spec, path, added: r.added };
 }
 
 // ---------------- 变量表规范化 ----------------
@@ -332,7 +439,19 @@ function coerceStr(v) {
     return cleanMacroText(JSON.stringify(v), 500);
 }
 
-function normField(raw, warnings, where) {
+/**
+ * 字段是不是分组：带了 fields 数组（type 写成 object / group / 分组 都可以，也可以不写）。
+ * 没有 fields 的 object 类型字段仍按文本处理（与以前一致）。
+ */
+function isGroupRaw(raw) {
+    return Array.isArray(raw.fields);
+}
+
+/**
+ * 记录值里的一个字段。allowGroup 时还可以是一层分组 {key, type:'object', label?, fields:[基本字段…]}（分组里不能再有分组）。
+ * 数字字段可以带 stages（与变量的 stages 一样，界面用 data-nl-item-stage 显示阶段名）。
+ */
+function normField(raw, warnings, where, { allowGroup = false } = {}) {
     if (!isPlainObj(raw)) return null;
     const key = str(raw.key ?? raw.name ?? raw.path, 32);
     const problem = segmentProblem(key);
@@ -340,11 +459,42 @@ function normField(raw, warnings, where) {
         warnings.push(`${where} 的字段被丢弃：${problem}`);
         return null;
     }
+    if (isGroupRaw(raw)) {
+        if (!allowGroup) {
+            warnings.push(`${where} 的分组「${key}」里又有分组，分组只能有一层，已丢弃`);
+            return null;
+        }
+        const fields = [];
+        const list = Array.isArray(raw.fields) ? raw.fields : [];
+        for (const item of list) {
+            const nf = normField(item, warnings, `${where} 的分组「${key}」`);
+            if (!nf) continue;
+            if (fields.some((x) => x.key === nf.key)) {
+                warnings.push(`${where} 的分组「${key}」里字段「${nf.key}」重复，已丢弃后一个`);
+                continue;
+            }
+            if (fields.length >= GROUP_FIELD_MAX) {
+                warnings.push(`${where} 的分组「${key}」最多 ${GROUP_FIELD_MAX} 个字段，「${nf.key}」及之后的已丢弃`);
+                break;
+            }
+            fields.push(nf);
+        }
+        if (!fields.length) {
+            warnings.push(`${where} 的分组「${key}」没有可用的字段，已丢弃`);
+            return null;
+        }
+        const g = { key, type: 'object', label: cleanMacroText(raw.label, 16), fields };
+        if (!g.label) delete g.label;
+        return g;
+    }
     let type = TYPE_ALIASES[String(raw.type ?? '').trim().toLowerCase()] || inferType(raw);
     if (!['number', 'string', 'boolean', 'enum'].includes(type)) type = 'string';
     const f = { key, type, label: cleanMacroText(raw.label, 16) };
-    if (type === 'number') Object.assign(f, normNumberMeta(raw, String(raw.type ?? '').toLowerCase(), { warnings, where: `${where} 的字段「${key}」` }));
-    else if (type === 'boolean') f.init = toBool(raw.init ?? raw.value ?? raw.default);
+    if (type === 'number') {
+        Object.assign(f, normNumberMeta(raw, String(raw.type ?? '').toLowerCase(), { warnings, where: `${where} 的字段「${key}」` }));
+        const stages = normStages(raw.stages);
+        if (stages.length) f.stages = stages;
+    } else if (type === 'boolean') f.init = toBool(raw.init ?? raw.value ?? raw.default);
     else if (type === 'enum') {
         f.options = normOptions(raw.options ?? raw.enum);
         if (!f.options.length) {
@@ -374,13 +524,45 @@ function normRecordValue(raw, warnings, where) {
     if (type === 'object') {
         const fields = [];
         for (const f of Array.isArray(v.fields) ? v.fields : []) {
-            const nf = normField(f, warnings, where);
-            if (nf && !fields.some((x) => x.key === nf.key)) fields.push(nf);
+            const nf = normField(f, warnings, where, { allowGroup: true });
+            if (!nf) continue;
+            if (fields.some((x) => x.key === nf.key)) {
+                warnings.push(`${where} 的记录字段「${nf.key}」重复，已丢弃后一个`);
+                continue;
+            }
+            if (fields.length >= RECORD_FIELD_MAX) {
+                warnings.push(`${where} 的记录最多 ${RECORD_FIELD_MAX} 个字段（分组算一个），「${nf.key}」及之后的已丢弃`);
+                break;
+            }
+            fields.push(nf);
         }
-        if (fields.length) return { type: 'object', fields: fields.slice(0, 6) };
+        if (fields.length) return { type: 'object', fields };
         warnings.push(`${where} 的记录字段为空，按文本处理`);
     }
     return { type: 'string', init: '' };
+}
+
+/** 按字段规格强制转换一个基本字段的值（数字超出范围时夹取并写进 warnings） */
+function coerceFieldValue(f, x, warnings, where) {
+    if (f.type === 'number') {
+        const n = num(x);
+        return n === null ? coerceNumber(f.init, f) : clampedItem(n, f, warnings, where);
+    }
+    if (f.type === 'boolean') return x === undefined ? f.init : toBool(x);
+    if (f.type === 'enum') return f.options.includes(String(x)) ? String(x) : f.init;
+    return x === undefined ? f.init : coerceStr(x);
+}
+
+/** 按字段列表强制转换一个对象（记录值或其中的分组）：缺的字段补初始值，未知键丢弃 */
+function coerceFieldsObject(fields, item, warnings, where) {
+    const src = isPlainObj(item) ? item : {};
+    const out = {};
+    for (const f of fields) {
+        out[f.key] = f.type === 'object'
+            ? coerceFieldsObject(f.fields, src[f.key], warnings, `${where}的「${f.key}」`)
+            : coerceFieldValue(f, src[f.key], warnings, `${where}的「${f.key}」`);
+    }
+    return out;
 }
 
 /** 按 value 规格强制转换记录里的单个值（规范化 init 时使用）；数字超出范围时夹取并写进 warnings */
@@ -389,20 +571,27 @@ function coerceRecordItem(val, item, warnings = null, where = '') {
         const n = num(item);
         return n === null ? coerceNumber(val.init ?? 0, val) : clampedItem(n, val, warnings, where);
     }
-    if (val.type === 'object') {
-        const src = isPlainObj(item) ? item : {};
-        const out = {};
-        for (const f of val.fields) {
-            const x = src[f.key];
-            const n = f.type === 'number' ? num(x) : null;
-            if (f.type === 'number') out[f.key] = n === null ? coerceNumber(f.init, f) : clampedItem(n, f, warnings, `${where}的「${f.key}」`);
-            else if (f.type === 'boolean') out[f.key] = x === undefined ? f.init : toBool(x);
-            else if (f.type === 'enum') out[f.key] = f.options.includes(String(x)) ? String(x) : f.init;
-            else out[f.key] = x === undefined ? f.init : coerceStr(x);
-        }
-        return out;
-    }
+    if (val.type === 'object') return coerceFieldsObject(val.fields, item, warnings, where);
     return coerceStr(item);
+}
+
+/** 记录新条目的默认值（字段都取初始值，分组是由初始值组成的对象）。value 是规范化后的 v.value */
+export function defaultRecordItem(value) {
+    return coerceRecordItem(isPlainObj(value) ? value : { type: 'string' }, undefined);
+}
+
+/**
+ * 记录对象值的所有基本字段，分组展开成点路径：[{path:'身份', field}, {path:'服饰.上衣', field, group}]。
+ * 不是对象值时返回空数组。界面（data-nl-item="服饰.上衣"）、规则、示例数据都按这个顺序。
+ */
+export function recordLeafFields(value) {
+    const out = [];
+    if (value?.type !== 'object') return out;
+    for (const f of value.fields || []) {
+        if (f.type === 'object') for (const ff of f.fields || []) out.push({ path: `${f.key}.${ff.key}`, field: ff, group: f });
+        else out.push({ path: f.key, field: f });
+    }
+    return out;
 }
 
 function normRecordInit(raw, val, warnings, where) {
@@ -423,9 +612,11 @@ function normRecordInit(raw, val, warnings, where) {
     return out;
 }
 
-/** 变量占用的“叶子”数：记录的对象值按字段数计 */
+/** 变量占用的“叶子”数：记录的对象值按基本字段数计（分组按它里面的字段数计），与记录里有多少条目无关 */
 export function variableLeafCount(v) {
-    return v?.type === 'record' && v.value?.type === 'object' ? Math.max(1, v.value.fields?.length || 1) : 1;
+    if (v?.type !== 'record' || v.value?.type !== 'object') return 1;
+    const n = (v.value.fields || []).reduce((s, f) => s + (f?.type === 'object' ? (f.fields?.length || 0) : 1), 0);
+    return Math.max(1, n);
 }
 
 export function countSpecLeaves(spec) {
@@ -563,11 +754,164 @@ export function specSummaryText(spec) {
         }
         if (v.type === 'enum') bits.push(v.options.join('/'));
         if (v.type === 'list' && v.maxItems) bits.push(`最多 ${v.maxItems} 项`);
-        if (v.type === 'record') bits.push(`键：${v.keyDesc}；值：${v.value.type === 'object' ? v.value.fields.map((f) => f.key).join('、') : VAR_TYPE_LABELS[v.value.type] || v.value.type}`);
+        if (v.type === 'record') bits.push(`键：${v.keyDesc}；值：${v.value.type === 'object' ? v.value.fields.map((f) => (f.type === 'object' ? `${f.key}［${(f.fields || []).map((x) => x.key).join('、')}］` : f.key)).join('、') : VAR_TYPE_LABELS[v.value.type] || v.value.type}`);
         if (v.format) bits.push(`格式 ${v.format}`);
         bits.push(`显示：${WIDGET_LABELS[v.widget] || v.widget}`);
         return `- ${v.path}（${bits.join('，')}）初始值 ${JSON.stringify(v.init)}${v.desc ? `：${v.desc}` : ''}`;
     }).join('\n');
+}
+
+// ---------------- 记录条目与示例数据 ----------------
+
+/**
+ * 往记录变量的初始条目里加入一批名字（已有的跳过），每个新条目取 defaultRecordItem。
+ * 用于世界/旁白卡：把项目里的主要角色（worldCastNames）预先填进「主要角色」这类记录。不修改传入的 spec。
+ * @param {object} spec 规范化后的变量表
+ * @param {string} path 记录变量的路径
+ * @param {string[]} names
+ * @param {{max?: number, warnings?: string[]}} opt max：条目总数上限（默认 30，与规范化一致）
+ * @returns {{spec: object, added: string[]}}
+ */
+export function seedRecordEntries(spec, path, names, { max = 30, warnings = [] } = {}) {
+    const out = cloneJson(spec || { title: '状态栏', variables: [] });
+    const v = (out.variables || []).find((x) => x.path === path);
+    const added = [];
+    if (!v || v.type !== 'record') {
+        warnings.push(`变量表里没有记录变量「${path}」`);
+        return { spec: out, added };
+    }
+    if (!isPlainObj(v.init)) v.init = {};
+    for (const raw of Array.isArray(names) ? names : []) {
+        const k = cleanMacroText(raw, 32);
+        if (!k || Object.prototype.hasOwnProperty.call(v.init, k)) continue;
+        const problem = segmentProblem(k, { allowSpace: true });
+        if (problem) {
+            warnings.push(`「${path}」的条目「${k}」没有加入：${problem}`);
+            continue;
+        }
+        if (Object.keys(v.init).length >= max) {
+            warnings.push(`「${path}」最多 ${max} 个初始条目，「${k}」及之后的没有加入`);
+            break;
+        }
+        v.init[k] = defaultRecordItem(v.value);
+        added.push(k);
+    }
+    return { spec: out, added };
+}
+
+function randInt(rng, lo, hi) {
+    return Math.round(lo + rng() * (hi - lo));
+}
+
+function randomFieldValue(f, rng) {
+    if (f.type === 'object') return Object.fromEntries((f.fields || []).map((ff) => [ff.key, randomFieldValue(ff, rng)]));
+    if (f.type === 'number') {
+        const lo = f.min ?? 0;
+        const hi = f.max ?? lo + 100;
+        const x = lo + rng() * (hi - lo);
+        return f.integer === false ? Math.round(x * 10) / 10 : Math.round(x);
+    }
+    if (f.type === 'enum') return f.options[Math.floor(rng() * f.options.length)] ?? f.init;
+    if (f.type === 'boolean') return rng() < 0.5;
+    return f.init || '示例';
+}
+
+/**
+ * 记录里一个条目的随机示例值（数字在范围内随机、选项随机挑、是/否随机、文本保留初始值或写「示例」；分组逐个字段随机）。
+ * @param {object} value 规范化后的 v.value
+ * @param {{rng?: () => number}} opt rng：[0,1) 的随机数函数（测试时传固定序列）
+ */
+export function randomRecordItem(value, { rng = Math.random } = {}) {
+    if (value?.type === 'number') {
+        const lo = value.min ?? 0;
+        return randInt(rng, lo, value.max ?? lo + 100);
+    }
+    if (value?.type === 'object') return randomFieldValue({ type: 'object', fields: value.fields }, rng);
+    return '示例';
+}
+
+/**
+ * 预览用的随机示例变量（「随机值」按钮）：每个变量按类型随机，记录保留初始条目的键（没有条目时造一个「示例」条目），
+ * 最后按变量表校验规整（结果总能通过 parseStateWithSpec）。
+ * @param {object} spec
+ * @param {{rng?: () => number}} opt
+ */
+export function randomSampleState(spec, { rng = Math.random } = {}) {
+    const out = buildInitialState(spec);
+    for (const v of spec?.variables || []) {
+        let val;
+        switch (v.type) {
+            case 'number':
+            case 'enum':
+            case 'boolean':
+                val = randomFieldValue(v, rng);
+                break;
+            case 'list': {
+                const base = v.init?.length ? v.init.slice() : ['示例一', '示例二'];
+                val = base.filter(() => rng() < 0.75);
+                if (!val.length) val = base.slice(0, 1);
+                break;
+            }
+            case 'record': {
+                const keys = Object.keys(v.init || {});
+                val = Object.fromEntries((keys.length ? keys : ['示例']).map((k) => [k, randomRecordItem(v.value, { rng })]));
+                break;
+            }
+            default:
+                val = v.init || '示例文本';
+        }
+        setPath(out, v.path, val);
+    }
+    const r = parseStateWithSpec(spec, out);
+    return r.ok ? r.data : buildInitialState(spec);
+}
+
+/**
+ * 立绘编辑器里可选的名字：键是角色名的记录（castRecords：主要角色、NPC、队友…；物品、任务、属性这类记录不算）的初始条目
+ * （record 是记录路径）+ 固定分组名（第一层路径，record 为 null）。
+ * 示例数据里才有的条目（模板或 AI 写的演示名字）不在这里，见 portraitSampleCandidates。
+ * @param {object} spec
+ * @param {object} [sample] 不再使用（保留参数位置，旧的调用照常工作）
+ * @returns {{name: string, record: string|null}[]}
+ */
+export function portraitCandidates(spec, sample = null) {
+    const out = [];
+    const seen = new Set();
+    const add = (name, record) => {
+        const id = JSON.stringify([record ?? '', name]);
+        if (!name || seen.has(id)) return;
+        seen.add(id);
+        out.push({ name, record });
+    };
+    for (const v of castRecords(spec)) {
+        for (const k of Object.keys(isPlainObj(v.init) ? v.init : {})) add(k, v.path);
+    }
+    for (const v of spec?.variables || []) {
+        const segs = splitPath(v.path);
+        if (segs.length > 1) add(segs[0], null);
+    }
+    return out;
+}
+
+/**
+ * 只在示例数据里出现的角色名（键是角色名的记录里、初始条目没有的键）：{name, record, sample: true}，
+ * 界面上应标成「示例数据」——它们是模板或 AI 写的演示条目，不一定是这个故事里的角色。
+ * @param {object} spec
+ * @param {object} sample 示例 stat_data
+ * @returns {{name: string, record: string, sample: true}[]}
+ */
+export function portraitSampleCandidates(spec, sample) {
+    if (!isPlainObj(sample)) return [];
+    const out = [];
+    for (const v of castRecords(spec)) {
+        const init = isPlainObj(v.init) ? v.init : {};
+        const s = getPath(sample, v.path);
+        for (const k of Object.keys(isPlainObj(s) ? s : {})) {
+            if (!k || Object.prototype.hasOwnProperty.call(init, k) || out.some((x) => x.record === v.path && x.name === k)) continue;
+            out.push({ name: k, record: v.path, sample: true });
+        }
+    }
+    return out;
 }
 
 // ---------------- 变量树 ----------------
@@ -604,7 +948,12 @@ function zodNumber(m, init) {
     return `z.coerce.number().prefault(${jsLit(init)})${numberTransform(m)}`;
 }
 
-function zodField(f) {
+/** 记录值里的字段；分组 → 嵌套的 z.object({…}).prefault({})（pad 是分组所在那一行的缩进） */
+function zodField(f, pad = '') {
+    if (f.type === 'object') {
+        const inner = (f.fields || []).map((ff) => `${pad}  ${jsStr(ff.key)}: ${zodField(ff)},`).join('\n');
+        return `z.object({\n${inner}\n${pad}}).prefault({})`;
+    }
     if (f.type === 'number') return zodNumber(f, f.init);
     if (f.type === 'boolean') return `nlBool().prefault(${jsLit(f.init)})`;
     if (f.type === 'enum') return `z.enum(${jsLit(f.options)}).prefault(${jsLit(f.init)})`;
@@ -626,7 +975,7 @@ function zodLeaf(v, pad) {
             let val;
             if (v.value.type === 'number') val = zodNumber(v.value, v.value.init ?? 0);
             else if (v.value.type === 'object') {
-                const inner = v.value.fields.map((f) => `${pad}    ${jsStr(f.key)}: ${zodField(f)},`).join('\n');
+                const inner = v.value.fields.map((f) => `${pad}    ${jsStr(f.key)}: ${zodField(f, `${pad}    `)},`).join('\n');
                 val = `z.object({\n${inner}\n${pad}  }).prefault({})`;
             } else val = 'nlStr()';
             return `z.record(${key}, ${val}).prefault(${jsLit(v.init)})`;
@@ -731,14 +1080,29 @@ function recordTypeText(v) {
         const hi = Number.isFinite(m.max);
         return lo && hi ? ` // ${m.min}~${m.max}` : lo ? ` // >=${m.min}` : hi ? ` // <=${m.max}` : '';
     };
+    const stageNote = (f) => (f.stages?.length ? `${rangeNote(f) ? '，' : ' // '}阶段 ${f.stages.map((s) => `${s.min}+${s.label}`).join('/')}` : '');
+    const fieldLine = (f, pad) => {
+        const t = f.type === 'enum' ? f.options.map((o) => JSON.stringify(o)).join(' | ') : f.type;
+        return `${pad}${f.key}: ${t};${f.type === 'number' ? `${rangeNote(f)}${stageNote(f)}` : ''}`;
+    };
     if (val.type === 'object') {
-        const fields = val.fields.map((f) => {
-            const t = f.type === 'enum' ? f.options.map((o) => JSON.stringify(o)).join(' | ') : f.type;
-            return `    ${f.key}: ${t};${f.type === 'number' ? rangeNote(f) : ''}`;
-        });
+        const fields = val.fields.flatMap((f) => (f.type === 'object'
+            ? [`    ${f.key}: {`, ...(f.fields || []).map((ff) => fieldLine(ff, '      ')), '    };']
+            : [fieldLine(f, '    ')]));
         return ['{', `  ${key}: {`, ...fields, '  }', '}'];
     }
     return ['{', `  ${key}: ${val.type};${val.type === 'number' ? rangeNote(val) : ''}`, '}'];
+}
+
+/** 带分组的记录：给 AI 几个 JSON Patch 路径的写法（第一个基本字段 + 每个分组的第一个字段，最多 4 条） */
+function recordPathExamples(v) {
+    if (v.value?.type !== 'object' || !v.value.fields.some((f) => f.type === 'object')) return [];
+    const base = `/${splitPath(v.path).join('/')}/<${v.keyDesc || '名称'}>`;
+    const out = [];
+    const first = v.value.fields.find((f) => f.type !== 'object');
+    if (first) out.push(`${base}/${first.key}`);
+    for (const g of v.value.fields.filter((f) => f.type === 'object')) out.push(`${base}/${g.key}/${g.fields[0].key}`);
+    return out.slice(0, 4);
 }
 
 function ruleLeafLines(v, indent) {
@@ -763,6 +1127,8 @@ function ruleLeafLines(v, indent) {
         if (v.maxItems) lines.push(`${pad}maxItems: ${v.maxItems}`);
     } else if (v.type === 'record') {
         lines.push(`${pad}type: |-`, ...recordTypeText(v).map((l) => `${pad}  ${l}`));
+        const paths = recordPathExamples(v);
+        if (paths.length) lines.push(`${pad}paths:`, ...paths.map((p) => `${pad}  - ${JSON.stringify(p)}`));
     }
     if (v.type === 'string' && v.format) lines.push(`${pad}format: ${JSON.stringify(v.format)}`);
     if (v.check?.length) lines.push(`${pad}check:`, ...v.check.map((c) => `${pad}  - ${JSON.stringify(c)}`));
@@ -1019,6 +1385,7 @@ export function statusBarMeta(card) {
         spec: cloneJson(sb.spec || { title: '状态栏', variables: [] }),
         html: sb.html || '',
         options: cloneJson(sb.options || {}),
+        portraits: normalizePortraits(sb.portraits),
     };
 }
 
@@ -1195,7 +1562,7 @@ export function lintStatusHtml(html, { mode = 'bind', spec = null } = {}) {
     if (mode === 'bind') {
         if (/<!doctype|<html[\s>]|<head[\s>]|<body[\s>]/i.test(original)) warnings.push('绑定模式只需要片段，<html>/<head>/<body> 会被自动去掉');
         const paths = bindingPaths(s);
-        if (!paths.length && !/nlRender/.test(s)) warnings.push('没有任何 data-nl-* 绑定或 nlRender，界面不会显示变量');
+        if (!paths.length && !/nlRender|data-nl-(?:group|portrait)\b/.test(s)) warnings.push('没有任何 data-nl-* 绑定或 nlRender，界面不会显示变量');
         if (spec?.variables?.length) {
             const unknown = uniqStrings(paths.filter((p) => p && !knownPath(spec, p)));
             if (unknown.length) warnings.push(`绑定了变量表里没有的路径：${unknown.join('、')}`);
@@ -1254,22 +1621,27 @@ function parseLeafValue(v, value, path, errors) {
     }
 }
 
+/** 记录值（或其中的分组）：与 z.object({…}).prefault({}) 一致——缺失时按 {} 补默认值，不是对象时报错，未知键丢弃 */
+function parseFieldsObject(fields, item, path, errors) {
+    const src = item === undefined ? {} : item;
+    if (!isPlainObj(src)) {
+        errors.push(`${path}：不是对象`);
+        return undefined;
+    }
+    const out = {};
+    for (const f of fields) {
+        const r = f.type === 'object'
+            ? parseFieldsObject(f.fields || [], src[f.key], `${path}.${f.key}`, errors)
+            : parseLeafValue(f, src[f.key], `${path}.${f.key}`, errors);
+        if (r === undefined) return undefined;
+        out[f.key] = r;
+    }
+    return out;
+}
+
 function parseRecordItem(val, item, path, errors) {
     if (val.type === 'number') return parseLeafValue({ ...val, type: 'number', init: val.init ?? 0 }, item, path, errors);
-    if (val.type === 'object') {
-        const src = item === undefined ? {} : item;
-        if (!isPlainObj(src)) {
-            errors.push(`${path}：不是对象`);
-            return undefined;
-        }
-        const out = {};
-        for (const f of val.fields) {
-            const r = parseLeafValue(f, src[f.key], `${path}.${f.key}`, errors);
-            if (r === undefined) return undefined;
-            out[f.key] = r;
-        }
-        return out;
-    }
+    if (val.type === 'object') return parseFieldsObject(val.fields, item, path, errors);
     return parseLeafValue({ type: 'string', init: '' }, item, path, errors);
 }
 

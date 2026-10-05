@@ -10,7 +10,7 @@ import { defaultWorldName, statusBarWorldName } from '../src/publish.js';
 import { ensureStatusBar, normalizeStatusSpec } from '../src/statusbar.js';
 import { openDialog } from '../src/ui/common.js';
 import { applyCardWorldInput, cardWorldField, cardWorldLabelHtml } from '../src/ui/tab-cards.js';
-import { addStatusBarTemplate, updateStatusBarTemplate } from '../src/statusbar-templates.js';
+import { BUILTIN_STATUSBAR_TEMPLATES, addStatusBarTemplate, updateStatusBarTemplate } from '../src/statusbar-templates.js';
 import { templateNameProblem } from '../src/ui/statusbar-dialog.js';
 import { templateIdAfterDelete, templateVarTagsHtml } from '../src/ui/tab-settings.js';
 
@@ -266,6 +266,14 @@ test('templateVarTagsHtml：变量数与对话框同一口径（记录的每个�
     assert.doesNotMatch(html, /超过上限/);
     assert.match(templateVarTagsHtml({ spec }, 2), /nl-warn[^>]*>超过上限 2</);
     assert.match(templateVarTagsHtml({ spec: null }, 12), /只有界面，没有变量表/);
+    // 模板自带更大的上限（「多人群像」15 个变量、自带上限 15）：不标「超过上限 12」，改标「自带上限 15」；设置上限够用时什么都不加
+    const ens = BUILTIN_STATUSBAR_TEMPLATES.find((t) => t.id === 'builtin_ensemble');
+    const tags = templateVarTagsHtml(ens, 12);
+    assert.match(tags, /15 个变量/);
+    assert.doesNotMatch(tags, /超过上限/);
+    assert.match(tags, /<span class="nl-tag" title="[^"]*">自带上限 15</);
+    assert.doesNotMatch(templateVarTagsHtml(ens, 20), /上限/);
+    assert.match(templateVarTagsHtml({ ...ens, maxVars: 13 }, 12), /nl-warn[^>]*>超过上限 13</, '自带上限也不够时仍提示会丢弃');
 });
 
 test('设置页改模板名用 templateNameProblem：空白不同、大小写不同的重名也拦下（与 updateStatusBarTemplate 的检查一致）', () => {

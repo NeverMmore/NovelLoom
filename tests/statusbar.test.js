@@ -873,7 +873,7 @@ test('NL 运行时：是合法 JS，且不含会被酒馆或浏览器误伤的�
     assert.equal(stFixMarkdown(rt, true), rt);
 });
 
-test('酒馆「自动修复 Markdown」不会改动状态栏文档，每个 <script> 仍能解析（bind / auto 三套主题 / 四个内置模板）', () => {
+test('酒馆「自动修复 Markdown」不会改动状态栏文档，每个 <script> 仍能解析（bind / auto 三套主题 / 五个内置模板）', () => {
     // 标题、标签、初始值里故意带 * 和 "（经 htmlSafe / jsLit 转义后每行仍是偶数个）
     const s = normalizeStatusSpec({
         title: '重要*"状态',
@@ -887,7 +887,7 @@ test('酒馆「自动修复 Markdown」不会改动状态栏文档，每个 <scr
     docs.push(['bind（空片段 → 内置排版）', compileStatusDocument({ statusBar: { mode: 'bind', html: '', spec: s } })]);
     docs.push(['bind 片段', compileStatusDocument(card({ mode: 'bind', html: '<b data-nl-text="林小雨.好感度"></b>\n<script>\nwindow.nlRender = function (stat, ctx) { document.title = "好感 " + ctx.get("林小雨.好感度", 0) / 2; };\n</script>' }))]);
     for (const t of BUILTIN_STATUSBAR_TEMPLATES) docs.push([`内置模板 ${t.name}`, compileStatusDocument({ statusBar: { mode: 'bind', html: t.html, spec: t.spec, theme: t.theme } })]);
-    assert.equal(docs.length, 3 + 2 + 4);
+    assert.equal(docs.length, 3 + 2 + 5);
     for (const [name, doc] of docs) {
         for (const line of doc.split('\n')) {
             assert.equal((line.split('*').length - 1) % 2, 0, `${name}：这一行的 * 是奇数个：${line.slice(0, 120)}`);

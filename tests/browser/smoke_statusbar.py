@@ -17,6 +17,8 @@ NOVEL = '\n'.join([
 # harness.html 里 mock 的变量表（SB_SPEC）的路径
 SPEC_PATHS = ['世界.时间', '世界.地点', '莉莉丝.好感度', '莉莉丝.心情', '莉莉丝.在场', '莉莉丝.状态', '主角.物品']
 BUILTINS = [('builtin_general', '通用'), ('builtin_rpg', 'RPG'), ('builtin_campus', '校园恋爱'), ('builtin_cyberpunk', '赛博朋克')]
+# 第五个内置模板「多人群像」为世界卡设计（15 个变量，自带上限 15）：这里只检查它在列表里，套用见 smoke_statusbar_multi.py
+ALL_BUILTINS = BUILTINS + [('builtin_ensemble', '多人群像')]
 REGEX_NAMES = ['[NL界面]状态栏', '[NL不发送]状态栏占位符', '[NL不发送]去除变量更新', '[NL折叠]变量更新中', '[NL折叠]完整变量更新']
 ENTRY_COMMENTS = ['[initvar]变量初始化勿开', '变量列表', '[mvu_update]变量更新规则', '[mvu_update]变量输出格式']
 TAG = '<StatusPlaceHolderImpl/>'
@@ -149,7 +151,7 @@ try:
         assert ev(page, 'NovelLoom.app.settings.cards.statusBar') is True
         tpl_opts = ev(page, "[...document.querySelectorAll('[data-setting=\"cards.statusBarTemplateId\"] option')].map(o => o.value)")
         print('template options:', tpl_opts)
-        assert tpl_opts[0] == '' and all(t in tpl_opts for t, _ in BUILTINS), tpl_opts
+        assert tpl_opts[0] == '' and all(t in tpl_opts for t, _ in ALL_BUILTINS), tpl_opts
         page.fill('[data-form="statusBarRequirement"]', '重点记录好感和随身物品')
         shot(page, '01-form')
         page.click('[data-act="generate"]')
@@ -455,7 +457,7 @@ try:
         page.wait_for_selector('.nl-dialog-overlay [data-tpl-id="builtin_cyberpunk"]')
         listed = ev(page, "[...document.querySelectorAll('.nl-dialog-overlay [data-tpl-id]')].map(e => e.dataset.tplId)")
         print('library:', listed)
-        assert all(t in listed for t, _ in BUILTINS)
+        assert all(t in listed for t, _ in ALL_BUILTINS)
         shot(page, '12-settings-library')
         page.keyboard.press('Escape')
         page.wait_for_selector('.nl-dialog-overlay', state='detached')

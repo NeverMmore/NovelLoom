@@ -2,7 +2,7 @@
 
 import { buildCardJson, buildPngCard } from './cards.js';
 import { characterExistsInST, importCharacterToST, saveWorldToST } from './stio.js';
-import { statusBarActive, statusBarEntries } from './statusbar.js';
+import { isWorldCard, statusBarActive, statusBarEntries } from './statusbar.js';
 import { buildWorldbookEntries, toCharacterBook, toSTWorld } from './worldbook.js';
 import { getVolumes } from './project.js';
 import { safeFileName } from './utils.js';
@@ -48,14 +48,14 @@ export function blobToDataUrl(blob) {
 }
 
 /**
- * 带状态栏的卡片专用的世界书名：「默认世界书名·角色名」。
+ * 带状态栏的卡片专用的世界书名：「默认世界书名·角色名」（世界/旁白卡是「默认世界书名·卡片名」）。
  * 同一时间点的卡片默认共用一本世界书、写入时同名覆盖，而 MVU 只从角色绑定的世界书读 [initvar]，
  * 所以状态栏卡必须有自己的一本；第一次写入后记在 card.statusBar.worldName，之后保持不变。
  * 状态栏启用时 card.worldName（编辑框里的“绑定世界书名称”）不起作用。
  */
 export function statusBarWorldName(project, settings, card) {
     if (card.statusBar?.worldName) return card.statusBar.worldName;
-    return `${defaultWorldName(project, settings, card.timepoint)}·${safeFileName(card.data?.name || card.charName, '角色')}`;
+    return `${defaultWorldName(project, settings, card.timepoint)}·${safeFileName(card.data?.name || card.charName, isWorldCard(card) ? '旁白' : '角色')}`;
 }
 
 /**

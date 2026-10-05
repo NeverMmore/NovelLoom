@@ -441,8 +441,8 @@ select.nl-input option { background: var(--nl-tint); color: var(--nl-text); }
 .nl-btn.nl-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--nl-err) 12%, transparent); border-color: color-mix(in srgb, var(--nl-err) 55%, transparent); }
 .nl-btn.nl-sm { height: 26px; padding: 0 var(--nl-s2); font-size: var(--nl-fs-xs); gap: 4px; }
 .nl-btn.nl-sm .nl-ico { width: 14px; height: 14px; }
-/* 一行只用一种控件高度：行里有输入框、下拉框或正常按钮时，小按钮也用正常高度 */
-:is(.nl-row, .nl-card-head, .nl-page-actions):has(> .nl-input, > .nl-btn:not(.nl-sm), > select) > .nl-btn.nl-sm { height: 32px; padding: 0 var(--nl-s3); font-size: var(--nl-fs-sm); gap: 6px; }
+/* 一行只用一种控件高度：行里有输入框、下拉框或正常按钮时，小按钮也用正常高度（立绘分页的角色 / 图池标题行同理） */
+:is(.nl-row, .nl-card-head, .nl-page-actions, .nl-sb-pt-head):has(> .nl-input, > .nl-btn:not(.nl-sm), > select) > .nl-btn.nl-sm { height: 32px; padding: 0 var(--nl-s3); font-size: var(--nl-fs-sm); gap: 6px; }
 .nl-btn.nl-ghost { background: transparent; border-color: transparent; color: var(--nl-text-2); }
 .nl-btn.nl-ghost:hover:not(:disabled) { background: var(--nl-hover); color: var(--nl-text); border-color: transparent; }
 
@@ -845,6 +845,77 @@ h4.nl-role-system, h4.nl-role-user, h4.nl-role-assistant { display: flex; align-
 .nl-sb-choice > span { display: flex; flex-direction: column; gap: 2px; }
 .nl-sb-choice:has(> input:checked) { background: var(--nl-accent-soft); border-color: var(--nl-accent-line); }
 
+/* 状态栏：记录的字段编辑器（含一层分组），在变量表里记录那一行下面单独一行 */
+.nl-sb-table tr:has(+ tr.nl-sb-fields-row) > td { border-bottom-color: transparent; }
+.nl-sb-table tr.nl-sb-fields-row > td { padding-top: 0; }
+.nl-sb-table tbody tr.nl-sb-fields-row:not(.nl-sb-bad):hover > td { background: transparent; }
+.nl-sb-fields { display: flex; flex-direction: column; gap: var(--nl-s2); padding: var(--nl-s2) var(--nl-s3) var(--nl-s3); border: 1px solid var(--nl-line); border-radius: var(--nl-r); }
+.nl-sb-fields-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--nl-s2); font-size: var(--nl-fs-sm); }
+.nl-sb-fld-list { display: flex; flex-direction: column; }
+.nl-sb-fld { display: grid; grid-template-columns: minmax(96px, 1.1fr) minmax(88px, 1fr) 92px minmax(96px, 1fr) minmax(200px, 2.4fr) auto; gap: var(--nl-s1) var(--nl-s2); align-items: start; padding: 6px 0; border-bottom: 1px solid var(--nl-line); }
+.nl-sb-fld:last-child { border-bottom: 0; }
+.nl-sb-fld.is-bad > .nl-input:first-child { border-color: color-mix(in srgb, var(--nl-err) 55%, transparent); }
+.nl-sb-fld-extra { display: flex; flex-wrap: wrap; align-items: center; gap: var(--nl-s1); min-width: 0; }
+.nl-sb-fld-extra .nl-sb-fld-num { width: 5em; flex: none; }
+.nl-sb-fld-extra .nl-grow { min-width: 140px; }
+.nl-sb-fld-extra label { display: inline-flex; align-items: center; gap: var(--nl-s1); min-height: 32px; white-space: nowrap; }
+.nl-sb-fld-acts { display: flex; align-items: center; gap: 2px; min-height: 32px; white-space: nowrap; }
+.nl-sb-fld-msg { grid-column: 1 / -1; }
+.nl-sb-grp { display: flex; flex-direction: column; gap: var(--nl-s1); margin: 6px 0; padding: var(--nl-s2) var(--nl-s3); border: 1px solid var(--nl-line); border-radius: var(--nl-r); }
+.nl-sb-grp.is-bad { border-color: color-mix(in srgb, var(--nl-err) 45%, transparent); }
+.nl-sb-grp-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--nl-s2); }
+.nl-sb-grp-head > .nl-input { width: 160px; flex: none; }
+.nl-sb-grp-head > .nl-input[aria-invalid="true"] { border-color: color-mix(in srgb, var(--nl-err) 55%, transparent); }
+.nl-sb-grp-body { display: flex; flex-direction: column; }
+.nl-sb-fields-json > summary { font-size: var(--nl-fs-sm); color: var(--nl-text-2); cursor: pointer; }
+.nl-sb-fields-json > textarea { margin-top: var(--nl-s1); }
+
+/* 状态栏：立绘（每个角色一个外框，图片是框里用细线分隔的行；图池同样） */
+.nl-sb-pt-add { display: flex; flex-direction: column; gap: var(--nl-s2); }
+.nl-sb-pt-chips { gap: var(--nl-s1); }
+.nl-sb-pt-list { display: flex; flex-direction: column; gap: var(--nl-s2); }
+.nl-sb-pt-list:empty { display: none; }
+.nl-sb-pt-char, .nl-sb-pt-pool { display: flex; flex-direction: column; gap: var(--nl-s2); padding: var(--nl-s2) var(--nl-s3) var(--nl-s3); border: 1px solid var(--nl-line); border-radius: var(--nl-r); }
+.nl-sb-pt-char.is-bad, .nl-sb-pt-pool.is-bad { border-color: color-mix(in srgb, var(--nl-err) 45%, transparent); }
+.nl-sb-pt-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--nl-s2); }
+.nl-sb-pt-name { width: 180px; flex: none; font-weight: 600; }
+.nl-sb-pt-imgs, .nl-sb-pool-vals { display: flex; flex-direction: column; }
+.nl-sb-pt-img { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--nl-s3); align-items: start; padding: var(--nl-s2) 0; border-top: 1px solid var(--nl-line); }
+.nl-sb-pt-img.is-current > .nl-sb-thumb { border-color: var(--nl-accent-line); }
+.nl-sb-pt-img.is-bad .nl-input[data-sb-pt="url"] { border-color: color-mix(in srgb, var(--nl-err) 55%, transparent); }
+.nl-sb-pt-fields { display: flex; flex-direction: column; gap: var(--nl-s1); min-width: 0; }
+.nl-sb-pt-label { width: 140px; flex: none; }
+.nl-sb-pt-when > input.nl-input { width: 160px; flex: none; }
+.nl-sb-pt-when > input.nl-sb-pt-val { width: 6em; }
+.nl-sb-pt-msg:empty { display: none; }
+.nl-sb-pt-none { padding: var(--nl-s2) 0; }
+.nl-sb-tag-cur { color: var(--nl-accent-ink); background: var(--nl-accent-soft); }
+.nl-sb-pool-val { display: grid; grid-template-columns: 160px minmax(0, 1fr) auto; gap: var(--nl-s2); align-items: start; padding: var(--nl-s2) 0; border-top: 1px solid var(--nl-line); }
+.nl-sb-pool-urls { display: flex; flex-direction: column; gap: var(--nl-s1); min-width: 0; }
+.nl-sb-pt-pool > .nl-field { margin: 0; }
+.nl-sb-thumbs { display: flex; flex-wrap: wrap; gap: var(--nl-s1); }
+.nl-sb-thumbs:empty { display: none; }
+/* 缩略图：底下是名字首字的占位，图片盖在上面；加载失败 / 地址不合法时换成警告图标 */
+.nl-sb-thumb { position: relative; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 48px; height: 64px; overflow: hidden; border: 1px solid var(--nl-line); border-radius: var(--nl-r-sm); background: var(--nl-surface-2); color: var(--nl-text-3); font-size: var(--nl-fs-md); font-weight: 600; }
+.nl-sb-thumb > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.nl-sb-thumb-sm { width: 28px; height: 28px; border-radius: 50%; font-size: var(--nl-fs-xs); }
+.nl-sb-thumb-xs { width: 30px; height: 40px; font-size: var(--nl-fs-xs); }
+.nl-sb-thumb[data-state="ok"] > .nl-sb-thumb-ph { visibility: hidden; }
+.nl-sb-thumb-err { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: var(--nl-err); background: color-mix(in srgb, var(--nl-err) 12%, var(--nl-tint)); }
+.nl-sb-thumb:is([data-state="error"], [data-state="bad"]) { border-color: color-mix(in srgb, var(--nl-err) 35%, transparent); }
+.nl-sb-thumb:is([data-state="error"], [data-state="bad"]) > .nl-sb-thumb-err { display: flex; }
+.nl-sb-thumb[data-state="error"] > img { display: none; }
+@media (max-width: 800px) {
+    .nl-sb-pt-img { grid-template-columns: auto minmax(0, 1fr); }
+    .nl-sb-pt-img > .nl-sb-fld-acts { grid-column: 2; justify-content: flex-end; }
+    .nl-sb-pt-fields > .nl-row:first-child { flex-wrap: wrap; }
+    .nl-sb-pt-label { width: 100%; flex: 1 1 100%; }
+    .nl-sb-pt-name { width: auto; flex: 1 1 120px; }
+    .nl-sb-pt-when > input.nl-input { flex: 1 1 120px; }
+    .nl-sb-pool-val { grid-template-columns: minmax(0, 1fr) auto; }
+    .nl-sb-pool-val > .nl-sb-pool-urls { grid-column: 1 / -1; grid-row: 2; }
+}
+
 /* ---------------- 窄屏 ---------------- */
 @media (max-width: 800px) {
     .nl-window { width: 100vw; height: 100dvh; border-radius: 0; border: none; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
@@ -867,7 +938,7 @@ h4.nl-role-system, h4.nl-role-user, h4.nl-role-assistant { display: flex; align-
     .nl-page-actions:not(:empty) + .nl-window-actions { padding-left: 0; border-left: none; }
     .nl-window-actions { grid-column: 2; }
     /* 窄屏：工具栏按钮保持紧凑高度，并在换行时撑满整行，不留单独一个按钮挂在下一行 */
-    :is(.nl-row, .nl-card-head, .nl-page-actions):has(> .nl-input, > .nl-btn:not(.nl-sm), > select) > .nl-btn.nl-sm { height: 30px; padding: 0 var(--nl-s2); font-size: var(--nl-fs-xs); }
+    :is(.nl-row, .nl-card-head, .nl-page-actions, .nl-sb-pt-head):has(> .nl-input, > .nl-btn:not(.nl-sm), > select) > .nl-btn.nl-sm { height: 30px; padding: 0 var(--nl-s2); font-size: var(--nl-fs-xs); }
     /* 标题栏里有两个以上操作时平分一行；单个操作和工具栏按钮保持紧凑宽度 */
     .nl-page-actions:has(> .nl-btn + .nl-btn) > .nl-btn { flex: 1 1 0; }
     .nl-tab { padding: var(--nl-s3) var(--nl-s3) var(--nl-s6); }

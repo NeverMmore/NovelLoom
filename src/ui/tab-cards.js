@@ -12,7 +12,8 @@ import { getVolumes, IMPORTANCE_RANK } from '../project.js';
 import { errorText } from '../llm.js';
 import { blobToDataUrl, dataUrlToBlob, defaultWorldName, prepareCard, publishCard, statusBarWorldName } from '../publish.js';
 import { characterExistsInST, openCharacterInST } from '../stio.js';
-import { statusBarActive } from '../statusbar.js';
+import { castRecordPath, statusBarActive } from '../statusbar.js';
+import { getStatusBarTemplate } from '../statusbar-templates.js';
 import { bannedRulesFor, getStyleProfile } from '../style.js';
 import { greetingText, testChatReply } from '../testchat.js';
 import { downloadFile, estimateTokens, pickFile, safeFileName, truncate, uniq } from '../utils.js';
@@ -66,6 +67,77 @@ export function applyCardWorldInput(card, field, input) {
     card.worldName = v;
 }
 
+/**
+ * 写卡选项里「同时生成状态栏」下面的说明：世界/旁白卡的状态栏为整个群像设计（{{char}} 是旁白）。
+ * @param {'character'|'world'} kind
+ */
+export function statusBarFormNote(kind) {
+    const tail = '导出的卡需要酒馆助手（JS-Slash-Runner）4.6 以上。生成后可以在卡片的「状态栏」里修改、配立绘、预览。';
+    return kind === 'world'
+        ? `世界/旁白卡的状态栏为整个群像设计：{{char}} 是旁白，AI 会把项目里的主要角色（到所选时间点为止）各记一套状态（好感、心情、服饰……），剧情中途出场的 NPC 随时加入，再加上时间、地点和主角自己的状态。${tail}`
+        : `写完角色卡后接着让 AI 设计一套变量（好感、心情、位置……）和显示在每条回复下面的状态栏。${tail}`;
+}
+
+/**
+ * 写卡选项里「状态栏模板」的下拉选项：世界/旁白卡的「自动」写成按群像设计（AI 按群像出变量表），其余同 statusBarTemplateOptions。
+ * @param {object} settings
+ * @param {'character'|'world'} kind
+ */
+export function cardStatusBarTemplateOptions(settings, kind) {
+    const list = statusBarTemplateOptions(settings);
+    return kind === 'world' ? list.map((o) => (o.value === '' ? { ...o, label: '自动（AI 按群像设计）' } : o)) : list;
+}
+
+export const WORLD_SINGLE_TEMPLATE_WARNING = '这个模板只记一个角色，不适合世界卡；建议用 自动 或 多人群像';
+
+/**
+ * 世界/旁白卡选了只记一个角色的模板时，「状态栏模板」下面的提示；没问题返回 ''。
+ * 只看会被「沿用结构」的模板（有变量表）：变量表里没有主要角色记录（castRecordPath 为 ''）就提示。
+ * 只有界面的模板只借外观，变量表仍由 AI 按群像设计，不提示。
+ * @param {object} settings
+ * @param {'character'|'world'} kind
+ * @param {string} templateId '' = 自动
+ */
+export function statusBarTemplateWorldWarning(settings, kind, templateId) {
+    if (kind !== 'world' || !templateId) return '';
+    let t = null;
+    try {
+        t = getStatusBarTemplate(settings, templateId);
+    } catch {
+        return '';
+    }
+    if (!t?.spec?.variables?.length) return '';
+    return castRecordPath(t.spec) ? '' : WORLD_SINGLE_TEMPLATE_WARNING;
+}
+
+/** 「状态栏模板」下面放提示的位置（总是在，没有提示时隐藏；换模板时由 syncStatusBarTemplateWarning 更新） */
+export function statusBarTemplateWarningHtml(text) {
+    return `<div class="nl-warn nl-small" id="nl-sb-tpl-warn" data-sb-tpl-warn role="status" ${text ? '' : 'hidden'}>${text ? `${icon('alert', { size: 12 })} ${esc(text)}` : ''}</div>`;
+}
+
+/**
+ * 换了模板（或卡片类型）后更新提示，不整页重绘（否则“写卡选项”会收起来）。
+ * @param {HTMLElement} root 写卡表单所在的容器
+ * @param {string} text statusBarTemplateWorldWarning() 的结果
+ */
+export function syncStatusBarTemplateWarning(root, text) {
+    const box = root?.querySelector('[data-sb-tpl-warn]');
+    if (!box) return;
+    box.innerHTML = text ? `${icon('alert', { size: 12 })} ${esc(text)}` : '';
+    box.toggleAttribute('hidden', !text);
+    const sel = root.querySelector('select[data-setting="cards.statusBarTemplateId"]');
+    if (!sel) return;
+    if (text) sel.setAttribute('aria-describedby', 'nl-sb-tpl-warn');
+    else sel.removeAttribute('aria-describedby');
+}
+
+/** 卡片列表里「状态栏」按钮的说明（世界卡和角色卡都有） */
+export function statusBarButtonTitle(card) {
+    return card?.kind === 'world'
+        ? 'MVU 变量状态栏（为整个群像设计）：变量、更新规则、界面、立绘、预览'
+        : 'MVU 变量状态栏：变量、更新规则、界面、立绘、预览';
+}
+
 export const cardsTab = {
     mount(el, { switchTab }) {
         const form = { kind: 'character', charName: app.pendingCardChar || '', timepoint: '', requirement: '', greetings: app.settings.cards.greetings, firstMesLen: '400-800 字', avatarDataUrl: '', statusBarRequirement: '' };
@@ -73,8 +145,8 @@ export const cardsTab = {
         const groupForm = { members: new Set(), timepoint: '', requirement: '' };
         /** 状态栏对话框的上下文（见 statusbar-dialog.js） */
         const sbCtx = () => ({ app, project: app.project, settings: app.settings, save: () => app.saveNow(), saveSettings: () => app.saveSettings(), onChange: () => render() });
-        /** 这次写卡是否接着生成状态栏（世界/旁白卡暂不支持） */
-        const wantStatusBar = () => !!app.settings.cards.statusBar && form.kind !== 'world';
+        /** 这次写卡是否接着生成状态栏（角色卡和世界/旁白卡都可以；世界卡的状态栏为整个群像设计） */
+        const wantStatusBar = () => !!app.settings.cards.statusBar;
 
         /** 角色名 → 该角色已写入酒馆的 avatar 文件名（不含 .png）；没有则返回空字符串 */
         const resolveAvatar = (name) => {
@@ -101,8 +173,10 @@ export const cardsTab = {
             const p = app.project;
             const chars = charOptions();
             if (!form.charName && chars.length) form.charName = chars[0].value;
-            const sbTpls = statusBarTemplateOptions(app.settings);
+            const sbTpls = cardStatusBarTemplateOptions(app.settings, form.kind);
             if (!sbTpls.some((t) => t.value === (app.settings.cards.statusBarTemplateId || ''))) app.settings.cards.statusBarTemplateId = '';
+            const sbTplId = app.settings.cards.statusBarTemplateId || '';
+            const sbTplWarn = statusBarTemplateWorldWarning(app.settings, form.kind, sbTplId);
             const sbOn = !!app.settings.cards.statusBar;
             el.innerHTML = `
             <section class="nl-card">
@@ -140,11 +214,11 @@ export const cardsTab = {
                         <label><input type="checkbox" data-setting="cards.lintAfterGenerate"> 生成后自动审稿</label>
                     </div>
                     <div class="nl-sb-form">
-                        <label ${form.kind === 'world' ? 'hidden' : ''}><input type="checkbox" data-setting="cards.statusBar"> 同时生成状态栏（MVU 变量）</label>
-                        <div class="nl-muted nl-small">${form.kind === 'world' ? '世界/旁白卡暂不支持状态栏。' : '写完角色卡后接着让 AI 设计一套变量（好感、心情、位置……）和显示在每条回复下面的状态栏；导出的卡需要酒馆助手（JS-Slash-Runner）4.6 以上。生成后可以在卡片的「状态栏」里修改、预览。'}</div>
-                        <div class="nl-grid2" data-sb-form-opts ${sbOn && form.kind !== 'world' ? '' : 'hidden'}>
-                            <div class="nl-field"><label>状态栏模板</label><select class="nl-input" data-setting="cards.statusBarTemplateId">${optionList(sbTpls, app.settings.cards.statusBarTemplateId || '')}</select></div>
-                            <div class="nl-field"><label>状态栏要求（可选）</label><input class="nl-input" data-form="statusBarRequirement" value="${esc(form.statusBarRequirement)}" placeholder="例如：重点记录好感和体力；记录随身物品"></div>
+                        <label><input type="checkbox" data-setting="cards.statusBar"> 同时生成状态栏（MVU 变量）${form.kind === 'world' ? '：为整个群像设计' : ''}</label>
+                        <div class="nl-muted nl-small" data-sb-form-note>${esc(statusBarFormNote(form.kind))}</div>
+                        <div class="nl-grid2" data-sb-form-opts ${sbOn ? '' : 'hidden'}>
+                            <div class="nl-field"><label>状态栏模板</label><select class="nl-input" data-setting="cards.statusBarTemplateId"${sbTplWarn ? ' aria-describedby="nl-sb-tpl-warn"' : ''}>${optionList(sbTpls, sbTplId)}</select>${statusBarTemplateWarningHtml(sbTplWarn)}</div>
+                            <div class="nl-field"><label>状态栏要求（可选）</label><input class="nl-input" data-form="statusBarRequirement" value="${esc(form.statusBarRequirement)}" placeholder="${form.kind === 'world' ? '例如：主要角色记录好感、心情和服饰；NPC 只记身份和阵营' : '例如：重点记录好感和体力；记录随身物品'}"></div>
                         </div>
                     </div>
                 </details>
@@ -152,7 +226,7 @@ export const cardsTab = {
                 <div class="nl-row">
                     <button class="nl-btn nl-primary" data-act="generate" ${!chars.length && form.kind !== 'world' ? 'disabled' : ''}>生成</button>
                     <button class="nl-btn" data-act="preview">预览提示词</button>
-                    <span class="nl-muted nl-small" data-sb-gen-hint ${sbOn && form.kind !== 'world' ? '' : 'hidden'}>会同时生成状态栏</span>
+                    <span class="nl-muted nl-small" data-sb-gen-hint ${sbOn ? '' : 'hidden'}>会同时生成状态栏</span>
                     ${!chars.length ? '<span class="nl-muted">还没有角色资料，请先提取。</span>' : ''}
                 </div>
             </section>
@@ -175,7 +249,7 @@ export const cardsTab = {
                             <button class="nl-btn nl-sm" data-act="edit" data-id="${esc(c.id)}">编辑</button>
                             <button class="nl-btn nl-sm" data-act="testchat" data-id="${esc(c.id)}" title="写入酒馆前先在这里聊两句，看看开场白和回复怎么样">${icon('message', { size: 14 })}试聊</button>
                             <button class="nl-btn nl-sm" data-act="deduce" data-id="${esc(c.id)}" title="根据这张卡当前的设定和相关世界书，推演剧情走向">${icon('crystal', { size: 14 })}剧情推演</button>
-                            ${c.kind === 'world' ? '' : `<button class="nl-btn nl-sm" data-act="statusbar" data-id="${esc(c.id)}" title="MVU 变量状态栏：变量、更新规则、界面、预览">状态栏</button>`}
+                            <button class="nl-btn nl-sm" data-act="statusbar" data-id="${esc(c.id)}" title="${esc(statusBarButtonTitle(c))}">状态栏</button>
                             <button class="nl-btn nl-sm" data-act="publish" data-id="${esc(c.id)}">${icon('upload', { size: 14 })}${c.stAvatar ? '更新到酒馆' : '写入酒馆'}</button>
                             ${c.stAvatar && characterExistsInST(c.stAvatar) ? `<button class="nl-btn nl-sm" data-act="open-st" data-id="${esc(c.id)}">在酒馆打开</button>` : ''}
                             <button class="nl-btn nl-sm" data-act="json" data-id="${esc(c.id)}">导出 JSON</button>
@@ -265,7 +339,7 @@ export const cardsTab = {
                         ${field('post_history_instructions', '历史后指令（post_history_instructions）', 3)}
                         ${field('creator_notes', '作者备注（creator_notes）', 2)}
                         <div class="nl-field"><label>标签（逗号分隔）</label><input class="nl-input" data-card="tags" value="${esc(d.tags.join('，'))}"></div>
-                        ${card.kind === 'world' ? '' : `<div class="nl-field"><label>状态栏（MVU 变量）</label><div class="nl-row">${statusBarTagHtml(card) || '<span class="nl-muted nl-small">这张卡还没有状态栏</span>'}<button class="nl-btn nl-sm" data-card-act="statusbar">打开状态栏设置</button></div></div>`}
+                        <div class="nl-field"><label>状态栏（MVU 变量）${card.kind === 'world' ? ' <span class="nl-muted nl-small">世界/旁白卡：为整个群像设计</span>' : ''}</label><div class="nl-row">${statusBarTagHtml(card) || '<span class="nl-muted nl-small">这张卡还没有状态栏</span>'}<button class="nl-btn nl-sm" data-card-act="statusbar">打开状态栏设置</button></div></div>
                     </details>`,
                 buttons: [{ label: '取消', value: null }, { label: '保存', value: 'save' }, { label: '保存并写入酒馆', value: 'publish', primary: true }],
                 onMount: (r) => {
@@ -1007,9 +1081,13 @@ export const cardsTab = {
             }
             if (e.target.dataset.setting === 'cards.statusBar') {
                 // 只切换显示，不整页重绘（否则“写卡选项”会收起来）
-                const on = e.target.checked && form.kind !== 'world';
+                const on = e.target.checked;
                 el.querySelector('[data-sb-form-opts]')?.toggleAttribute('hidden', !on);
                 el.querySelector('[data-sb-gen-hint]')?.toggleAttribute('hidden', !on);
+                return;
+            }
+            if (e.target.dataset.setting === 'cards.statusBarTemplateId') {
+                syncStatusBarTemplateWarning(el, statusBarTemplateWorldWarning(app.settings, form.kind, e.target.value));
                 return;
             }
             const k = e.target.dataset.form;

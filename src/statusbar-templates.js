@@ -1,13 +1,16 @@
-// 状态栏模板：四个内置模板（通用 / RPG / 校园恋爱 / 赛博朋克）、用户模板的增删改查、套用到角色卡，以及单个模板的 JSON 导入导出。
+// 状态栏模板：五个内置模板（通用 / RPG / 校园恋爱 / 赛博朋克 / 多人群像）、用户模板的增删改查、套用到角色卡，以及单个模板的 JSON 导入导出。
 // 用户模板保存在扩展设置 settings.statusBarTemplates（跨项目共享，配置导入时按 id 合并，见 io.js）。
 // 内置模板只读：不能删除、改名或修改，可以「复制」成自己的模板后再改。
 // 内置模板的界面是绑定模式片段（<style> + data-nl-* 绑定 + 可选的 window.nlRender），由 NovelLoom 运行时填值；
 // 它们必须通过 lintStatusHtml（无错误、无警告）并能原样经过酒馆的正则替换与「自动修复 Markdown」——tests/statusbar-templates.test.js 逐个检查。
 // 所以界面代码里每行的 * 与 " 个数都是偶数，* 旁边也不留空格（例如写 .gn :where(*) 而不是 .gn *）。
+// 模板还可以带两样可选的东西：maxVars（模板自带的变量上限，变量多于设置里的上限时套用不截断，最多 30）
+// 与 portraits（立绘设置，形状同 card.statusBar.portraits；从带立绘的角色卡导入时带上，套用时并进卡片自己的立绘）。
 
 import { DEFAULT_STATUS_BAR } from './constants.js';
 import {
-    STATUS_MODE_LABELS, ensureStatusBar, isFrontendText, lintStatusHtml, normalizeStatusSpec, unwrapStatusFence,
+    STATUS_MODE_LABELS, countSpecLeaves, ensureStatusBar, isFrontendText, isWorldCard, lintStatusHtml, normalizePortraits, normalizeStatusSpec,
+    portraitsActive, seedWorldCastEntries, statusBarCharName, unwrapStatusFence,
 } from './statusbar.js';
 import { STATUSBAR_THEMES, cleanFragment, renderDefaultFragment } from './statusbar-runtime.js';
 import { safeFileName, uid } from './utils.js';
@@ -24,6 +27,9 @@ export const STATUS_TEMPLATE_DESC_MAX = 200;
 export const STATUS_TEMPLATE_HTML_MAX = 200000;
 /** 存进模板的变量表不按用户的 maxVars 截断（套用时才按卡片所在设置截断） */
 const STORE_MAX_VARS = 64;
+/** 模板自带的变量上限（maxVars）的取值范围，与设置页「变量上限」一致 */
+export const TEMPLATE_VAR_CAP_MIN = 3;
+export const TEMPLATE_VAR_CAP_MAX = 30;
 
 const THEMES = STATUSBAR_THEMES.map((t) => t.value);
 
@@ -665,11 +671,355 @@ const CYBER_HTML = `<style>
 })();
 </script>`;
 
+// ---- 多人群像：HUD 顶栏 + 「主要角色 / NPC」分页的角色卡片（立绘位、分段好感条）+ 分组详情层 ----
+// 卡片与详情都由运行时按记录逐条生成（data-nl-each），详情里的 服饰 用分组子模板（data-nl-group）；
+// 脚本只负责：分页计数、把好感阶段抄到卡片根元素上着色、打开 / 关闭详情（× 或 Esc，焦点回到卡片）。
+// 立绘位是 <img data-nl-portrait="">：用户在 NovelLoom 里配置了立绘就显示，没配置时运行时给出带首字的占位块（这里重新画了占位样式）。
+
+const ENSEMBLE_STAGES = [{ min: 0, label: '冷淡' }, { min: 20, label: '普通' }, { min: 40, label: '友好' }, { min: 60, label: '亲近' }, { min: 80, label: '信赖' }];
+const ENSEMBLE_MOODS = ['平静', '愉快', '兴奋', '害羞', '紧张', '低落', '生气', '疲惫'];
+
+const ENSEMBLE_SPEC = {
+    title: '群像',
+    variables: [
+        { path: '世界.时间', type: 'string', label: '时间', init: '', desc: '故事里的当前时间，写法跟随世界观（如“第三日 黄昏”“周五 21:40”）', check: ['每轮按剧情推进；没有明确的时间跳跃时只小幅前进', '保持同一种写法'] },
+        { path: '世界.地点', type: 'string', label: '地点', init: '', desc: '当前场景所在的具体地点', check: ['场景转换时更新，写成「区域 · 具体地点」'] },
+        { path: '主角.身份', type: 'string', label: '身份', init: '', desc: '{{user}}目前的身份或处境', check: ['身份或处境明显改变时更新，12 字以内'] },
+        {
+            path: '主要角色', type: 'record', label: '主要角色', keyDesc: '角色名', widget: 'list',
+            value: {
+                type: 'object',
+                fields: [
+                    { key: '身份', type: 'string', init: '' },
+                    { key: '阵营', type: 'string', init: '' },
+                    { key: '好感', type: 'number', min: 0, max: 100, integer: true, init: 30, stages: ENSEMBLE_STAGES },
+                    { key: '心情', type: 'enum', options: ENSEMBLE_MOODS, init: '平静' },
+                    { key: '心理活动', type: 'string', init: '' },
+                    { key: '服饰', type: 'object', fields: [{ key: '上衣', type: 'string', init: '' }, { key: '下装', type: 'string', init: '' }, { key: '配饰', type: 'string', init: '' }] },
+                ],
+            },
+            init: {},
+            desc: '故事的主要角色（{{user}}以外），键为角色名',
+            check: ['新的主要角色登场时用 insert 新增，键为角色名；已有的主要角色不要删除或改名', '好感是该角色对{{user}}的好感，单次变化 ±1~5，重大事件最多 ±10', '心理活动写一句此刻没说出口的想法，20 字以内', '换装时只改服饰里变化的那一项'],
+        },
+        {
+            path: 'NPC', type: 'record', label: 'NPC', keyDesc: '名字或称呼', widget: 'list',
+            value: {
+                type: 'object',
+                fields: [
+                    { key: '身份', type: 'string', init: '' },
+                    { key: '阵营', type: 'string', init: '' },
+                    { key: '好感', type: 'number', min: 0, max: 100, integer: true, init: 30, stages: ENSEMBLE_STAGES },
+                    { key: '心情', type: 'enum', options: ENSEMBLE_MOODS, init: '平静' },
+                ],
+            },
+            init: {},
+            desc: '与{{user}}有互动的次要角色，随剧情增减',
+            check: ['NPC 登场并与{{user}}互动时用 insert 新增，键为名字（不知道名字时用称呼）', '离开且短期内不会再出现时用 remove 删除', '好感单次变化 ±1~5'],
+        },
+    ],
+};
+
+const ENSEMBLE_SAMPLE = {
+    世界: { 时间: '第三日 黄昏', 地点: '港口集市 · 灯塔下' },
+    主角: { 身份: '新来的见习向导' },
+    主要角色: {
+        沈遥: { 身份: '商会账房', 阵营: '海港商会', 好感: 68, 心情: '愉快', 心理活动: '这次的货单总算对上了。', 服饰: { 上衣: '靛青短褂', 下装: '灰布长裤', 配饰: '铜框眼镜' } },
+        林栖: { 身份: '巡海骑士', 阵营: '灯塔骑士团', 好感: 42, 心情: '紧张', 心理活动: '雾太大了，今晚的船能准时靠岸吗？', 服饰: { 上衣: '银灰轻甲', 下装: '皮质马裤', 配饰: '海鸥徽章' } },
+        白芷: { 身份: '流浪药师', 阵营: '无', 好感: 15, 心情: '平静', 心理活动: '', 服饰: { 上衣: '白麻长衫', 下装: '束脚裤', 配饰: '' } },
+    },
+    NPC: {
+        老周: { 身份: '旅店老板', 阵营: '本地居民', 好感: 55, 心情: '愉快' },
+        巡夜卫兵: { 身份: '港口守卫', 阵营: '城防队', 好感: 20, 心情: '疲惫' },
+    },
+};
+
+const ICON_SWAP = `<svg ${SVG}><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/></svg>`;
+const ICON_CLOSE = `<svg ${SVG}><path d="M18 6 6 18M6 6l12 12"/></svg>`;
+
+/** 一张角色卡片（data-nl-each 的模板）：立绘位 + 换一张 + 心情，名字与身份（整张卡可点），分段好感条，阵营 */
+function ensembleCard() {
+    return '<div class="qx-card">'
+        + `<div class="qx-pf"><img class="qx-img" data-nl-portrait="" alt=""><button type="button" class="qx-swap" data-nl-portrait-next="" title="换一张立绘" aria-label="换一张立绘">${ICON_SWAP}</button><span class="qx-mood" data-nl-item="心情"></span></div>`
+        + '<button type="button" class="qx-open" aria-haspopup="dialog"><span class="qx-nm" data-nl-key></span><span class="qx-role" data-nl-item="身份"></span></button>'
+        + '<div class="qx-aff"><span class="qx-seg" data-nl-item-bar="好感"><i></i></span><span class="qx-st" data-nl-item-stage="好感"></span><b class="qx-num" data-nl-item="好感"></b></div>'
+        + '<span class="qx-fac" data-nl-item="阵营" data-nl-item-show="阵营"></span>'
+        + '</div>';
+}
+
+/** 一个详情层（默认隐藏，脚本按点开的卡片显示其中一个）：kicker 是记录名，extra 是「状态」之后的分组 */
+function ensembleDetail(kicker, { thought = false, extra = '' } = {}) {
+    const think = thought ? '<p class="qx-think" data-nl-item="心理活动" data-nl-item-show="心理活动"></p>' : '';
+    return '<section class="qx-dt" role="dialog" hidden>'
+        + `<button type="button" class="qx-x" title="关闭（Esc）" aria-label="关闭详情">${ICON_CLOSE}</button>`
+        + '<div class="qx-dh">'
+        + `<div class="qx-dpf"><img class="qx-img" data-nl-portrait="" alt=""><button type="button" class="qx-swap" data-nl-portrait-next="" title="换一张立绘" aria-label="换一张立绘">${ICON_SWAP}</button></div>`
+        + `<div class="qx-did"><div class="qx-kick">${kicker}</div><h3 class="qx-dn" data-nl-key></h3><div class="qx-dr" data-nl-item="身份"></div>`
+        + '<div class="qx-meter"><span class="qx-k">好感</span><span class="qx-seg" data-nl-item-bar="好感"><i></i></span><b class="qx-big" data-nl-item="好感"></b></div>'
+        + '<span class="qx-chip" data-nl-item-stage="好感"></span></div>'
+        + '</div>'
+        + '<div class="qx-secs">'
+        + '<section class="qx-sec"><h4>基础</h4><dl class="qx-kv"><dt>身份</dt><dd data-nl-item="身份"></dd><dt>阵营</dt><dd data-nl-item="阵营"></dd></dl></section>'
+        + `<section class="qx-sec"><h4>状态</h4><dl class="qx-kv"><dt>心情</dt><dd><span class="qx-mood" data-nl-item="心情"></span></dd><dt>好感</dt><dd><span data-nl-item="好感"></span> / 100 · <span data-nl-item-stage="好感"></span></dd></dl>${think}</section>`
+        + extra
+        + '</div>'
+        + '</section>';
+}
+
+const ENSEMBLE_OUTFIT = '<section class="qx-sec"><h4>服饰</h4><dl class="qx-kv" data-nl-group="服饰"><template><div class="qx-kvr"><dt data-nl-key></dt><dd data-nl-item=""></dd></div></template></dl></section>';
+
+const ENSEMBLE_HTML = `<style>
+.qx{--qx-bg1:#0d1020;--qx-bg2:#161b31;--qx-panel:rgba(255,255,255,.035);--qx-line:rgba(160,180,255,.15);--qx-fg:#e8ebf5;--qx-sub:#8f97b2;--qx-acc:#8fb0ff;--qx-c:#8b95b5;--qx-m:#8fb0ff;position:relative;isolation:isolate;max-width:760px;margin:4px auto;color:var(--qx-fg);background:radial-gradient(120% 80% at 100% 0%,rgba(143,176,255,.13),transparent 55%),radial-gradient(90% 70% at 0% 100%,rgba(196,166,255,.1),transparent 60%),linear-gradient(160deg,var(--qx-bg1),var(--qx-bg2));border:1px solid var(--qx-line);border-radius:14px;box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 8px 24px rgba(5,8,20,.3);font:13px/1.5 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;overflow:hidden}
+.qx [data-nl-stage-index="0"]{--qx-c:#8b95b5}
+.qx [data-nl-stage-index="1"]{--qx-c:#5ec4d8}
+.qx [data-nl-stage-index="2"]{--qx-c:#6dd39b}
+.qx [data-nl-stage-index="3"]{--qx-c:#f3b45f}
+.qx [data-nl-stage-index="4"]{--qx-c:#f27b9b}
+.qx [data-nl-value="愉快"]{--qx-m:#6dd39b}
+.qx [data-nl-value="兴奋"]{--qx-m:#f3b45f}
+.qx [data-nl-value="害羞"]{--qx-m:#f59ac0}
+.qx [data-nl-value="紧张"]{--qx-m:#e9d16a}
+.qx [data-nl-value="低落"]{--qx-m:#7f8db0}
+.qx [data-nl-value="生气"]{--qx-m:#ff6b6b}
+.qx [data-nl-value="疲惫"]{--qx-m:#a49cb8}
+.qx>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:10px 14px;user-select:none}
+.qx>summary::-webkit-details-marker{display:none}
+.qx>summary:focus-visible{outline:2px solid var(--qx-acc);outline-offset:-3px;border-radius:12px}
+.qx-logo{flex:none;display:grid;place-items:center;width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,rgba(143,176,255,.32),rgba(196,166,255,.22));color:#e3e9ff}
+.qx-logo svg{width:15px;height:15px}
+.qx-title{font-size:14px;font-weight:650;letter-spacing:.08em}
+.qx-sum{display:flex;gap:10px;min-width:0;margin-left:auto;color:var(--qx-sub);font-size:12px;white-space:nowrap}
+.qx-sum b{margin-left:3px;color:var(--qx-fg);font-weight:600;font-variant-numeric:tabular-nums}
+.qx-chev{flex:none;width:14px;height:14px;color:var(--qx-sub);transition:transform .2s}
+.qx[open] .qx-chev{transform:rotate(90deg)}
+.qx-body{padding:0 14px 14px}
+.qx-hud{display:flex;flex-wrap:wrap;gap:1px;overflow:hidden;border:1px solid var(--qx-line);border-radius:10px;background:var(--qx-line)}
+.qx-hi{flex:1 1 150px;display:flex;align-items:center;gap:8px;min-width:0;padding:7px 11px;background:#12162a}
+.qx-hi svg{flex:none;width:14px;height:14px;color:var(--qx-acc)}
+.qx-hk{flex:none;max-width:7em;color:var(--qx-sub);font-size:11px;letter-spacing:.08em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qx-hv{min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qx-radio{position:absolute;opacity:0;pointer-events:none}
+.qx-tabs{display:flex;gap:4px;width:max-content;max-width:100%;margin:12px 0 10px;padding:3px;border:1px solid var(--qx-line);border-radius:10px;background:rgba(0,0,0,.2)}
+.qx-tabs label{display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:7px;color:var(--qx-sub);font-weight:600;cursor:pointer;transition:background .15s,color .15s}
+.qx-tabs label:hover{color:var(--qx-fg)}
+.qx-tabs b{min-width:18px;padding:0 5px;border-radius:999px;background:rgba(255,255,255,.08);font-size:11px;font-weight:600;line-height:17px;text-align:center;font-variant-numeric:tabular-nums}
+#qx-t-main:checked~.qx-tabs label[for="qx-t-main"],#qx-t-npc:checked~.qx-tabs label[for="qx-t-npc"]{background:rgba(143,176,255,.17);color:#fff;box-shadow:inset 0 0 0 1px rgba(143,176,255,.32)}
+#qx-t-main:focus-visible~.qx-tabs label[for="qx-t-main"],#qx-t-npc:focus-visible~.qx-tabs label[for="qx-t-npc"]{outline:2px solid var(--qx-acc);outline-offset:1px}
+#qx-t-main:checked~.qx-stage .qx-p-npc,#qx-t-npc:checked~.qx-stage .qx-p-main{display:none}
+.qx-stage{display:grid}
+.qx-stage>.qx-panel,.qx-stage>.qx-layer{grid-area:1/1;min-width:0}
+.qx-panel{transition:opacity .2s,filter .2s}
+.qx-stage.is-open>.qx-panel{opacity:.3;filter:blur(1.5px) saturate(.6);pointer-events:none}
+.qx-layer{z-index:2;align-self:start;pointer-events:none}
+.qx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:10px}
+.qx-npc{grid-template-columns:repeat(auto-fill,minmax(108px,1fr))}
+.qx-grid .nl-each-empty{grid-column:1/-1;padding:22px 12px;border:1px dashed var(--qx-line);border-radius:10px;color:var(--qx-sub);font-size:12px;text-align:center}
+.qx-card{position:relative;display:flex;flex-direction:column;min-width:0;padding:6px 6px 9px;border:1px solid var(--qx-line);border-radius:12px;background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.015));transition:transform .18s,border-color .18s,box-shadow .18s}
+.qx-card::before{content:"";position:absolute;top:-1px;left:14px;right:14px;height:2px;border-radius:0 0 2px 2px;background:var(--qx-c);opacity:.85}
+.qx-card:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--qx-c) 55%,transparent);box-shadow:0 8px 20px rgba(0,0,0,.35)}
+.qx-pf{position:relative;aspect-ratio:3/4;overflow:hidden;border-radius:8px;background:#0b0e1c}
+.qx-npc .qx-pf{aspect-ratio:1/1}
+.qx-pf::after{content:"";position:absolute;right:0;bottom:0;left:0;height:42%;background:linear-gradient(transparent,rgba(8,10,22,.82));pointer-events:none}
+.qx-img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;object-position:50% 18%}
+.qx .nl-portrait-ph{color:rgba(255,255,255,.94);font-size:34px;font-weight:700;text-shadow:0 2px 12px rgba(0,0,0,.4);background:radial-gradient(circle at 50% 50%,transparent 0 27%,rgba(255,255,255,.22) 27.5% 28.5%,transparent 29%),repeating-linear-gradient(135deg,rgba(255,255,255,.04) 0 6px,transparent 6px 12px),radial-gradient(120% 90% at 30% 15%,hsl(var(--nl-ph-hue,220),45%,52%),hsl(var(--nl-ph-hue,220),50%,22%) 70%,#0b0e1c)}
+.qx-dpf .nl-portrait-ph{font-size:46px}
+.qx-npc .nl-portrait-ph{font-size:28px}
+.qx-swap{position:absolute;top:6px;right:6px;z-index:3;display:grid;place-items:center;width:26px;height:26px;padding:0;border:1px solid rgba(255,255,255,.25);border-radius:50%;background:rgba(10,12,26,.62);color:#fff;cursor:pointer;transition:opacity .15s,background .15s}
+.qx-swap svg{width:13px;height:13px}
+.qx-swap:hover,.qx-swap:focus-visible{outline:none;background:rgba(143,176,255,.5)}
+.qx-swap:focus-visible{box-shadow:0 0 0 2px var(--qx-acc)}
+@media (hover:hover){.qx-card .qx-swap{opacity:0}.qx-card:hover .qx-swap,.qx-card .qx-swap:focus-visible{opacity:1}}
+.qx-mood{display:inline-flex;align-items:center;gap:5px;max-width:100%;padding:0 8px 0 7px;border-radius:999px;background:rgba(255,255,255,.07);font-size:12px;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qx-mood::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--qx-m);box-shadow:0 0 6px var(--qx-m)}
+.qx-pf>.qx-mood{position:absolute;bottom:6px;left:6px;z-index:1;max-width:calc(100% - 12px);background:rgba(8,10,22,.62);color:#fff;font-size:11px;line-height:18px;pointer-events:none}
+.qx-open{display:flex;flex-direction:column;gap:1px;min-width:0;margin:8px 2px 0;padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;-webkit-appearance:none;appearance:none}
+.qx-open::after{content:"";position:absolute;top:0;right:0;bottom:0;left:0;border-radius:12px}
+.qx-open:focus-visible{outline:none}
+.qx-open:focus-visible::after{box-shadow:0 0 0 2px var(--qx-acc)}
+.qx-nm{font-size:14px;font-weight:650;letter-spacing:.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qx-role{color:var(--qx-sub);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qx-aff{display:flex;align-items:center;gap:6px;margin:7px 2px 0}
+.qx-seg{--seg:20%;position:relative;flex:1;min-width:30px;height:6px;background:rgba(255,255,255,.1);-webkit-mask:repeating-linear-gradient(90deg,#000 0 calc(var(--seg) - 2px),transparent calc(var(--seg) - 2px) var(--seg));mask:repeating-linear-gradient(90deg,#000 0 calc(var(--seg) - 2px),transparent calc(var(--seg) - 2px) var(--seg))}
+.qx-seg>i{position:absolute;top:0;right:0;bottom:0;left:0;background:var(--qx-c);clip-path:inset(0 calc(100% - var(--nl-pct,0%)) 0 0);transition:clip-path .5s ease}
+.qx-st{flex:none;color:var(--qx-c);font-size:11px;font-weight:600}
+.qx-num{flex:none;min-width:2ch;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
+.qx-fac{align-self:flex-start;max-width:calc(100% - 4px);margin:7px 2px 0;padding:0 7px;border:1px solid var(--qx-line);border-radius:5px;color:var(--qx-sub);font-size:11px;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qx-dt{position:relative;padding:14px;border:1px solid color-mix(in srgb,var(--qx-c) 45%,transparent);border-radius:14px;background:linear-gradient(160deg,rgba(26,31,55,.98),rgba(14,17,33,.98));box-shadow:0 18px 40px rgba(0,0,0,.45);pointer-events:auto;animation:qx-pop .2s ease-out}
+@keyframes qx-pop{from{opacity:0;transform:translateY(6px) scale(.985)}}
+.qx-x{position:absolute;top:10px;right:10px;display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid var(--qx-line);border-radius:8px;background:rgba(255,255,255,.04);color:var(--qx-sub);cursor:pointer}
+.qx-x:hover,.qx-x:focus-visible{outline:none;background:rgba(143,176,255,.18);color:#fff}
+.qx-x:focus-visible{box-shadow:0 0 0 2px var(--qx-acc)}
+.qx-x svg{width:14px;height:14px}
+.qx-dh{display:flex;gap:14px;padding-right:34px}
+.qx-dpf{position:relative;flex:none;align-self:flex-start;width:116px;aspect-ratio:3/4;overflow:hidden;border-radius:10px;background:#0b0e1c;box-shadow:0 0 0 1px color-mix(in srgb,var(--qx-c) 55%,transparent),0 0 18px color-mix(in srgb,var(--qx-c) 28%,transparent)}
+.qx-did{flex:1;min-width:0}
+.qx-kick{color:var(--qx-sub);font-size:11px;letter-spacing:.14em}
+.qx-dn{margin:0;font-size:20px;font-weight:700;letter-spacing:.04em;line-height:1.3;overflow-wrap:anywhere}
+.qx-dr{color:var(--qx-sub)}
+.qx-meter{display:flex;align-items:center;gap:8px;margin-top:10px}
+.qx-meter .qx-seg{height:8px}
+.qx-k{flex:none;color:var(--qx-sub);font-size:12px}
+.qx-big{flex:none;min-width:2ch;color:var(--qx-c);font-size:20px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums;text-align:right}
+.qx-chip{display:inline-block;margin-top:8px;padding:0 9px;border:1px solid color-mix(in srgb,var(--qx-c) 55%,transparent);border-radius:999px;color:var(--qx-c);font-size:12px;line-height:20px}
+.qx-chip:empty{display:none}
+.qx-secs{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:14px}
+.qx-sec{min-width:0;padding:10px 12px;border:1px solid var(--qx-line);border-radius:10px;background:var(--qx-panel)}
+.qx-sec h4{display:flex;align-items:center;gap:6px;margin:0 0 7px;color:var(--qx-acc);font-size:11px;font-weight:700;letter-spacing:.16em}
+.qx-sec h4::before{content:"";width:3px;height:11px;border-radius:2px;background:currentColor}
+.qx-kv{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:baseline;gap:6px 12px;margin:0}
+.qx-kvr{display:contents}
+.qx-kv dt{color:var(--qx-sub);font-size:12px;white-space:nowrap}
+.qx-kv dd{margin:0;overflow-wrap:anywhere}
+.qx-think{position:relative;margin:12px 0 4px;padding:8px 11px;border:1px solid rgba(196,166,255,.25);border-radius:12px 12px 12px 3px;background:rgba(196,166,255,.1);color:#e8defe;font-style:italic}
+.qx-think::after{content:"";position:absolute;bottom:-8px;left:6px;width:7px;height:7px;border:1px solid rgba(196,166,255,.25);border-radius:50%;background:rgba(196,166,255,.1)}
+@media (max-width:480px){.qx-body{padding:0 10px 12px}.qx-sum{display:none}.qx-hi{flex:1 1 auto}.qx-hi:not(:last-child) .qx-hk{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.qx-hv{white-space:normal;overflow-wrap:anywhere}.qx-main{grid-template-columns:repeat(2,minmax(0,1fr))}.qx-main .qx-pf{aspect-ratio:4/5}.qx-npc{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.qx-npc .qx-nm{font-size:13px}.qx-dt{padding:12px}.qx-dh{gap:10px;padding-right:30px}.qx-dpf{width:88px}.qx-dn{font-size:17px}}
+@media (prefers-reduced-motion:reduce){.qx :where(*),.qx :where(*)::before{animation:none!important;transition:none!important}}
+</style>
+<details class="qx" open>
+<summary>
+<span class="qx-logo" aria-hidden="true"><svg ${SVG}><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><path d="M15.5 5.2a3 3 0 0 1 0 5.6M17.5 19a5.5 5.5 0 0 0-2.6-4.7"/></svg></span>
+<span class="qx-title">群像</span>
+<span class="qx-sum"><span>主要角色<b data-qx-count="主要角色">0</b></span><span>NPC<b data-qx-count="NPC">0</b></span></span>
+<svg class="qx-chev" ${SVG}><path d="m9 6 6 6-6 6"/></svg>
+</summary>
+<div class="qx-body">
+<div class="qx-hud">
+<div class="qx-hi"><svg ${SVG}><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="qx-hk">时间</span><span class="qx-hv" data-nl-text="世界.时间"></span></div>
+<div class="qx-hi">${ICON_PIN}<span class="qx-hk">地点</span><span class="qx-hv" data-nl-text="世界.地点"></span></div>
+<div class="qx-hi"><svg ${SVG}><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg><span class="qx-hk">{{user}}</span><span class="qx-hv" data-nl-text="主角.身份"></span></div>
+</div>
+<input class="qx-radio" type="radio" name="qx-tab" id="qx-t-main" checked>
+<input class="qx-radio" type="radio" name="qx-tab" id="qx-t-npc">
+<div class="qx-tabs"><label for="qx-t-main">主要角色<b data-qx-count="主要角色">0</b></label><label for="qx-t-npc">NPC<b data-qx-count="NPC">0</b></label></div>
+<div class="qx-stage">
+<div class="qx-panel qx-p-main"><div class="qx-grid qx-main" data-nl-each="主要角色" data-nl-empty="还没有主要角色"><template>${ensembleCard()}</template></div></div>
+<div class="qx-panel qx-p-npc"><div class="qx-grid qx-npc" data-nl-each="NPC" data-nl-empty="还没有登场的 NPC"><template>${ensembleCard()}</template></div></div>
+<div class="qx-layer" data-nl-each="主要角色"><template>${ensembleDetail('主要角色', { thought: true, extra: ENSEMBLE_OUTFIT })}</template></div>
+<div class="qx-layer" data-nl-each="NPC"><template>${ensembleDetail('NPC')}</template></div>
+</div>
+</div>
+</details>
+<script>
+(function () {
+    var cur = null;
+    var layerFocus = false;
+    function recOf(el) {
+        var box = el && el.closest ? el.closest('[data-nl-each]') : null;
+        return box ? box.getAttribute('data-nl-each') : '';
+    }
+    function keyOf(el) {
+        var k = el ? el.querySelector('[data-nl-key]') : null;
+        return k ? String(k.textContent) : '';
+    }
+    function focusOn(el) {
+        if (el && typeof el.focus === 'function') el.focus();
+    }
+    function count(stat, path) {
+        var v = stat && typeof stat === 'object' ? stat[path] : null;
+        return v && typeof v === 'object' && !Array.isArray(v) ? Object.keys(v).length : 0;
+    }
+    // 卡片 / 详情的强调色跟着好感阶段走：把好感条上的 data-nl-stage-index 抄到根元素上
+    function copyStage(root) {
+        var bar = root.querySelector('[data-nl-item-bar]');
+        var s = bar ? bar.getAttribute('data-nl-stage-index') : null;
+        if (s === null) root.removeAttribute('data-nl-stage-index');
+        else root.setAttribute('data-nl-stage-index', s);
+    }
+    // 按 cur（{rec, key}）显示对应的详情；条目被删掉时自动关闭
+    function sync() {
+        var hit = null;
+        document.querySelectorAll('.qx-dt').forEach(function (dt) {
+            var on = !!cur && recOf(dt) === cur.rec && keyOf(dt) === cur.key;
+            dt.hidden = !on;
+            if (on) hit = dt;
+        });
+        if (!hit) cur = null;
+        var stage = document.querySelector('.qx-stage');
+        if (stage) stage.classList.toggle('is-open', !!hit);
+        document.querySelectorAll('.qx-panel').forEach(function (p) {
+            if (hit) p.setAttribute('inert', '');
+            else p.removeAttribute('inert');
+        });
+        return hit;
+    }
+    function hide(refocus) {
+        if (!cur) return;
+        var was = cur;
+        cur = null;
+        sync();
+        if (!refocus) return;
+        // 卡片在每次刷新时会重新生成：按记录与名字找回刚才点开的那张，把焦点还给它
+        var cards = document.querySelectorAll('.qx-card');
+        for (var i = 0; i < cards.length; i++) {
+            if (recOf(cards[i]) === was.rec && keyOf(cards[i]) === was.key) {
+                focusOn(cards[i].querySelector('.qx-open'));
+                return;
+            }
+        }
+    }
+    window.nlRender = function (stat) {
+        document.querySelectorAll('[data-qx-count]').forEach(function (el) {
+            el.textContent = String(count(stat, el.getAttribute('data-qx-count')));
+        });
+        document.querySelectorAll('.qx-card,.qx-dt').forEach(function (el) {
+            copyStage(el);
+            var name = keyOf(el);
+            var btn = el.querySelector('.qx-open');
+            if (btn) btn.setAttribute('aria-label', name + '：查看详情');
+            else el.setAttribute('aria-label', name + '的详情');
+        });
+        var dt = sync();
+        // 详情开着时变量更新了：详情是重新生成的，原来在详情里的焦点放回关闭按钮
+        var active = document.activeElement;
+        if (dt && layerFocus && typeof document.hasFocus === 'function' && document.hasFocus() && (!active || active === document.body)) focusOn(dt.querySelector('.qx-x'));
+    };
+    document.addEventListener('focusin', function (e) {
+        var t = e.target;
+        layerFocus = !!(t && t.closest && t.closest('.qx-dt'));
+    });
+    document.addEventListener('click', function (e) {
+        var t = e.target && e.target.closest ? e.target : null;
+        if (!t) return;
+        if (t.closest('.qx-x')) {
+            hide(true);
+            return;
+        }
+        var btn = t.closest('.qx-open');
+        if (btn) {
+            var card = btn.closest('.qx-card');
+            cur = { rec: recOf(card), key: keyOf(card) };
+            var dt = sync();
+            if (dt) focusOn(dt.querySelector('.qx-x'));
+            return;
+        }
+        // 点详情外面（变暗的卡片区域）也关闭
+        if (cur && t.closest('.qx-stage') && !t.closest('.qx-dt')) hide(true);
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Escape' || !cur) return;
+        if (typeof e.preventDefault === 'function') e.preventDefault();
+        hide(true);
+    });
+    // 切换分页时关掉详情
+    document.addEventListener('change', function (e) {
+        var t = e.target;
+        if (t && t.getAttribute && t.getAttribute('name') === 'qx-tab') hide(false);
+    });
+})();
+</script>`;
+
+/** 变量表需要的上限：叶子数超过默认上限（12）时就是叶子数（最多 30），否则 null（跟随设置） */
+function neededVarCap(spec) {
+    const n = spec ? countSpecLeaves(spec) : 0;
+    return n > DEFAULT_STATUS_BAR.maxVars ? Math.min(TEMPLATE_VAR_CAP_MAX, n) : null;
+}
+
 function makeBuiltin({ id, name, desc, theme, spec, html, sample }) {
     const warnings = [];
-    const normalized = normalizeStatusSpec(spec, { maxVars: DEFAULT_STATUS_BAR.maxVars, warnings });
+    const maxVars = neededVarCap(normalizeStatusSpec(spec, { maxVars: TEMPLATE_VAR_CAP_MAX }));
+    const normalized = normalizeStatusSpec(spec, { maxVars: maxVars ?? DEFAULT_STATUS_BAR.maxVars, warnings });
     if (warnings.length) console.warn(`[NovelLoom] 内置状态栏模板「${name}」的变量表有问题：`, warnings);
-    return deepFreeze({ id, builtin: true, name, desc, mode: 'bind', spec: normalized, html, theme, sample, createdAt: 0, updatedAt: 0 });
+    return deepFreeze({ id, builtin: true, name, desc, mode: 'bind', spec: normalized, html, theme, sample, maxVars, portraits: null, createdAt: 0, updatedAt: 0 });
 }
 
 /** 内置状态栏模板（只读，已冻结；要改就先复制成自己的模板） */
@@ -689,6 +1039,10 @@ export const BUILTIN_STATUSBAR_TEMPLATES = Object.freeze([
     makeBuiltin({
         id: 'builtin_cyberpunk', name: '赛博朋克', theme: 'night', spec: CYBER_SPEC, html: CYBER_HTML, sample: CYBER_SAMPLE,
         desc: '霓虹 HUD 顶栏（时间、地点、信用点、通缉、义体负荷）加多角色卡片网格，点开卡片看详情；深色霓虹风。',
+    }),
+    makeBuiltin({
+        id: 'builtin_ensemble', name: '多人群像', theme: 'night', spec: ENSEMBLE_SPEC, html: ENSEMBLE_HTML, sample: ENSEMBLE_SAMPLE,
+        desc: '顶栏显示时间、地点与主角身份；「主要角色 / NPC」分页的角色卡片（立绘位、分段好感条、心情），点开看分组详情（基础、状态与心理活动、服饰）。适合世界/旁白卡。共 15 个变量，套用时按模板自带的上限全部保留。',
     }),
 ]);
 
@@ -712,9 +1066,60 @@ function normalizeTemplateSpec(spec) {
     return s.variables.length ? s : null;
 }
 
+/** 模板自带的变量上限：3~30 的整数，其他值（没有、不是数字）为 null */
+function templateCapValue(v) {
+    const n = Number(v);
+    if (v === null || v === undefined || v === '' || typeof v === 'boolean' || !Number.isFinite(n) || n < 1) return null;
+    return Math.min(TEMPLATE_VAR_CAP_MAX, Math.max(TEMPLATE_VAR_CAP_MIN, Math.floor(n)));
+}
+
+/** 模板里的立绘设置：规整后至少有一张图才保留，否则 null */
+function templatePortraits(raw) {
+    if (!isObj(raw)) return null;
+    const p = normalizePortraits(raw);
+    return portraitsActive(p) ? p : null;
+}
+
+/** 设置里的变量上限（statusBar.maxVars），无效时用默认的 12 */
+function settingsVarCap(settings) {
+    const n = Math.floor(Number(settings?.statusBar?.maxVars));
+    return Number.isFinite(n) && n >= 1 ? n : DEFAULT_STATUS_BAR.maxVars;
+}
+
+/**
+ * 套用模板（沿用结构）时实际使用的变量上限：设置里的上限；模板自带的上限（template.maxVars）更大时用模板的（最多 30）。
+ * 状态栏对话框、AI 按模板补全初始值与规则时也应该用它，否则会把套用时保留下来的变量又截掉。
+ * @param {object|null} template
+ * @param {object|null} settings 扩展设置（取 statusBar.maxVars）
+ * @returns {number}
+ */
+export function templateVarCap(template, settings = null) {
+    const base = settingsVarCap(settings);
+    const own = templateCapValue(template?.maxVars);
+    return own && own > base ? own : base;
+}
+
+/**
+ * 一张卡的状态栏当前适用的变量上限：设置里的上限、卡片自己记着的上限（statusBar.maxVars：沿用结构套用模板时记下的
+ * templateVarCap，「多人群像」是 15）、卡片现有的变量数，三者取最大。
+ * 给状态栏对话框的变量表校验用：套用变量较多的模板后、或之后又「只借外观」换了别的模板（templateId 变了）、或设置里的上限调小了，
+ * 编辑时都不会把卡上已有的变量当作超出上限丢掉。
+ * @param {object} card
+ * @param {object|null} settings 扩展设置（取 statusBar.maxVars）
+ * @param {{leaves?: number|null}} opt leaves：按这个变量数算（例如打开对话框时的变量数）；不给时用卡片现在的变量表
+ * @returns {number}
+ */
+export function statusBarVarCap(card, settings = null, { leaves = null } = {}) {
+    const sb = card?.statusBar;
+    const own = templateCapValue(sb?.maxVars) || 0;
+    const n = leaves === null || leaves === undefined ? countSpecLeaves(isObj(sb?.spec) ? sb.spec : null) : Math.max(0, Math.floor(Number(leaves)) || 0);
+    return Math.max(settingsVarCap(settings), own, n);
+}
+
 /**
  * 把任意来源的模板数据规整成存储形状（不含 id/时间）；strict 时缺名称、没内容、界面过大会抛错。
- * @returns {{name:string, desc:string, mode:string, spec:object|null, html:string, theme:string, sample:object|null}}
+ * maxVars：模板自带的变量上限（3~30）或 null；portraits：至少有一张图的立绘设置或 null。
+ * @returns {{name:string, desc:string, mode:string, spec:object|null, html:string, theme:string, sample:object|null, maxVars:number|null, portraits:object|null}}
  */
 function cleanTemplateData(data, { strict = true } = {}) {
     const src = isObj(data) ? data : {};
@@ -730,6 +1135,8 @@ function cleanTemplateData(data, { strict = true } = {}) {
         html: mode === 'auto' ? '' : html,
         theme: THEMES.includes(src.theme) ? src.theme : 'clean',
         sample: isObj(src.sample) ? clone(src.sample) : null,
+        maxVars: templateCapValue(src.maxVars),
+        portraits: templatePortraits(src.portraits),
     };
     if (strict) {
         if (!out.name) throw new Error('请输入模板名称');
@@ -824,7 +1231,7 @@ export function updateStatusBarTemplate(settings, id, patch = {}) {
     const i = list.findIndex((x) => isObj(x) && x.id === id);
     if (i < 0) return null;
     const cur = list[i];
-    const fields = ['name', 'desc', 'mode', 'spec', 'html', 'theme', 'sample'];
+    const fields = ['name', 'desc', 'mode', 'spec', 'html', 'theme', 'sample', 'maxVars', 'portraits'];
     const merged = cleanTemplateData({ ...Object.fromEntries(fields.map((k) => [k, cur[k]])), ...Object.fromEntries(fields.filter((k) => patch[k] !== undefined).map((k) => [k, patch[k]])) });
     if (nameKey(merged.name) !== nameKey(cur.name)) assertUniqueName(settings, merged.name, id);
     const next = { ...cur, ...merged, id, createdAt: cur.createdAt || Date.now(), updatedAt: Date.now() };
@@ -848,20 +1255,53 @@ export function duplicateStatusBarTemplate(settings, id, name = '') {
     return addStatusBarTemplate(settings, { ...src, name: n });
 }
 
-/** 把卡片当前的状态栏做成模板数据（还没保存；保存用 addStatusBarTemplate） */
-export function templateFromStatusBar(card, { name = '', desc = '' } = {}) {
+/**
+ * 把卡片当前的状态栏做成模板数据（还没保存；保存用 addStatusBarTemplate）。
+ * 变量多于默认上限（12）时记下模板自带的上限 maxVars（= 变量数，最多 30），别处套用时不会被截掉。
+ * 立绘是用户自己的图片地址，默认不带；portraits: true 时连同立绘设置一起（至少有一张图才带）。
+ */
+export function templateFromStatusBar(card, { name = '', desc = '', portraits = false } = {}) {
     const sb = card?.statusBar || {};
     const html = typeof sb.html === 'string' ? sb.html : '';
     let mode = STATUS_TEMPLATE_MODES.includes(sb.mode) ? sb.mode : 'bind';
     if (mode === 'bind' && !html.trim()) mode = 'auto';
+    const spec = sb.spec?.variables?.length ? clone(sb.spec) : null;
     return {
-        name: cleanName(name) || cleanName(`${card?.data?.name || '角色'}的状态栏`),
+        name: cleanName(name) || cleanName(`${statusBarCharName(card)}的状态栏`),
         desc: String(desc ?? '').trim().slice(0, STATUS_TEMPLATE_DESC_MAX),
         mode,
-        spec: sb.spec?.variables?.length ? clone(sb.spec) : null,
+        spec,
         html: mode === 'auto' ? '' : html,
         theme: THEMES.includes(sb.theme) ? sb.theme : 'clean',
         sample: isObj(sb.sample) ? clone(sb.sample) : null,
+        maxVars: neededVarCap(spec),
+        portraits: portraits ? templatePortraits(sb.portraits) : null,
+    };
+}
+
+/**
+ * 把模板的立绘并进卡片已有的立绘：同名角色以卡片自己的为准，图池按「记录 + 字段」去重（卡片的优先），
+ * 最后按卡片的新变量表规整一遍（数量上限、图池指向的记录不存在时提示）。
+ * @returns {{portraits: object, characters: string[], pools: number}} characters / pools：从模板新加进来的
+ */
+function mergeTemplatePortraits(own, extra, spec, warnings) {
+    const mine = normalizePortraits(own);
+    const add = normalizePortraits(extra);
+    const characters = { ...mine.characters };
+    const added = [];
+    for (const [nm, imgs] of Object.entries(add.characters)) {
+        if (Object.prototype.hasOwnProperty.call(characters, nm)) continue;
+        characters[nm] = imgs;
+        added.push(nm);
+    }
+    const poolKey = (p) => `${p.record}\n${p.field}`;
+    const have = new Set(mine.pools.map(poolKey));
+    const newPools = add.pools.filter((p) => !have.has(poolKey(p)));
+    const merged = normalizePortraits({ characters, pools: [...mine.pools, ...newPools] }, { warnings, spec });
+    return {
+        portraits: merged,
+        characters: added.filter((nm) => Object.prototype.hasOwnProperty.call(merged.characters, nm)),
+        pools: newPools.filter((p) => merged.pools.some((q) => poolKey(q) === poolKey(p))).length,
     };
 }
 
@@ -873,14 +1313,21 @@ export function templateFromStatusBar(card, { name = '', desc = '' } = {}) {
  *   之后可让 AI 按这个结构填初始值与规则：ai = {parts:['init','rules'], templateMode:'structure'}
  * - look（只借外观；'style' 是别名）：保留本卡变量表与示例数据，只换主题并记下 templateId；
  *   模板是内置排版时直接切到内置排版（ai = null），否则界面要 AI 按模板重写：ai = {parts:['html'], templateMode:'style'}
- * 两种方式都会把套用前的 {spec, html, mode, theme, sample, templateId, overrides} 存进 statusBar.prev（一步撤销）。
+ * 两种方式都会把套用前的 {spec, html, mode, theme, sample, templateId, overrides, maxVars} 存进 statusBar.prev（一步撤销）；
+ * 沿用结构且模板带立绘时 prev 里还有套用前的 portraits。
+ * 沿用结构时的变量上限：opt.maxVars，没给时用 templateVarCap（设置里的上限，模板自带更大的上限时用模板的）；
+ * 这个上限记进 statusBar.maxVars（statusBarVarCap 用它），之后「只借外观」换别的模板不会把它降下来。
+ * 模板带立绘设置（template.portraits）时，沿用结构会把它并进卡片的立绘（同名角色、同一记录 + 字段的图池以卡片自己的为准）。
+ * 世界/旁白卡沿用结构时，把项目里的主要角色（opt.cast，没给时 worldCastNames(opt.project, card)）预先填进主要角色记录
+ * （castRecordPath，例如「多人群像」的「主要角色」），不让 AI 调整时它也不是空的；模板里已有的条目保持原样。
  * @param {object} card
  * @param {object} template listStatusBarTemplates / getStatusBarTemplate 返回的模板
  * @param {'structure'|'look'|'style'} mode
- * @param {{settings?: object, maxVars?: number}} opt settings 用于新建状态栏的默认值与 statusBar.maxVars
+ * @param {{settings?: object, maxVars?: number, project?: object, cast?: string[]}} opt settings 用于新建状态栏的默认值与 statusBar.maxVars；
+ *   project / cast：世界卡预填主要角色用（都不给时不预填）
  * @returns {{statusBar: object, warnings: string[], ai: {parts: string[], templateMode: string}|null}}
  */
-export function applyStatusBarTemplate(card, template, mode = 'structure', { settings = null, maxVars = null } = {}) {
+export function applyStatusBarTemplate(card, template, mode = 'structure', { settings = null, maxVars = null, project = null, cast = null } = {}) {
     const how = mode === 'style' ? 'look' : mode;
     if (!STATUS_TEMPLATE_APPLY_MODES.includes(how)) throw new Error(`未知的套用方式：${mode}`);
     if (!isObj(template)) throw new Error('没有找到这个状态栏模板');
@@ -890,12 +1337,31 @@ export function applyStatusBarTemplate(card, template, mode = 'structure', { set
     const warnings = [];
     sb.prev = {
         spec: clone(sb.spec), html: sb.html, mode: sb.mode, theme: sb.theme,
-        sample: clone(sb.sample ?? null), templateId: sb.templateId ?? null, overrides: clone(sb.overrides),
+        sample: clone(sb.sample ?? null), templateId: sb.templateId ?? null, overrides: clone(sb.overrides), maxVars: sb.maxVars ?? null,
     };
     let ai = null;
     if (how === 'structure') {
-        const cap = maxVars ?? settings?.statusBar?.maxVars ?? DEFAULT_STATUS_BAR.maxVars;
-        sb.spec = normalizeStatusSpec(t.spec, { charName: card?.data?.name || '', maxVars: cap, warnings });
+        const base = settingsVarCap(settings);
+        const cap = maxVars ?? templateVarCap(t, settings);
+        const leaves = countSpecLeaves(t.spec);
+        if (maxVars === null && cap > base && leaves > base) {
+            warnings.push(`这个模板有 ${leaves} 个变量，超过设置里的上限 ${base}：按模板自带的上限 ${cap} 保留${leaves > cap ? '' : '全部变量'}`);
+        }
+        sb.spec = normalizeStatusSpec(t.spec, { charName: statusBarCharName(card), maxVars: cap, warnings });
+        sb.maxVars = templateCapValue(cap);
+        if (isWorldCard(card) && (project || Array.isArray(cast))) {
+            const seeded = seedWorldCastEntries(project, card, sb.spec, { names: Array.isArray(cast) ? cast : null, warnings });
+            sb.spec = seeded.spec;
+            if (seeded.added.length) warnings.push(`已把 ${seeded.added.length} 个主要角色预先填进「${seeded.path}」：${seeded.added.join('、')}`);
+        }
+        if (t.portraits) {
+            sb.prev.portraits = clone(sb.portraits ?? null);
+            const m = mergeTemplatePortraits(sb.portraits, t.portraits, sb.spec, warnings);
+            sb.portraits = m.portraits;
+            if (m.characters.length || m.pools) {
+                warnings.push(`已带上模板里的立绘设置${m.characters.length ? `：${m.characters.length} 个角色（${m.characters.slice(0, 5).join('、')}${m.characters.length > 5 ? '…' : ''}）` : ''}${m.pools ? `${m.characters.length ? '，' : '：'}${m.pools} 个图池` : ''}`);
+            }
+        }
         sb.mode = t.mode;
         sb.html = t.html;
         sb.theme = t.theme;
@@ -929,21 +1395,20 @@ export function templateStyleRef(template) {
     return renderDefaultFragment(t.spec || { variables: [] }, t.theme);
 }
 
-/** 给 buildPreviewSrcdoc 用的“假卡片”：模板预览不需要真正的角色卡 */
+/** 给 buildPreviewSrcdoc 用的“假卡片”：模板预览不需要真正的角色卡（模板带立绘时预览里也显示） */
 export function templatePreviewCard(template, { charName = '' } = {}) {
     const t = cleanTemplateData(template, { strict: false });
-    return {
-        data: { name: charName || '角色' },
-        statusBar: { mode: t.mode, html: t.html, theme: t.theme, spec: t.spec || { title: '状态栏', variables: [] }, sample: t.sample },
-    };
+    const statusBar = { mode: t.mode, html: t.html, theme: t.theme, spec: t.spec || { title: '状态栏', variables: [] }, sample: t.sample };
+    if (t.portraits) statusBar.portraits = t.portraits;
+    return { data: { name: charName || '角色' }, statusBar };
 }
 
 // ---------------- 单个模板的导入导出 ----------------
 
-/** 导出用的 JSON 对象（不含 id、内置标记与时间） */
+/** 导出用的 JSON 对象（不含 id、内置标记与时间）；模板自带的变量上限与立绘设置只在有的时候写出 */
 export function exportStatusBarTemplate(template) {
     const t = cleanTemplateData(template, { strict: false });
-    return {
+    const out = {
         type: STATUS_TEMPLATE_FILE_TYPE,
         version: 1,
         name: t.name || '状态栏模板',
@@ -954,6 +1419,9 @@ export function exportStatusBarTemplate(template) {
         html: t.html,
         sample: t.sample,
     };
+    if (t.maxVars) out.maxVars = t.maxVars;
+    if (t.portraits) out.portraits = t.portraits;
+    return out;
 }
 
 export function statusBarTemplateFileName(template) {
@@ -987,14 +1455,21 @@ export function findStatusBarRegex(scripts) {
     return best;
 }
 
-/** 从角色卡 JSON（V2/V3）里取状态栏：优先 NovelLoom 写的 extensions.novel_loom.statusBar，其次是显示 <StatusPlaceHolderImpl/> 的正则 */
+/**
+ * 从角色卡 JSON（V2/V3）里取状态栏：优先 NovelLoom 写的 extensions.novel_loom.statusBar，其次是显示 <StatusPlaceHolderImpl/> 的正则。
+ * NovelLoom 的卡带了立绘设置（statusBar.portraits，至少一张图）时一起带上；变量多于默认上限时记下模板自带的上限。
+ */
 export function templateFromCardJson(json) {
     const data = isObj(json.data) ? json.data : json;
     const charName = cleanName(data.name || json.name || '');
     const name = charName ? `${charName}的状态栏` : '导入的状态栏';
     const meta = data.extensions?.novel_loom?.statusBar;
     if (isObj(meta) && (meta.spec || meta.html)) {
-        return { name, desc: '', mode: meta.mode, spec: meta.spec, html: meta.html, theme: meta.theme, sample: null };
+        const spec = normalizeTemplateSpec(meta.spec);
+        return {
+            name, desc: '', mode: meta.mode, spec: meta.spec, html: meta.html, theme: meta.theme, sample: null,
+            maxVars: neededVarCap(spec), portraits: templatePortraits(meta.portraits),
+        };
     }
     const bar = findStatusBarRegex(data.extensions?.regex_scripts);
     if (bar) {

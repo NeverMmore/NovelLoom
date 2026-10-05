@@ -45,8 +45,40 @@ const SB_HTML = [
   '</div>',
   '<script>window.nlRender = function (stat, ctx) { window.sbRenders = (window.sbRenders || 0) + 1; var el = ctx.root.querySelector(".sb-render"); if (el) el.textContent = "render " + window.sbRenders; };</' + 'script>',
 ].join('\n');
+// 世界/旁白卡的状态栏（smoke_statusbar_multi.py 用）：群像变量表（主要角色 / NPC 两个记录，主要角色带一层分组「服饰」）
+// 与带立绘槽位（data-nl-portrait + 换一张）、分组子模板（data-nl-group）、点路径（服饰.上衣）的界面
+const SB_WORLD_SPEC = { title: '魔女群像', variables: [
+  { path: '世界.时间', type: 'string', init: '夜晚 23:00', label: '时间', check: ['每轮按剧情推进'] },
+  { path: '世界.地点', type: 'string', init: '莉莉丝的酒吧', label: '地点', check: ['场景切换时更新'] },
+  { path: '主角.身份', type: 'string', init: '新来的客人', label: '身份', check: ['处境改变时更新'] },
+  { path: '主要角色', type: 'record', keyDesc: '角色名', label: '主要角色', widget: 'list', value: { type: 'object', fields: [
+    { key: '好感', type: 'number', min: 0, max: 100, integer: true, init: 20, stages: [{ min: 0, label: '戒备' }, { min: 40, label: '信任' }, { min: 80, label: '依恋' }] },
+    { key: '心情', type: 'enum', options: ['平静', '开心', '低落'], init: '平静' },
+    { key: '服饰', type: 'object', label: '服饰', fields: [{ key: '上衣', type: 'string', init: '' }, { key: '下装', type: 'string', init: '' }] },
+  ] }, init: { 莉莉丝: { 好感: 30, 心情: '平静', 服饰: { 上衣: '黑色长裙', 下装: '' } } }, check: ['新的主要角色登场时用 insert 新增', '换装时只改服饰里变化的那一项'] },
+  { path: 'NPC', type: 'record', keyDesc: '名字', label: 'NPC', widget: 'list', value: { type: 'object', fields: [
+    { key: '身份', type: 'string', init: '' },
+    { key: '阵营', type: 'enum', options: ['中立', '友好', '敌对'], init: '中立' },
+  ] }, init: {}, check: ['NPC 登场时用 insert 新增，离开后用 remove 删除'] },
+] };
+const SB_WORLD_HTML = [
+  '<style>.wb{font:13px/1.5 sans-serif;background:#1b1d24;color:#eee;border:1px solid #4a6c93;border-radius:10px;padding:10px;max-width:760px;margin:0 auto}',
+  '.wb-hud{display:flex;gap:10px;opacity:.85}.wb-grid{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}',
+  '.wb-card,.wb-npc{display:flex;gap:8px;align-items:flex-start;border:1px solid #333;border-radius:8px;padding:6px;min-width:200px}',
+  '.wb-pt{width:48px;height:64px;border-radius:6px}.wb-dress{margin:0;padding-left:16px}[data-nl-stage-index="1"]{color:#7fd1ff}</style>',
+  '<div class="wb">',
+  '<div class="wb-hud"><span class="wb-time" data-nl-text="世界.时间"></span><span class="wb-place" data-nl-text="世界.地点"></span><span class="wb-me" data-nl-text="主角.身份"></span></div>',
+  '<div class="wb-grid wb-cast" data-nl-each="主要角色" data-nl-empty="还没有主要角色"><template><div class="wb-card"><img class="wb-pt" data-nl-portrait="" alt=""><div>',
+  '<b class="wb-name" data-nl-key></b> <button type="button" class="wb-swap" data-nl-portrait-next="">换一张</button>',
+  '<div>好感 <span class="wb-fav" data-nl-item="好感"></span> <span class="wb-stage" data-nl-item-stage="好感"></span> <span class="wb-mood" data-nl-item="心情"></span></div>',
+  '<div>上衣 <span class="wb-top" data-nl-item="服饰.上衣"></span></div>',
+  '<ul class="wb-dress" data-nl-group="服饰"><template><li><span data-nl-key></span>=<span data-nl-item=""></span></li></template></ul>',
+  '</div></div></template></div>',
+  '<div class="wb-grid wb-npcs" data-nl-each="NPC" data-nl-empty="还没有 NPC"><template><div class="wb-npc"><img class="wb-pt" data-nl-portrait="" alt=""><b class="wb-npc-name" data-nl-key></b> <span class="wb-faction" data-nl-item="阵营"></span></div></template></div>',
+  '</div>',
+].join('\n');
 const sbMock = (prompt) => {
-  if (prompt.includes('设计状态栏界面')) { window.__sbHtmlCalls = (window.__sbHtmlCalls || 0) + 1; return '好的，界面如下：\n```html\n' + SB_HTML + '\n```'; }
+  if (prompt.includes('设计状态栏界面')) { window.__sbHtmlCalls = (window.__sbHtmlCalls || 0) + 1; return '好的，界面如下：\n```html\n' + (prompt.includes('世界/旁白卡的界面') ? SB_WORLD_HTML : SB_HTML) + '\n```'; }
   if (!prompt.includes('设计状态栏变量表')) return null;
   window.__sbSpecCalls = (window.__sbSpecCalls || 0) + 1;
   // 保留路径（沿用模板结构 / 只更新初始值 / 只重写规则）：照抄给定变量表的 path 与 init，改写 desc/check
@@ -55,7 +87,8 @@ const sbMock = (prompt) => {
     const base = JSON.parse(kept[1]);
     return '```json\n' + JSON.stringify({ variables: base.map((v) => ({ path: v.path, init: v.init, desc: (v.label || v.path) + '（mock）', check: ['按剧情更新（mock）'] })) }) + '\n```';
   }
-  return '```json\n' + JSON.stringify(SB_SPEC) + '\n```';
+  // 世界/旁白卡整体设计（提示词里带「世界/旁白卡的变量设计」）：群像变量表；init 里只写了莉莉丝，其余主要角色由 NovelLoom 补上
+  return '```json\n' + JSON.stringify(prompt.includes('世界/旁白卡的变量设计') ? SB_WORLD_SPEC : SB_SPEC) + '\n```';
 };
 const mock = (prompt) => {
   const sb = sbMock(prompt);
@@ -72,6 +105,7 @@ const mock = (prompt) => {
     if (src.includes('魔药')) entries.世界观.push({ name: '魔女秘药', keywords: ['魔药', '秘药'], content: '效果: 喝下会成为见习魔女' });
     return '```json\n' + JSON.stringify({ chapters: [{ name: title, notes: title + '：江酒与莉莉丝之间发生了新的变化，关系进一步推进。' }], characters, entries, style: { perspective: '第三人称', tone: '口语化', mood: '轻松中带惊悚' }, missing_names: src.includes('雨中') ? [{ type: '地名类', vague: '那家店', context: '走进了那家店', suggest: '莉莉丝酒吧' }] : [] }) + '\n```';
   }
+  if (prompt.includes('字段写法') && prompt.includes('这是一张“世界/旁白卡”')) return JSON.stringify({ name: '魔女旁白', description: '世界总览:\n  下城区边缘有一家莉莉丝的酒吧\n主要角色:\n  - 莉莉丝：大魔女\n  - 江酒：莉莉丝的女仆', personality: '', scenario: '酒吧打烊后，{{user}} 推门进来', first_mes: '雨夜，酒吧的灯还亮着。莉莉丝坐在吧台后，江酒在擦杯子。', alternate_greetings: ['清晨，酒吧还没开门。'], mes_example: '<START>\n{{user}}: 有人吗？\n{{char}}: 江酒抬起头：“打烊了。”', creator_notes: '来自《魔女》', tags: ['魔女', '群像'] });
   if (prompt.includes('字段写法')) return JSON.stringify({ name: '莉莉丝', description: '基本信息:\n  姓名: 莉莉丝\n  身份: 大魔女\n外貌特征:\n  - 黑色长裙\n性格调色盘:\n  底色: 骄傲\n  主色调: 从容', personality: '慢条斯理', scenario: '酒吧打烊后，{{user}} 推门进来', first_mes: '莉莉丝把最后一只杯子倒扣在吧台上——仿佛早就知道你会来。\n“坐。”', alternate_greetings: ['雨夜，门铃响了。', '茶会结束后。'], mes_example: '<START>\n{{user}}: 你好\n{{char}}: 坐。', creator_notes: '来自《魔女》', tags: ['魔女', '奇幻'] });
   if (prompt.includes('审稿意见')) return JSON.stringify({ first_mes: '莉莉丝把最后一只杯子倒扣在吧台上。\n“坐。”' });
   if (prompt.includes('处中断了')) return '莉莉丝放下书，看了他一眼。';

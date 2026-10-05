@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>状态栏运行时检查</title>
+<style>body{margin:0;font:13px system-ui,sans-serif;background:#f4f4f6}iframe{display:block;width:760px;height:900px;border:1px solid #ccc;margin:8px;background:#fff}</style>
+</head>
+<body>
+<!-- smoke_sb_runtime.py 用：在真实浏览器里跑 NL 运行时（立绘 / 分组 / 换一张 / 本地存储 / 占位块）。
+     iframe#same 模拟酒馆助手（同源、没有 sandbox，可以用本地存储），iframe#sandboxed 模拟 NovelLoom 预览（sandbox="allow-scripts"，访问本地存储会抛错）。 -->
+<iframe id="same"></iframe>
+<iframe id="sandboxed" sandbox="allow-scripts"></iframe>
+<iframe id="auto"></iframe>
+<script type="module">
+import { ensureStatusBar, normalizeStatusSpec } from '/src/statusbar.js';
+import { compileStatusDocument, simulateShownDocument } from '/src/statusbar-runtime.js';
+
+// 1×1 与 2×1 的 PNG（合法图片，data:image 地址）
+const PNG1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGM4ERAAAANMAWmFQTGjAAAAAElFTkSuQmCC';
+const PNG2 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR4nGMICDgREHACAAjvAtGOlatMAAAAAElFTkSuQmCC';
+const MISSING = `${location.origin}/__nl_missing_portrait__.png`;
+
+const spec = normalizeStatusSpec({
+    title: '群像',
+    variables: [
+        { path: '世界.时间', type: 'string', init: '清晨' },
+        { path: '主要角色', type: 'record', keyDesc: '角色名', value: { type: 'object', fields: [
+            { key: '好感', type: 'number', min: 0, max: 100, init: 0, stages: [{ min: 0, label: '陌生' }, { min: 50, label: '信任' }] },
+            { key: '服饰', type: 'object', fields: [{ key: '上衣', type: 'string' }, { key: '下装', type: 'string' }] },
+        ] } },
+        { path: 'NPC', type: 'record', keyDesc: '名字', value: { type: 'object', fields: [{ key: '阵营', type: 'string' }] } },
+    ],
+}, { maxVars: 30 });
+
+const html = [
+    '<style>.grid{display:flex;gap:8px;flex-wrap:wrap}.card{width:120px;border:1px solid #999;padding:4px;cursor:pointer}.pt{display:block;width:60px;height:80px}</style>',
+    '<div class="grid" data-nl-each="主要角色"><template><div class="card"><img class="pt" data-nl-portrait=""><button type="button" class="swap" data-nl-portrait-next="">换</button>',
+    '<b class="nm" data-nl-key></b><i class="top" data-nl-item="服饰.上衣"></i><em class="stage" data-nl-item-stage="好感"></em>',
+    '<ul class="dress" data-nl-group="服饰"><template><li><span data-nl-key></span>=<span data-nl-item=""></span></li></template></ul></div></template></div>',
+    '<div class="grid" data-nl-each="NPC"><template><div class="npc"><span class="frame" style="display:block;width:40px;height:40px" data-nl-portrait=""></span></div></template></div>',
+    '<script>document.addEventListener("click", function (e) { var c = e.target.closest(".card"); if (c) document.body.setAttribute("data-card-clicked", c.querySelector(".nm").textContent); });<\/script>',
+].join('\n');
+
+const card = { id: 'card_rt', kind: 'world', data: { name: '旁白' } };
+ensureStatusBar(card, {});
+Object.assign(card.statusBar, {
+    mode: 'bind', spec, html,
+    portraits: { characters: { 莉艾丽: [PNG1, { url: PNG2, when: '好感 >= 50' }], 卡尔: [MISSING] }, pools: [] },
+});
+const doc = compileStatusDocument(card);
+const shown = simulateShownDocument(doc, { user: '我', char: '旁白' });
+
+const STAT = {
+    世界: { 时间: '夜' },
+    主要角色: { 莉艾丽: { 好感: 60, 服饰: { 上衣: '风衣', 下装: '长裙' } }, 卡尔: { 好感: 10, 服饰: { 上衣: '盔甲', 下装: '' } } },
+    NPC: { 路人: { 阵营: '无' } },
+};
+
+// 酒馆助手提供的接口（最小模拟）：变量读取 + MVU 更新事件
+const mock = `<script>window.__stat = ${JSON.stringify(STAT)};window.__h = [];
+window.getAllVariables = function () { return { stat_data: JSON.parse(JSON.stringify(window.__stat)) }; };
+window.Mvu = { events: { VARIABLE_UPDATE_ENDED: 'end' } };
+window.eventOn = function (n, f) { window.__h.push(f); };
+window.__update = function (s) { window.__stat = s; window.__h.forEach(function (f) { f({ stat_data: JSON.parse(JSON.stringify(s)) }); }); };
+window.addEventListener('error', function (e) { (window.__errors = window.__errors || []).push(String(e.message)); });<\/script>`;
+const withMock = shown.replace('<head>', `<head>${mock}`);
+
+// 沙箱 iframe：页面里自带一段检查脚本，点两次「换一张」后把结果发给父页面
+const probe = `<script>window.addEventListener('load', function () { setTimeout(function () {
+var out = { srcs: [], errors: window.__errors || [] };
+function src() { return document.querySelector('.card .pt').getAttribute('src'); }
+out.srcs.push(src()); document.querySelector('.card .swap').click(); out.srcs.push(src()); document.querySelector('.card .swap').click(); out.srcs.push(src());
+try { localStorage.length; out.storage = 'ok'; } catch (e) { out.storage = 'blocked'; }
+parent.postMessage({ nlProbe: out }, '*'); }, 300); });<\/script>`;
+
+window.__probe = new Promise((resolve) => {
+    window.addEventListener('message', (e) => { if (e.data && e.data.nlProbe) resolve(e.data.nlProbe); });
+});
+try { localStorage.removeItem('nl-sb:card_rt:莉艾丽'); } catch { /* ignore */ }
+document.getElementById('same').srcdoc = withMock;
+document.getElementById('sandboxed').srcdoc = withMock.replace('</body>', `${probe}</body>`);
+// 内置排版（auto）：分组子区块 + 记录条目前的小头像
+const autoCard = { id: 'card_auto', data: { name: '旁白' }, statusBar: { ...card.statusBar, mode: 'auto', theme: 'night' } };
+document.getElementById('auto').srcdoc = simulateShownDocument(compileStatusDocument(autoCard), { user: '我', char: '旁白' }).replace('<head>', `<head>${mock}`);
+window.__docs = { PNG1, PNG2, MISSING };
+window.__ready = true;
+</script>
+</body>
+</html>

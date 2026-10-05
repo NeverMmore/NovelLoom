@@ -10,7 +10,7 @@ import { STATUSBAR_THEMES, buildPreviewSrcdoc } from '../statusbar-runtime.js';
 import {
     STATUS_TEMPLATE_MODE_LABELS, STATUS_TEMPLATE_NAME_MAX, duplicateStatusBarTemplate, exportStatusBarTemplate, getStatusBarTemplate,
     importStatusBarTemplate, listStatusBarTemplates, removeStatusBarTemplate, statusBarTemplateFileName, templatePreviewCard,
-    updateStatusBarTemplate,
+    templateVarCap, updateStatusBarTemplate,
 } from '../statusbar-templates.js';
 import { downloadFile, pickFile, readFileAsText, structuredCloneSafe } from '../utils.js';
 import { alertDialog, bindSettings, busy, chainPreviewHtml, confirmDialog, emptyState, esc, icon, openDialog, optionList, qs } from './common.js';
@@ -180,12 +180,16 @@ export function templateIdAfterDelete(idsBefore, deletedId, idsAfter) {
 
 /**
  * 模板库详情里的变量数标签：与状态栏对话框同一口径（varCountText，记录的每个字段各算一个）；
- * 超过当前变量上限时另加一个警告标签（沿用结构时多出的变量会被丢弃，与对话框里的模板库一致）
+ * 沿用结构时的上限是 templateVarCap（设置里的上限 maxVars；模板自带更大的上限时用模板的，如「多人群像」）。
+ * 超过这个上限时另加一个警告标签（沿用结构时多出的变量会被丢弃，与对话框里的模板库一致）；
+ * 多于设置里的上限、但模板自带的上限够用时加一个「自带上限」标签
  */
 export function templateVarTagsHtml(t, maxVars = DEFAULT_STATUS_BAR.maxVars) {
     const n = t?.spec ? countSpecLeaves(t.spec) : 0;
     if (!n) return '<span class="nl-tag">只有界面，没有变量表</span>';
-    const over = n > maxVars ? ` <span class="nl-tag nl-warn" title="沿用结构时多出的变量会被丢弃">超过上限 ${maxVars}</span>` : '';
+    const cap = templateVarCap(t, { statusBar: { maxVars } });
+    const over = n > cap ? ` <span class="nl-tag nl-warn" title="沿用结构时多出的变量会被丢弃">超过上限 ${cap}</span>`
+        : n > maxVars ? ` <span class="nl-tag" title="多于设置里的变量上限 ${maxVars}；沿用结构时按模板自带的上限保留全部变量">自带上限 ${cap}</span>` : '';
     return `<span class="nl-tag">${esc(varCountText(t.spec))}</span>${over}`;
 }
 

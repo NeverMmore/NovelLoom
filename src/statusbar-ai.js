@@ -6,6 +6,10 @@
 // 模板（templateMode）：structure = 沿用结构（模板变量表经 {TEMPLATE_SPEC} 交给 AI，只填初始值与规则；界面沿用模板）；
 //                      style = 只借外观（模板界面作为 {STYLE_REF}，AI 按本卡变量表重写界面）。
 // 每次成功都把生成前的 {spec, html, mode, theme, sample, templateId} 存进 statusBar.prev，restoreStatusBarPrev 一步撤销。
+// 世界/旁白卡（card.kind === 'world'）：{{char}} 是旁白（statusBarCharName），变量表按群像设计——「主要角色」记录（生成后用
+//   worldCastNames 把项目里的主要角色预先填进初始条目）、「NPC」记录（扮演中 insert）、世界.* 与 主角.*；
+//   提示词多一段可在设置里修改的「世界卡附加说明」（statusSpecWorld / statusHtmlWorld，填进 {WORLD_GUIDE}）。
+// 界面提示词的 {LAYOUT_GUIDE} 按本卡变量表给出绑定示例：记录逐项生成、分组（data-nl-group / 点路径）、立绘槽位与换图按钮。
 // 不碰 DOM；调用 AI 走 callLLM + chainFor(settings, 'statusbar')。注意：cards.js 不要反过来引用本模块（避免循环依赖）。
 
 import { DEFAULT_STATUS_BAR } from './constants.js';
@@ -16,10 +20,12 @@ import { callLLM, chainFor, errorText } from './llm.js';
 import { IMPORTANCE_RANK, buildOutlineText, characterAt, characterProfileText } from './project.js';
 import { getPrompt, render } from './prompts.js';
 import {
-    MAX_PATH_DEPTH, buildInitialState, buildStatusRegexReplace, countSpecLeaves, ensureStatusBar, lintStatusHtml,
-    normalizeStatusSpec, parseStateWithSpec, specSummaryText,
+    GROUP_FIELD_MAX, MAX_PATH_DEPTH, RECORD_FIELD_MAX, buildInitialState, buildStatusRegexReplace, castRecordPath, countSpecLeaves,
+    ensureStatusBar, isCastRecord, isWorldCard, lintStatusHtml, normalizePortraits, normalizeStatusSpec, parseStateWithSpec, portraitsActive,
+    seedWorldCastEntries, specSummaryText, statusBarCharName, worldCastNames,
 } from './statusbar.js';
 import { STATUS_BINDING_GUIDE, STATUSBAR_THEMES, cleanFragment, compileStatusDocument, renderDefaultFragment } from './statusbar-runtime.js';
+import { templateVarCap } from './statusbar-templates.js';
 import { abortError, isAbortError, truncate } from './utils.js';
 
 /** generateStatusBar 的 parts 可选值 */
@@ -47,8 +53,37 @@ function maxVarsOf(settings) {
     return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_STATUS_BAR.maxVars;
 }
 
+/** 路径里 {{char}} 换成的名字：卡片名；世界/旁白卡没有名字时是「旁白」 */
 function charNameOf(card) {
-    return String(card?.data?.name || card?.charName || '').trim();
+    return statusBarCharName(card);
+}
+
+function cardKindText(card) {
+    return isWorldCard(card) ? '世界/旁白卡' : '角色卡';
+}
+
+/** 世界/旁白卡的主要角色名（写进提示词、预填进「主要角色」记录）；资料不全时返回空数组 */
+function castNamesOf(project, card) {
+    if (!isWorldCard(card)) return [];
+    try {
+        return worldCastNames(project, card);
+    } catch {
+        return [];
+    }
+}
+
+function castText(names, fallback) {
+    return names.length ? names.join('、') : fallback;
+}
+
+// 按角色名记录的多人数据（主要角色 / NPC / 队友…）的判断在 statusbar.js（立绘候选也用它），这里照旧导出
+export { castRecordPath, isCastRecord };
+
+/** 世界/旁白卡：把项目里的主要角色预先填进「主要角色」记录（AI 已经写了的条目保持原样） */
+function seedWorldCast(project, card, spec, { warnings, onLog }) {
+    const r = seedWorldCastEntries(project, card, spec, { names: castNamesOf(project, card), warnings });
+    if (r.added.length) onLog?.(`🧩 已把 ${r.added.length} 个主要角色预先填进「${r.path}」：${r.added.join('、')}`);
+    return r.spec;
 }
 
 function bookOf(project) {
@@ -108,18 +143,29 @@ function backgroundContext(project, settings, card) {
     return parts.join('\n\n') || '（无）';
 }
 
-/** {TYPE_GUIDE}：变量类型、显示方式与路径写法 */
-export function statusTypeGuide(charName = '') {
+/** {TYPE_GUIDE} 里分组写法的示例（只用在 record 的 object 值里） */
+const GROUP_FIELD_EXAMPLE = { key: '服饰', type: 'object', fields: [{ key: '上衣', type: 'string', init: '' }, { key: '下装', type: 'string', init: '' }] };
+const GROUP_INIT_EXAMPLE = { 条目名: { 好感: 30, 服饰: { 上衣: '白衬衫', 下装: '长裙' } } };
+
+/**
+ * {TYPE_GUIDE}：变量类型、记录的分组字段、计数方式、显示方式与路径写法
+ * @param {string} charName 路径里角色分组的示例名
+ * @param {{world?: boolean}} opt world：世界/旁白卡（第一层的示例换成 世界 / 主角 / 按角色名记录的 record）
+ */
+export function statusTypeGuide(charName = '', { world = false } = {}) {
     const who = charName || '角色名';
+    const first = world ? '世界、主角，或者直接是按角色名记录的 record，如 主要角色、NPC' : `世界、${who}、主角`;
     return [
         '- number：数字。必须给 min 和 max；整数加 "integer": true；可选 stages（数值阶段，按 min 从小到大，例如 0 戒备 / 40 信任 / 80 依恋），界面会显示当前所处的阶段。',
         '- string：短文本，如时间、地点、着装、当前目标；可用 format 说明写法（如 "YYYY年MM月DD日 HH:MM"）。',
         '- enum：只能取 options 里的值（2-8 个），适合心情、关系阶段、剧情阶段。',
         '- boolean：是/否，如是否在场、是否知道某个秘密。',
         '- list：文本列表，如身体状态、近期事件；用 maxItems 限制条数（超出时只保留最新的）。',
-        '- record：键名不固定的记录，如物品栏（键是物品名）、任务表（键是任务名）；keyDesc 说明键是什么；value 是 number、string，或带 1-6 个字段的 object（字段类型 number / string / boolean / enum）。',
+        `- record：键名不固定的记录，如物品栏（键是物品名）、任务表（键是任务名）、多个角色各自的状态（键是角色名）；keyDesc 说明键是什么；value 是 number、string，或带 1-${RECORD_FIELD_MAX} 个字段的 object（字段类型 number / string / boolean / enum；数字字段要给 min / max，也可以带 stages）。新条目用 insert 加入，删除用 remove。`,
+        `- 分组（只能用在 record 的 object 值里）：同类字段可以收进一层分组，写法 ${JSON.stringify(GROUP_FIELD_EXAMPLE)}。一个分组在 fields 里算一个字段，里面最多 ${GROUP_FIELD_MAX} 个字段，只能是 number / string / boolean / enum，分组里不能再套分组。init 里分组写成嵌套对象，如 ${JSON.stringify(GROUP_INIT_EXAMPLE)}；扮演中更新时的完整路径是 记录.条目名.分组.字段（如 主要角色.条目名.服饰.上衣），变量的 path 只写到记录本身。`,
+        '- 计数：普通变量每个算 1 个；record 按字段计，分组里的每个字段各算 1 个，与记录里有多少条目无关。',
         '- widget（显示方式）：text 文字 / bar 进度条（有范围的数字）/ badge 徽标（选项、是否）/ tags 标签（列表）/ list 条目列表（记录）/ hidden 不显示（只给 AI 记账）。',
-        `- path（路径）：用“.”分隔的中文短名，最多 ${MAX_PATH_DEPTH} 层，第一层通常是分组（如 世界、${who}、主角）；用户一律写作“主角”；每段不能含空格、引号、/ . ~ < > { } [ ] 等符号，不能是纯数字；以 _ 开头的变量 AI 只能读、不能改。`,
+        `- path（路径）：用“.”分隔的中文短名，最多 ${MAX_PATH_DEPTH} 层，第一层通常是分组（如 ${first}）；用户一律写作“主角”；每段不能含空格、引号、/ . ~ < > { } [ ] 等符号，不能是纯数字；以 _ 开头的变量 AI 只能读、不能改。`,
     ].join('\n');
 }
 
@@ -135,7 +181,47 @@ export function statusJsonTemplate(charName = '') {
         { path: `${who}.状态`, type: 'list', init: [], maxItems: 5, label: '状态', widget: 'tags', check: ['…'] },
         { path: '主角.物品', type: 'record', keyDesc: '物品名', value: { type: 'object', fields: [{ key: '数量', type: 'number', min: 0, integer: true, init: 1 }, { key: '描述', type: 'string', init: '' }] }, init: { 物品名: { 数量: 1, 描述: '…' } }, label: '物品', widget: 'list', check: ['获得时用 insert 新增，失去时用 remove 删除'] },
     ];
-    return `{\n  "title": ${JSON.stringify(`状态栏标题（如：${who}的状态）`)},\n  "variables": [\n${vars.map((v) => `    ${JSON.stringify(v)}`).join(',\n')}\n  ]\n}`;
+    return jsonTemplateText(`状态栏标题（如：${who}的状态）`, vars);
+}
+
+function jsonTemplateText(title, vars) {
+    return `{\n  "title": ${JSON.stringify(title)},\n  "variables": [\n${vars.map((v) => `    ${JSON.stringify(v)}`).join(',\n')}\n  ]\n}`;
+}
+
+/**
+ * {JSON_TEMPLATE}（世界/旁白卡整体设计时）：世界.* / 主角.* + 「主要角色」记录（带好感阶段与「服饰」分组，init 以第一个主要角色为例）
+ * + 「NPC」记录（init 为空，扮演中 insert）。共 10 个叶子，在默认上限 12 以内。
+ * @param {string} charName 卡片名（标题示例用）
+ * @param {string[]} cast 主要角色名
+ */
+export function statusWorldJsonTemplate(charName = '', cast = []) {
+    const first = (Array.isArray(cast) && cast.find((x) => String(x || '').trim())) || '角色名';
+    const vars = [
+        { path: '世界.时间', type: 'string', init: '…', format: 'YYYY年MM月DD日 HH:MM', label: '时间', widget: 'text', check: ['每轮按剧情推进'] },
+        { path: '世界.地点', type: 'string', init: '…', label: '地点', widget: 'text', check: ['场景切换时更新'] },
+        { path: '主角.身份', type: 'string', init: '…', label: '身份', widget: 'text', check: ['…'] },
+        {
+            path: '主要角色', type: 'record', keyDesc: '角色名', label: '主要角色', widget: 'list',
+            value: {
+                type: 'object',
+                fields: [
+                    { key: '身份', type: 'string', init: '' },
+                    { key: '好感', type: 'number', min: 0, max: 100, integer: true, init: 30, stages: [{ min: 0, label: '陌生' }, { min: 40, label: '信任' }, { min: 80, label: '亲密' }] },
+                    { key: '心情', type: 'enum', options: ['平静', '开心', '低落'], init: '平静' },
+                    { key: '服饰', type: 'object', fields: [{ key: '上衣', type: 'string', init: '' }, { key: '下装', type: 'string', init: '' }] },
+                ],
+            },
+            init: { [first]: { 身份: '…', 好感: 30, 心情: '平静', 服饰: { 上衣: '…', 下装: '…' } } },
+            check: ['每个主要角色一个条目，键是角色名', '好感按与{{user}}的互动变化，单次 ±(1~5)', '换装时更新 服饰'],
+        },
+        {
+            path: 'NPC', type: 'record', keyDesc: 'NPC 名', label: 'NPC', widget: 'list',
+            value: { type: 'object', fields: [{ key: '身份', type: 'string', init: '' }, { key: '好感', type: 'number', min: 0, max: 100, integer: true, init: 20 }] },
+            init: {},
+            check: ['新的 NPC 登场并与{{user}}互动时用 insert 新增', '长期不再出场时用 remove 删除'],
+        },
+    ];
+    return jsonTemplateText(`状态栏标题（如：${charName || '世界'}·群像）`, vars);
 }
 
 function keepTask({ init, rules }) {
@@ -144,13 +230,29 @@ function keepTask({ init, rules }) {
     return '重写每个变量的 desc 和 1-3 条 check（什么情况下更新、怎么更新、变化幅度），init 不用输出';
 }
 
-/** {TEMPLATE_SPEC}：保留路径的模式（沿用模板结构 / 只更新初始值 / 只重写规则）下，交给 AI 的既定变量表 */
+/** 世界/旁白卡在保留路径模式下更新初始值时：提醒 AI 给每个主要角色写一个条目 */
+function keepCastLine(base, cast) {
+    const path = castRecordPath(base);
+    if (!path || !cast.length) return '';
+    return `这是世界/旁白卡：「${path}」按角色名记录，init 里为这些主要角色各写一个条目（键照抄名字）：${cast.join('、')}。`;
+}
+
+/**
+ * {TEMPLATE_SPEC}：保留路径的模式（沿用模板结构 / 只更新初始值 / 只重写规则）下，交给 AI 的既定变量表。
+ * <变量表> 块里只放 JSON 数组（浏览器冒烟测试的模拟 AI 直接解析它），补充说明写在块外面。
+ */
 function keepSection(base, opt) {
+    const extra = [];
+    if (opt.init && base.variables.some((v) => v.type === 'record' && v.value?.type === 'object')) {
+        extra.push(`记录（record）的 init 写成 {条目名: {字段: 值}}，字段按该变量的 value.fields 写全；分组字段写成嵌套对象，如 ${JSON.stringify(GROUP_INIT_EXAMPLE)}。`);
+    }
+    if (opt.init && opt.castLine) extra.push(opt.castLine);
     return [
         '',
         '# 沿用的变量结构（优先于上面的设计要求）',
         '下面这张变量表的结构已经确定：每个变量的 path、type、label、options、min / max、stages、widget 都保持不变，不增删变量，不改路径。',
         `本次只需要：${keepTask(opt)}。`,
+        ...extra,
         '<变量表>',
         `[\n${base.variables.map((v) => `  ${JSON.stringify(v)}`).join(',\n')}\n]`,
         '</变量表>',
@@ -175,25 +277,51 @@ function keepJsonTemplate(base, { init, rules, title }) {
  * 变量表提示词。base 不为空时是“保留路径”模式：结构来自 base，AI 只填 init（init）和/或 desc/check（rules）。
  * @returns {{system: string, prompt: string}}
  */
+/**
+ * 世界卡附加说明（设置里可改的 statusSpecWorld / statusHtmlWorld）渲染后的文字；主提示模板里没有 {WORLD_GUIDE}（用户改过的旧模板）时
+ * 由调用方接在主提示末尾，世界卡照样能拿到这段说明。
+ */
+function worldGuideText(settings, key, vars) {
+    return render(getPrompt(settings, key), vars).trim();
+}
+
+function withWorldGuide(template, prompt, guide) {
+    return guide && !String(template).includes('{WORLD_GUIDE}') ? `${prompt}\n\n${guide}` : prompt;
+}
+
+/**
+ * 变量表提示词。base 不为空时是“保留路径”模式：结构来自 base，AI 只填 init（init）和/或 desc/check（rules）。
+ * 世界/旁白卡：整体设计时带上世界卡附加说明（{WORLD_GUIDE}，含主要角色名单）与群像版 JSON 模板；保留路径模式下更新初始值时，
+ * 提醒 AI 为每个主要角色写一个条目。
+ * @returns {{system: string, prompt: string}}
+ */
 export function buildStatusSpecPrompt(project, settings, card, { base = null, init = true, rules = true, allowTitle = false, instruction = '' } = {}) {
     const charName = charNameOf(card);
+    const world = isWorldCard(card);
+    const cast = castNamesOf(project, card);
     const sb = card.statusBar || {};
+    const guide = world && !base
+        ? worldGuideText(settings, 'statusSpecWorld', { CHAR_NAME: charName, CAST: castText(cast, '（项目里还没有主要角色资料，按角色卡内容列出主要角色）') })
+        : '';
     const vars = {
         BOOK: bookOf(project),
         CHAR_NAME: charName,
+        CARD_KIND: cardKindText(card),
         TIMEPOINT: timepointText(project, card),
         CARD_CONTENT: cardContentText(card),
         CONTEXT: backgroundContext(project, settings, card),
         REQUIREMENT: String(sb.requirement || '').trim() || '（无特别要求）',
         MAX_VARS: base ? countSpecLeaves(base) : maxVarsOf(settings),
-        TEMPLATE_SPEC: base ? keepSection(base, { init, rules }) : '',
-        TYPE_GUIDE: statusTypeGuide(charName),
-        JSON_TEMPLATE: base ? keepJsonTemplate(base, { init, rules, title: allowTitle }) : statusJsonTemplate(charName),
+        WORLD_GUIDE: guide,
+        TEMPLATE_SPEC: base ? keepSection(base, { init, rules, castLine: world ? keepCastLine(base, cast) : '' }) : '',
+        TYPE_GUIDE: statusTypeGuide(charName, { world }),
+        JSON_TEMPLATE: base ? keepJsonTemplate(base, { init, rules, title: allowTitle }) : world ? statusWorldJsonTemplate(charName, cast) : statusJsonTemplate(charName),
         INSTRUCTION_LINE: instructionLine(instruction),
     };
+    const template = getPrompt(settings, 'statusSpec');
     return {
         system: render(getPrompt(settings, 'statusSpecSystem'), vars),
-        prompt: render(getPrompt(settings, 'statusSpec'), vars),
+        prompt: withWorldGuide(template, render(template, vars), guide),
     };
 }
 
@@ -222,29 +350,118 @@ function currentStyleRef(html) {
     return `下面是当前的界面。按“额外要求”在它的基础上修改，没有提到的部分尽量保持原样：\n<当前界面>\n${truncate(String(html).trim(), 12000)}\n</当前界面>`;
 }
 
+function escText(s) {
+    return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+}
+
+function hasRange(f) {
+    return Number.isFinite(f?.min) && Number.isFinite(f?.max);
+}
+
+/** 一个记录变量的界面示例：data-nl-each 逐项生成卡片；角色记录带立绘槽位与换图按钮；有分组时用 data-nl-group 放进 <details> */
+function recordExample(v, { portrait }) {
+    const parts = [];
+    if (portrait) parts.push('<img class="sb-av" data-nl-portrait="" alt=""><button type="button" class="sb-swap" data-nl-portrait-next="">换</button>');
+    parts.push('<b class="sb-name" data-nl-key></b>');
+    if (v.value?.type === 'object') {
+        const top = v.value.fields || [];
+        const bar = top.find((f) => f.type === 'number' && hasRange(f));
+        if (bar) {
+            parts.push(`<span class="sb-bar" data-nl-item-bar="${bar.key}"><i></i></span>`);
+            if (bar.stages?.length) parts.push(`<span class="sb-stage" data-nl-item-stage="${bar.key}"></span>`);
+        }
+        for (const f of top.filter((x) => x !== bar && x.type !== 'object').slice(0, 2)) parts.push(`<span class="sb-val" data-nl-item="${f.key}"></span>`);
+        const g = top.find((f) => f.type === 'object');
+        if (g) {
+            parts.push(`<details class="sb-more"><summary>${escText(g.label || g.key)}</summary><div class="sb-grp" data-nl-group="${g.key}"><template><span class="sb-kv"><span data-nl-key></span>：<span data-nl-item=""></span></span></template></div></details>`);
+        }
+    } else {
+        parts.push('<span class="sb-val" data-nl-item=""></span>');
+    }
+    return `<div class="sb-list" data-nl-each="${v.path}" data-nl-empty="暂无"><template><div class="sb-card">${parts.join('')}</div></template></div>`;
+}
+
+/** 用户已经配置的立绘（名字与立绘池）；没有任何图片时返回 '' */
+function portraitNote(raw) {
+    let p = null;
+    try {
+        p = normalizePortraits(raw);
+    } catch {
+        p = null;
+    }
+    if (!p || !portraitsActive(p)) return '';
+    const clean = (s) => String(s ?? '').replace(/[{}<>`$"]/g, '');
+    const names = Object.entries(p.characters || {}).filter(([, list]) => Array.isArray(list) && list.length).map(([n]) => clean(n)).filter(Boolean);
+    const shown = names.slice(0, 12);
+    const pools = (p.pools || []).map((x) => `「${clean(x.record)}」里按「${clean(x.field)}」分配的立绘池`);
+    const what = [shown.length ? `${shown.join('、')}${names.length > shown.length ? ` 等 ${names.length} 个角色` : ''}` : '', ...pools].filter(Boolean).join('；');
+    return `- 用户已经配置了立绘：${what}。界面里要给这些角色留出立绘槽位（记录里的角色放在 data-nl-each 的模板里，不在记录里的写 data-nl-portrait="名字"）。`;
+}
+
+/**
+ * {LAYOUT_GUIDE}：按本卡变量表给出的绑定示例——角色记录（键是角色名）逐个生成卡片并放立绘槽位与换图按钮、
+ * 记录里的分组用 data-nl-group 或点路径（data-nl-item="服饰.上衣"）、单人卡可选的立绘槽位，以及用户的立绘配置情况。
+ * 变量表里既没有角色记录、也没有带分组的记录、也没有角色自己的分组，且没有配置立绘时返回 ''。
+ * @param {{variables: object[]}} spec 规范化后的变量表
+ * @param {{charName?: string, world?: boolean, portraits?: object|null}} opt
+ * @returns {string} 以换行开头和结尾（直接放进提示词），或 ''
+ */
+export function statusLayoutGuide(spec, { charName = '', world = false, portraits = null } = {}) {
+    const vars = (spec?.variables || []).filter((v) => v && v.widget !== 'hidden');
+    const recs = vars.filter((v) => v.type === 'record');
+    const grouped = (v) => v.value?.type === 'object' && (v.value.fields || []).some((f) => f.type === 'object');
+    const picked = [...recs.filter(isCastRecord), ...recs.filter((v) => !isCastRecord(v) && grouped(v))].slice(0, 3);
+    const lines = [];
+    for (const v of picked) {
+        const cast = isCastRecord(v);
+        const g = v.value?.type === 'object' ? (v.value.fields || []).find((f) => f.type === 'object') : null;
+        const bits = [cast
+            ? `「${v.path}」的每个条目是一个角色：用 data-nl-each 逐个生成角色卡片，卡片里放立绘槽位 <img data-nl-portrait=""> 和换图按钮 <button type="button" data-nl-portrait-next="">`
+            : `「${v.path}」：用 data-nl-each 逐项生成`];
+        if (g?.fields?.length) bits.push(`分组「${g.key}」用 data-nl-group="${g.key}" 按字段逐个生成，也可以直接写点路径，如 data-nl-item="${g.key}.${g.fields[0].key}"`);
+        lines.push(`- ${bits.join('；')}。例如：`, recordExample(v, { portrait: cast }));
+    }
+    const own = !world && charName && vars.some((v) => String(v.path || '').startsWith(`${charName}.`)) ? charName : '';
+    if (own) lines.push(`- 可选：在「${own}」的名字旁放立绘槽位 <img class="sb-av" data-nl-portrait="${own}" alt="">，需要时再加换图按钮 <button type="button" data-nl-portrait-next="${own}">换</button>。`);
+    const note = portraitNote(portraits);
+    if (!lines.length && !note) return '';
+    lines.push(note || '- 目前还没有配置立绘图片：立绘槽位会显示带名字首字的占位块（class nl-portrait-ph，可以给它加样式），用户之后在 NovelLoom 的「立绘」里添加图片后自动显示。');
+    lines.push('- 立绘槽位和换图按钮只负责占位：不要写 src 或任何图片地址；换图按钮的点击由运行时处理（不会触发外层卡片的点击），不要再给它绑定点击事件。');
+    return ['', '# 本卡的绑定示例（结构可以照着写，样式自己设计）', ...lines, ''].join('\n');
+}
+
 /**
  * 界面提示词（绑定模式片段）
  * @param {{spec?: object, sample?: object|null, styleRef?: string, instruction?: string}} opt
- *   styleRef 为空时用默认的“按题材自行设计”；sample 不合法或为空时用变量表初始值
+ *   styleRef 为空时用默认的“按题材自行设计”；sample 不合法或为空时用变量表初始值。
+ *   {LAYOUT_GUIDE} 按变量表与 statusBar.portraits 生成；世界/旁白卡另带世界卡附加说明（{WORLD_GUIDE}）。
  */
 export function buildStatusHtmlPrompt(project, settings, card, { spec = null, sample = null, styleRef = '', instruction = '' } = {}) {
     const sb = card.statusBar || {};
     const s = spec || sb.spec || { title: '状态栏', variables: [] };
     const charName = charNameOf(card);
+    const world = isWorldCard(card);
     // 界面里不需要宏：变量说明/示例数据里的 {{user}}/{{char}} 换成名字，免得 AI 照抄进代码
     const plain = (t) => String(t).replace(/\{\{\s*user\s*\}\}/gi, '主角').replace(/\{\{\s*char\s*\}\}/gi, charName || '角色');
+    const guide = world
+        ? plain(worldGuideText(settings, 'statusHtmlWorld', { CHAR_NAME: charName, CAST: castText(castNamesOf(project, card), '（见示例数据）') }))
+        : '';
     const vars = {
         CHAR_NAME: charName,
+        CARD_KIND: cardKindText(card),
         SPEC_SUMMARY: plain(`标题：${s.title || '状态栏'}\n${specSummaryText(s)}`),
         SAMPLE_JSON: plain(JSON.stringify(sampleFor(s, sample), null, 2)),
         BINDING_GUIDE: STATUS_BINDING_GUIDE,
+        LAYOUT_GUIDE: plain(statusLayoutGuide(s, { charName, world, portraits: sb.portraits })),
         STYLE_REF: styleRef || defaultStyleRef(project, card),
+        WORLD_GUIDE: guide ? `\n${guide}\n` : '',
         REQUIREMENT: String(sb.requirement || '').trim() || '（无特别要求）',
         INSTRUCTION_LINE: instructionLine(instruction),
     };
+    const template = getPrompt(settings, 'statusHtml');
     return {
         system: render(getPrompt(settings, 'statusHtmlSystem'), vars),
-        prompt: render(getPrompt(settings, 'statusHtml'), vars),
+        prompt: withWorldGuide(template, render(template, vars), guide),
     };
 }
 
@@ -471,8 +688,9 @@ async function runHtmlStep(project, settings, card, { spec, sample, styleRef, in
 
 // ---------------- 状态栏对象的更新 ----------------
 
+// maxVars（卡片自己的变量上限）也一起存：撤销整体重新设计时回到之前套用模板记下的上限，撤销套用时回到套用前的
 function snapshot(sb) {
-    return clone({ spec: sb.spec, html: sb.html || '', mode: sb.mode, theme: sb.theme, sample: sb.sample ?? null, templateId: sb.templateId ?? null });
+    return clone({ spec: sb.spec, html: sb.html || '', mode: sb.mode, theme: sb.theme, sample: sb.sample ?? null, templateId: sb.templateId ?? null, maxVars: sb.maxVars ?? null });
 }
 
 function hasContent(snap) {
@@ -556,18 +774,25 @@ export async function generateStatusBar(project, settings, card, opts = {}) {
     const template = templateMode ? resolveTemplate(settings, sb, opts) : null;
     const charName = charNameOf(card);
     const before = snapshot(sb);
-    const next = { spec: sb.spec, html: sb.html, mode: sb.mode, theme: sb.theme, templateId: sb.templateId ?? null };
+    const next = { spec: sb.spec, html: sb.html, mode: sb.mode, theme: sb.theme, templateId: sb.templateId ?? null, maxVars: sb.maxVars ?? null };
     let specChanged = false;
     let initChanged = false;
     let note = '';
     try {
         const want = resolveParts(opts.parts, sb, templateMode);
         if (want.spec || want.init || want.rules) {
-            const base = want.spec ? null : keepBase(sb, template, templateMode, charName, { maxVars: maxVarsOf(settings), warnings });
+            // 沿用结构时的上限与 applyStatusBarTemplate 一致（模板自带更大的上限时用模板的，如「多人群像」的 15），否则会把套用时保留的变量截掉
+            const base = want.spec ? null : keepBase(sb, template, templateMode, charName, { maxVars: templateVarCap(template, settings), warnings });
             onLog?.(want.spec ? `🧩 正在设计「${charName}」的状态栏变量…` : `🧩 正在更新「${charName}」状态栏的${want.init && want.rules ? '初始值与规则' : want.init ? '初始值' : '更新规则'}…`);
             next.spec = await runSpecStep(project, settings, card, {
                 base, init: want.init, rules: want.rules, allowTitle: templateMode === 'structure', instruction, signal, onLog, warnings,
             });
+            // 世界/旁白卡：重新生成了初始值时，把项目里的主要角色补进「主要角色」记录（AI 漏掉的才补，已写的保持原样）
+            if (isWorldCard(card) && (want.spec || want.init)) next.spec = seedWorldCast(project, card, next.spec, { warnings, onLog });
+            // 卡片自己的变量上限（statusBarVarCap 取它、设置里的上限与当前变量数中最大的）：变量表照模板的结构来时记下模板的上限；
+            // 整体重新设计时变量表按设置里的上限生成，不再沿用之前模板的上限；只借外观、只按本卡变量表更新初始值 / 规则时不动它
+            if (want.spec) next.maxVars = null;
+            else if (template && templateMode === 'structure') next.maxVars = templateVarCap(template, settings);
             specChanged = true;
             initChanged = want.spec || want.init;
         }
@@ -625,6 +850,7 @@ export async function generateStatusBar(project, settings, card, opts = {}) {
     sb.mode = MODES.includes(next.mode) ? next.mode : 'bind';
     sb.theme = THEMES.includes(next.theme) ? next.theme : 'clean';
     sb.templateId = next.templateId ?? null;
+    sb.maxVars = next.maxVars;
     if (initChanged) {
         sb.sample = null;
         sb.stale = false;
@@ -662,7 +888,7 @@ export async function tryGenerateStatusBar(project, settings, card, opts = {}) {
 }
 
 /**
- * 一步撤销：用 statusBar.prev 换回上一次生成前的 {spec, html, mode, theme, sample, templateId}，
+ * 一步撤销：用 statusBar.prev 换回上一次生成前的 {spec, html, mode, theme, sample, templateId, maxVars}，
  * 当前内容存进 prev（再点一次就是重做）。没有 prev 时返回 false。
  */
 export function restoreStatusBarPrev(card) {
@@ -676,6 +902,13 @@ export function restoreStatusBarPrev(card) {
     sb.theme = THEMES.includes(p.theme) ? p.theme : 'clean';
     sb.sample = isObj(p.sample) ? clone(p.sample) : null;
     sb.templateId = p.templateId ?? null;
+    // 卡片自己的变量上限（旧版本存的 prev 没有这一项：保持现在的）
+    if ('maxVars' in p) sb.maxVars = p.maxVars ?? null;
+    // 套用带立绘的模板时 prev 里还有套用前的立绘（applyStatusBarTemplate）：一起换回来，再点一次又换回去
+    if ('portraits' in p) {
+        cur.portraits = clone(sb.portraits ?? null);
+        sb.portraits = normalizePortraits(p.portraits);
+    }
     sb.prev = cur;
     sb.error = '';
     sb.lint = effectiveLint(sb);
