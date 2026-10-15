@@ -264,9 +264,10 @@ export function userProfileOptionsHtml(settings, selected, { current = null } = 
  * @param {boolean} hasProfiles 设置里有没有画像
  * @param {boolean} original 原创写卡（没有原著）
  * @param {boolean} noSource 项目没有原文（按「项目资料」写卡）
+ * @param {object|null} settings 解析画像的自定义尺度（常用库里的名称）
  */
-export function userProfileFormNote(profile, hasProfiles = true, original = false, noSource = false) {
-    if (profile) return `会按这个画像量身定制：${userProfileSummary(profile)}。`;
+export function userProfileFormNote(profile, hasProfiles = true, original = false, noSource = false, settings = null) {
+    if (profile) return `会按这个画像量身定制：${userProfileSummary(profile, { settings })}。`;
     return hasProfiles ? `不使用画像：按${sourceWord(original, noSource)}和你的要求写。` : '还没有用户画像：点「管理用户画像」保存你的口味（喜欢的元素、雷点、尺度），写卡时选上它就能量身定制。';
 }
 
@@ -464,13 +465,23 @@ export const cardsTab = {
         const profilePicksHtml = () => profileOrientationPicks(app.settings, pickedProfile(), form.orientationId)
             .map((o) => `<button type="button" class="nl-seg-btn nl-up-pick" data-act="up-orient-pick" data-orient-id="${esc(o.id)}" title="把卡的导向设为「${esc(o.name)}」（来自用户画像的偏好）">按画像选导向：${esc(o.name)}</button>`).join('');
 
+        /**
+         * 导向模板可能新增、改名或删除（导向模板管理、画像编辑区的「新建导向」）：只刷新「卡的导向」下拉框，
+         * 选中的被删掉了就回到「不限」，不整页重绘
+         */
+        const refreshOrientationSelect = () => {
+            if (form.orientationId && form.orientationId !== ORIENTATION_CUSTOM && !getOrientationTemplate(app.settings, form.orientationId)) form.orientationId = '';
+            const sel = el.querySelector('[data-form="orientationId"]');
+            if (sel) sel.innerHTML = orientationOptionsHtml(app.settings, form.orientationId);
+        };
+
         /** 「{{user}} 扮演」「卡的导向」「用户画像」切换后只更新这几处显示，不整页重绘（否则“写卡选项”会收起来） */
         const syncFormExtras = () => {
             const prof = pickedProfile();
             const orig = isOriginal();
             const noSrc = noSource();
             const sum = el.querySelector('[data-up-summary]');
-            if (sum) sum.textContent = userProfileFormNote(prof, listUserProfiles(app.settings).length > 0, orig, noSrc);
+            if (sum) sum.textContent = userProfileFormNote(prof, listUserProfiles(app.settings).length > 0, orig, noSrc, app.settings);
             const saveNote = el.querySelector('[data-orig-save-note]');
             if (saveNote) saveNote.textContent = originalSaveNote(saveForced(), wantOriginalSave());
             const chatLine = el.querySelector('[data-up-chat]');
@@ -1644,10 +1655,7 @@ export const cardsTab = {
                     return render();
                 case 'orientation-manage': {
                     await openOrientationTemplatesDialog({ select: form.orientationId && form.orientationId !== ORIENTATION_CUSTOM ? form.orientationId : '' });
-                    // 模板可能新增、改名或删除：只刷新下拉框（选中的被删掉了就回到「不限」），不整页重绘
-                    if (form.orientationId && form.orientationId !== ORIENTATION_CUSTOM && !getOrientationTemplate(app.settings, form.orientationId)) form.orientationId = '';
-                    const sel = el.querySelector('[data-form="orientationId"]');
-                    if (sel) sel.innerHTML = orientationOptionsHtml(app.settings, form.orientationId);
+                    refreshOrientationSelect();
                     rememberForm();
                     syncFormExtras();
                     return;
@@ -1672,6 +1680,8 @@ export const cardsTab = {
                     }
                     const sel = el.querySelector('[data-form="userProfileId"]');
                     if (sel) sel.innerHTML = userProfileOptionsHtml(app.settings, profileId());
+                    // 画像编辑区的「新建导向」能打开导向模板管理（新建、改名、删除模板）：「卡的导向」下拉框也要跟着刷新
+                    refreshOrientationSelect();
                     rememberForm();
                     syncFormExtras();
                     return undefined;
@@ -1682,6 +1692,8 @@ export const cardsTab = {
                     if (!getOrientationTemplate(app.settings, id)) return undefined;
                     form.orientationId = id;
                     const sel = el.querySelector('[data-form="orientationId"]');
+                    // 下拉框里还没有这个模板（别处刚新建的）：先重建选项，不然选不上、下拉框变成空白
+                    if (sel && ![...sel.options].some((o) => o.value === id)) sel.innerHTML = orientationOptionsHtml(app.settings, id);
                     if (sel) sel.value = id;
                     rememberForm();
                     syncFormExtras();

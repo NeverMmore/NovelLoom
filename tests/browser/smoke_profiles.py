@@ -126,7 +126,9 @@ try:
         assert '成年人' in page.inner_text('#nl-tab [data-up-int-hint]')
         page.click('#nl-tab [data-act="up-intensity"][data-val="suggestive"]')
         page.fill('#nl-tab [data-up-f="persona"]', '二十五岁的男性上班族，个子高、话不多')
-        page.fill('#nl-tab [data-up-f="style"]', '第二人称、细腻心理')
+        # 叙事偏好：标签编辑（粘贴一串，用顿号隔开）
+        page.fill('#nl-tab [data-up-tag-input="style"]', '第二人称、细腻心理')
+        page.wait_for_function('() => NovelLoom.app.settings.userProfiles.find((p) => p.name === "足控党").style === "第二人称、细腻心理"')
         page.fill('#nl-tab [data-up-f="notes"]', '喜欢斗嘴')
         prof = by_name(page, '足控党')
         assert prof['isDefault'] is True, '第一个画像自动设为默认'

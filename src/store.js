@@ -2,6 +2,7 @@
 
 import { DB_NAME, DB_VERSION, DEFAULT_SETTINGS, DEFAULT_CATEGORIES, MODULE } from './constants.js';
 import { normalizeNameResolve } from './names.js';
+import { profileLibrary } from './profilelib.js';
 import { mergeDefaults, structuredCloneSafe, uid } from './utils.js';
 
 // ---------------- 设置 ----------------
@@ -30,6 +31,8 @@ export function getSettings() {
     s.nameResolve = normalizeNameResolve(s.nameResolve);
     // 用户画像：不是数组时回到空列表（画像本身在用的时候逐个规整，见 userprofile.js）
     if (!Array.isArray(s.userProfiles)) s.userProfiles = [];
+    // 用户画像的常用库：规整（不认识的项丢掉、超出上限的截掉，见 profilelib.js）
+    profileLibrary(s);
     return s;
 }
 

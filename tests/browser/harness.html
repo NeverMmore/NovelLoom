@@ -177,10 +177,17 @@ const mock = (prompt) => {
   }
   return '你好';
 };
+// 冒烟测试要验证「刷新后还在」时：sessionStorage 里 __nl_persist = '1' 时扩展设置每次保存都存进 sessionStorage（__nl_ext），
+// 刷新页面后读回来，像真实酒馆一样；没开时和以前一样只在内存里
+const nlPersist = () => { try { return sessionStorage.getItem('__nl_persist') === '1'; } catch { return false; } };
+const nlPersisted = (() => { try { return nlPersist() ? JSON.parse(sessionStorage.getItem('__nl_ext') || 'null') : null; } catch { return null; } })();
 const ctx = {
   name1: 'User', name2: '莉莉丝', characters: [], chat: [], characterId: undefined,
-  extensionSettings: { connectionManager: { profiles: [{ id: 'p1', name: 'DeepSeek 测试', model: 'deepseek-chat', api: 'openai' }] } },
-  saveSettingsDebounced() { window.__settingsSaved = (window.__settingsSaved || 0) + 1; },
+  extensionSettings: nlPersisted || { connectionManager: { profiles: [{ id: 'p1', name: 'DeepSeek 测试', model: 'deepseek-chat', api: 'openai' }] } },
+  saveSettingsDebounced() {
+    window.__settingsSaved = (window.__settingsSaved || 0) + 1;
+    if (nlPersist()) sessionStorage.setItem('__nl_ext', JSON.stringify(ctx.extensionSettings));
+  },
   getRequestHeaders: ({ omitContentType } = {}) => omitContentType ? { 'X-CSRF-Token': 't' } : { 'Content-Type': 'application/json', 'X-CSRF-Token': 't' },
   async generateRaw({ prompt, systemPrompt }) {
     // NovelLoom 在酒馆当前连接模式下给 {{ }} 中间插了零宽空格（防止酒馆替换宏，见 src/llm.js shieldMacros）；模拟的 AI 照常读出原文

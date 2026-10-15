@@ -2,58 +2,30 @@
 //   1) 画像存在扩展设置 settings.userProfiles（跨项目共用，导入配置时按 id 合并）；最多一个默认画像（写卡表单默认选它）；
 //   2) 写卡时选一个画像 → 卡片记下快照 card.userProfile = {id, name, likes, dislikes, intensity, persona, style, notes, orientations, chatEntry}，
 //      之后改画像不影响已生成的卡；单字段重roll、整卡重新生成都用这份快照；
+//      用的是自定义尺度时快照另记 intensityName / intensityDesc（生成时从常用库解析好），之后改名或删掉这个尺度，已经生成的卡照样能用；
 //   3) 写卡提示词里加「为这位用户量身定制」一节（{USER_PROFILE}），状态栏变量表提示词里加简短的「用户偏好」一节；
 //   4) 快照的 chatEntry 开着时，卡自己的世界书里多一个常驻条目「用户偏好」（固定文字，不由 AI 写），排在「剧情导向」之后，
 //      见 publish.js 的 cardExtraEntries。
+// 每一项的可选内容（标签分组、尺度、叙事偏好的建议、常用文字）都可以添加自定义的并保存，存在常用库里（见 profilelib.js）。
 // 所有提示词与条目都写明：涉及恋爱或亲密内容的人物（包括 {{user}}）都是成年人。内置的标签建议里没有未成年属性的标签。
 // 雷点与本次「卡的导向」同名时（比如雷点里有 NTR、却选了 NTR 导向）以卡的导向为准，这一项雷点不写进提示词和条目（见 effectiveDislikes）。
+// 叙事偏好存成一个字符串（用「、」连起来的几项，旧版自由填写的文字原样保留），界面上按 、/，/, 拆成一项一项编辑（见 styleTags）。
 // 不碰 DOM、不调用 AI。
 
 import { ORIENTATION_DEFAULTS, getOrientationTemplate, listOrientationTemplates, normalizeCardOrientation } from './orientation.js';
+import {
+    CUSTOM_INTENSITY_RE, PROFILE_LIBRARY_LIMITS, TAG_SEPARATORS, USER_PROFILE_DEFAULT_INTENSITY, USER_PROFILE_INTENSITIES, cleanTagList,
+    customIntensityInfo, exportProfileLibrary, intensityInfo, libraryForIntensities, mergeProfileLibrary, resolveIntensityId, trimEndPunct,
+} from './profilelib.js';
 import { uid } from './utils.js';
+
+export { USER_PROFILE_DEFAULT_INTENSITY, USER_PROFILE_INTENSITIES, USER_PROFILE_TAG_GROUPS, intensityInfo } from './profilelib.js';
 
 /** 导出文件的 type */
 export const USER_PROFILE_FILE_TYPE = 'novel_loom_user_profiles';
 
-/** 长度上限：名称、单个标签的字数，每类标签的个数，文字说明（形象 / 叙事偏好 / 其他）的字数 */
-export const USER_PROFILE_LIMITS = { name: 20, tag: 12, tags: 40, text: 1000, orientations: 20 };
-
-/** 尺度：label 是界面上的名字；card 写进写卡提示词，chat 写进「用户偏好」条目，status 写进状态栏变量表提示词 */
-export const USER_PROFILE_INTENSITIES = [
-    {
-        value: 'sfw',
-        label: '清水',
-        hint: '感情止于心动、牵手和拥抱，不写性内容。',
-        card: '清水——感情止于心动、牵手和拥抱，不写性内容，也不写带挑逗意味的身体描写。',
-        chat: '清水——感情止于心动、牵手和拥抱，不写性内容。',
-    },
-    {
-        value: 'suggestive',
-        label: '暧昧擦边',
-        hint: '可以暧昧、调情，有身体接触的张力，点到为止。',
-        card: '暧昧擦边——可以有暧昧、调情和身体接触带来的张力，点到为止，不写露骨的性描写。',
-        chat: '暧昧擦边——可以暧昧、调情，有身体接触的张力，点到为止，不写露骨的性描写。',
-    },
-    {
-        value: 'explicit',
-        label: '可以露骨',
-        hint: '亲密场面可以直接、具体地描写（只在成年人之间）。',
-        card: '可以露骨——亲密场面可以直接、具体地描写，但要贴合人物和两人当下的关系，不为写而写。',
-        chat: '可以露骨——亲密场面可以直接、具体地描写，但要贴合人物和当下的关系。',
-    },
-];
-export const USER_PROFILE_DEFAULT_INTENSITY = 'suggestive';
-
-/**
- * 内置的标签建议（只是可以点选的标签，用户可以输入任何自定义标签）。
- * kind：likes = 「喜欢」下面的建议，dislikes = 「雷点」下面的建议。不含未成年属性的标签。
- */
-export const USER_PROFILE_TAG_GROUPS = [
-    { name: '角色属性', kind: 'likes', tags: ['傲娇', '病娇', '三无', '元气', '温柔', '高冷', '御姐', '人妻', '青梅竹马', '女仆', '大小姐', '学姐', '女上司', '腹黑', '天然呆', '小恶魔', '强势', '反差'] },
-    { name: '外形与服饰', kind: 'likes', tags: ['黑丝', '白丝', '丝袜', '制服', '职业装', '旗袍', '眼镜', '长发', '双马尾', '兽耳', '异色瞳', '高挑', '娇小', '丰满', '肌肉'] },
-    { name: '癖好与偏好', kind: 'likes', tags: ['足控', '腿控', '手控', '声控', '气味', '恋物', '支配', '臣服', '调教', '暧昧拉扯', '慢热', '主动', '被动', '甜宠', '反差萌'] },
-    { name: '常见雷点', kind: 'dislikes', tags: ['NTR', '背叛', '死亡', '血腥', '虐待', '怀孕', '多人', '后宫', '绿帽', '强迫'] },
-];
+/** 长度上限：名称、单个标签的字数，每类标签的个数，文字说明（形象 / 叙事偏好 / 其他）的字数，叙事偏好里一项的字数 */
+export const USER_PROFILE_LIMITS = { name: 20, tag: 12, tags: 40, text: 1000, orientations: 20, styleTag: PROFILE_LIBRARY_LIMITS.styleTag };
 
 /** 成年人一条里 {{user}} 的那半句：{{user}} 也是亲密内容里的一方，形象或身份写了未成年的年龄时不能照写 */
 const USER_ADULT_CLAUSE = '{{user}} 的形象或身份里写了未满 18 岁的年龄时，把 {{user}} 写成成年人，或者不让 {{user}} 进入恋爱和亲密内容。';
@@ -82,26 +54,56 @@ function key(s) {
  * @returns {string[]}
  */
 export function normalizeProfileTags(v) {
-    const raw = Array.isArray(v) ? v : typeof v === 'string' ? v.split(/[,，、;；\n]/) : [];
+    return cleanTagList(v, { max: USER_PROFILE_LIMITS.tag, count: USER_PROFILE_LIMITS.tags });
+}
+
+/**
+ * 叙事偏好（字符串）→ 一项一项：按 、/，/,/；/换行 拆开，去掉首尾空白，去重（不分大小写）。
+ * 只用来显示和编辑，不截短（旧版自由填写的长句原样成为一项，不丢字）。
+ * @returns {string[]}
+ */
+export function styleTags(style) {
+    const raw = Array.isArray(style) ? style : String(style ?? '').split(TAG_SEPARATORS);
     const out = [];
     const seen = new Set();
     for (const x of raw) {
         if (isObj(x) || Array.isArray(x)) continue;
-        const t = String(x ?? '').replace(/^[#＃]+/, '').replace(/\s+/g, ' ').trim().slice(0, USER_PROFILE_LIMITS.tag).trim();
+        const t = String(x ?? '').replace(/^[#＃]+/, '').replace(/\s+/g, ' ').trim();
         if (!t || seen.has(key(t))) continue;
         seen.add(key(t));
         out.push(t);
-        if (out.length >= USER_PROFILE_LIMITS.tags) break;
     }
     return out;
 }
 
-function intensityValue(v) {
-    return USER_PROFILE_INTENSITIES.some((x) => x.value === v) ? v : USER_PROFILE_DEFAULT_INTENSITY;
+/** 一项一项的叙事偏好 → 存进画像的字符串（用「、」连起来；每项末尾的标点去掉，免得出现「。、」） */
+export function joinStyleTags(tags) {
+    return cleanText(styleTags(styleTags(tags).map((t) => trimEndPunct(t))).join('、'), USER_PROFILE_LIMITS.text);
 }
 
-export function intensityInfo(v) {
-    return USER_PROFILE_INTENSITIES.find((x) => x.value === intensityValue(v));
+/** 尺度的值：内置的三档、自定义尺度的 id（这里不检查自定义尺度是否还在，用的时候再按默认尺度处理）；其他回到默认 */
+function intensityValue(v) {
+    if (USER_PROFILE_INTENSITIES.some((x) => x.value === v)) return v;
+    if (typeof v === 'string' && CUSTOM_INTENSITY_RE.test(v)) return v;
+    return USER_PROFILE_DEFAULT_INTENSITY;
+}
+
+/** 卡片快照里自带的自定义尺度（名称 + 说明）；没有或不完整时返回 null */
+function snapshotCustomIntensity(raw) {
+    if (!isObj(raw) || typeof raw.intensity !== 'string' || !CUSTOM_INTENSITY_RE.test(raw.intensity)) return null;
+    const name = String(raw.intensityName ?? '').replace(/\s+/g, ' ').trim().slice(0, PROFILE_LIBRARY_LIMITS.intensityName).trim();
+    const desc = String(raw.intensityDesc ?? '').replace(/\s+/g, ' ').trim().slice(0, PROFILE_LIBRARY_LIMITS.intensityDesc).trim();
+    return name && desc ? { id: raw.intensity, name, desc } : null;
+}
+
+/**
+ * 画像或卡片快照的尺度信息：快照自带自定义尺度的名称和说明时用它（不管常用库里还在不在）；
+ * 否则内置的直接给，自定义的在 settings 的常用库里找（找不到时按默认尺度，missing = true）。
+ */
+export function profileIntensityInfo(profile, settings = null) {
+    const own = snapshotCustomIntensity(profile);
+    if (own) return customIntensityInfo(own);
+    return intensityInfo(intensityValue(profile?.intensity), settings);
 }
 
 /** 偏好的导向：模板 id 列表（去重，最多 20 个；这里不检查是否还存在，用的时候再丢掉已经删掉的） */
@@ -134,7 +136,8 @@ export function normalizeUserProfile(raw, { fallbackName = '' } = {}) {
         dislikes,
         intensity: intensityValue(p.intensity),
         persona: cleanText(p.persona, USER_PROFILE_LIMITS.text),
-        style: cleanText(p.style, USER_PROFILE_LIMITS.text),
+        // 叙事偏好：字符串原样（旧版自由填写的文字不改写）；导入的文件里是数组时用「、」连起来
+        style: Array.isArray(p.style) ? joinStyleTags(p.style) : cleanText(p.style, USER_PROFILE_LIMITS.text),
         notes: cleanText(p.notes, USER_PROFILE_LIMITS.text),
         chatEntry: p.chatEntry !== false,
     };
@@ -317,16 +320,26 @@ export function profileOrientationPicks(settings, profile, orientationId = '') {
 
 // ---------------- 导入导出 ----------------
 
-/** 导出用的 JSON（一个或多个画像；不含 id、默认标记与时间；偏好的导向另附名字，换一台电脑导入时按名字找回） */
-export function exportUserProfiles(settings, list) {
+/**
+ * 导出用的 JSON（一个或多个画像；不含 id、默认标记与时间；偏好的导向另附名字，换一台电脑导入时按名字找回）。
+ * 画像用到的自定义尺度总是放进 library.intensities（否则导入后认不出来）；library=true 时带上整个常用库
+ * （自定义标签、分组、尺度、叙事偏好、常用文字；不带隐藏的内置标签——不替导入的人隐藏东西）。都没有时没有 library 这一项。
+ * @param {{library?: boolean}} opt
+ */
+export function exportUserProfiles(settings, list, { library = false } = {}) {
     const items = (Array.isArray(list) ? list : [list]).filter(Boolean).map((raw) => {
         const p = normalizeUserProfile(raw);
         delete p.isDefault;
+        // 自定义尺度已经删掉了：按默认尺度导出
+        p.intensity = resolveIntensityId(settings, p.intensity);
         // 只导出还存在的导向，id 与名字一一对应
         const os = profileOrientations(settings, p);
         return { ...p, orientations: os.map((o) => o.id), orientationNames: os.map((o) => o.name) };
     });
-    return { type: USER_PROFILE_FILE_TYPE, version: 1, profiles: items };
+    const out = { type: USER_PROFILE_FILE_TYPE, version: 1, profiles: items };
+    const lib = library ? exportProfileLibrary(settings, { hidden: false }) : libraryForIntensities(settings, items.map((p) => p.intensity));
+    if (lib && (lib.groups?.length || lib.intensities?.length || lib.style?.tags?.length || lib.snippets?.length)) out.library = lib;
+    return out;
 }
 
 export function userProfileFileName(list) {
@@ -365,14 +378,7 @@ function profileOrientationByName(settings, nameKey) {
  * @throws {Error} 认不出格式或一个可用的画像都没有时
  */
 export function parseUserProfiles(input, settings = null) {
-    let json = input;
-    if (typeof json === 'string') {
-        try {
-            json = JSON.parse(json.trim());
-        } catch {
-            throw new Error('文件不是有效的 JSON');
-        }
-    }
+    const json = parseJsonInput(input);
     let list;
     if (Array.isArray(json)) list = json;
     else if (isObj(json) && Array.isArray(json.profiles)) list = json.profiles;
@@ -389,23 +395,55 @@ export function parseUserProfiles(input, settings = null) {
     return out;
 }
 
-/** 导入并保存（每个都是新的画像，重名时自动改名，都不是默认）；返回新建的画像 */
+function parseJsonInput(input) {
+    if (typeof input !== 'string') return input;
+    try {
+        return JSON.parse(input.trim());
+    } catch {
+        throw new Error('文件不是有效的 JSON');
+    }
+}
+
+/**
+ * 导入画像文件并保存（每个都是新的画像，重名时自动改名，都不是默认）。
+ * 文件里带常用库（library）时先合并进本机的常用库（不重复，不替你隐藏内置标签），画像的自定义尺度按合并结果换成本机的 id；
+ * 认不出的自定义尺度按默认尺度。
+ * @returns {{profiles: object[], library: object|null}} library：常用库新加了多少（见 profilelib.js 的 mergeProfileLibrary）；文件里没有时为 null
+ */
+export function importUserProfileFile(settings, input) {
+    const json = parseJsonInput(input);
+    const profiles = parseUserProfiles(json, settings);
+    let library = null;
+    let map = null;
+    if (isObj(json) && isObj(json.library)) {
+        const r = mergeProfileLibrary(settings, json.library, { hidden: false });
+        library = r.added;
+        map = r.intensityMap;
+    }
+    const created = profiles.map((p) => addUserProfile(settings, { ...p, intensity: resolveIntensityId(settings, p.intensity, map), name: uniqueUserProfileName(settings, p.name) }));
+    return { profiles: created, library };
+}
+
+/** 导入并保存（见 importUserProfileFile）；返回新建的画像 */
 export function importUserProfiles(settings, input) {
-    return parseUserProfiles(input, settings).map((p) => addUserProfile(settings, { ...p, name: uniqueUserProfileName(settings, p.name) }));
+    return importUserProfileFile(settings, input).profiles;
 }
 
 /**
  * 导入配置时合并画像：按 id 覆盖本机同 id 的、追加没有的（与导向模板同一口径），逐个规整。
  * 导入的配置里有默认画像时以导入的为准（本机其他画像不再是默认）；最后保证最多一个默认。
+ * 自定义尺度按 intensityMap（先合并常用库得到的 id 对照）换成本机的 id，认不出时按默认尺度。
+ * @param {{intensityMap?: Object<string,string>|null}} opt
  * @returns {object[]} 合并后的列表（也写回 settings.userProfiles）
  */
-export function mergeUserProfiles(settings, incoming) {
+export function mergeUserProfiles(settings, incoming, { intensityMap = null } = {}) {
     const cur = Array.isArray(settings.userProfiles) ? settings.userProfiles : [];
     let incomingDefault = '';
     for (const raw of Array.isArray(incoming) ? incoming : []) {
         if (!isObj(raw) || !raw.id) continue;
         const item = normalizeStoredUserProfile(raw);
         if (!item || item.id !== raw.id) continue;
+        item.intensity = resolveIntensityId(settings, item.intensity, intensityMap);
         if (item.isDefault && !incomingDefault) incomingDefault = item.id;
         const i = cur.findIndex((x) => x?.id === item.id);
         if (i >= 0) cur[i] = item;
@@ -429,12 +467,15 @@ export function userProfileSnapshot(settings, profile, { chatEntry } = {}) {
     const p = typeof profile === 'string' ? getUserProfile(settings, profile) : isObj(profile) ? profile : null;
     if (!p) return null;
     const n = normalizeUserProfile(p, { fallbackName: '未命名画像' });
+    // 尺度：自定义尺度从常用库里解析出名称和说明一起记在快照上（已经删掉时按默认尺度）
+    const int = intensityInfo(n.intensity, settings);
     return normalizeCardUserProfile({
         id: String(p.id || ''),
         name: n.name,
         likes: n.likes,
         dislikes: n.dislikes,
-        intensity: n.intensity,
+        intensity: int.value,
+        ...(int.custom ? { intensityName: int.label, intensityDesc: int.desc } : {}),
         persona: n.persona,
         style: n.style,
         notes: n.notes,
@@ -443,7 +484,10 @@ export function userProfileSnapshot(settings, profile, { chatEntry } = {}) {
     });
 }
 
-/** 规整卡片上的画像快照；没有画像时返回 null */
+/**
+ * 规整卡片上的画像快照；没有画像时返回 null。
+ * 自定义尺度：快照上带着名称和说明（intensityName / intensityDesc）才算数，否则按默认尺度；内置尺度的快照没有这两项（与以前一样）。
+ */
 export function normalizeCardUserProfile(raw) {
     if (!isObj(raw)) return null;
     const n = normalizeUserProfile({ ...raw, orientations: [] }, { fallbackName: '用户画像' });
@@ -454,12 +498,14 @@ export function normalizeCardUserProfile(raw) {
         orientations.push({ id: String(isObj(o) ? o.id ?? '' : ''), name });
         if (orientations.length >= USER_PROFILE_LIMITS.orientations) break;
     }
+    const custom = snapshotCustomIntensity({ ...raw, intensity: n.intensity });
     return {
         id: String(raw.id ?? ''),
         name: n.name,
         likes: n.likes,
         dislikes: n.dislikes,
-        intensity: n.intensity,
+        intensity: custom ? custom.id : CUSTOM_INTENSITY_RE.test(n.intensity) ? USER_PROFILE_DEFAULT_INTENSITY : n.intensity,
+        ...(custom ? { intensityName: custom.name, intensityDesc: custom.desc } : {}),
         persona: n.persona,
         style: n.style,
         notes: n.notes,
@@ -503,7 +549,7 @@ export function userProfilePromptBlock(profile, { orientation = false, orientati
     if (p.likes.length) lines.push(`- 喜欢的元素：${listText(p.likes)}。挑和这个角色、${original ? '这个设定' : '这本书'}相称的，自然融入角色的外貌、服饰、性格、习惯、场景、开场白和示例对话（比如变成角色的穿着习惯、小动作、口头禅，或两人相处的契机）；不要生硬罗列，也不要每句话都提，不必每一样都用上。`);
     if (dislikes.length) lines.push(`- 雷点（一律避免）：${listText(dislikes)}。卡片的任何字段都不出现这些内容，连暗示、伏笔和可能的发展方向都不要留。`);
     if (overridden.length) lines.push(`- 雷点里的「${overridden[0]}」就是本次「卡的导向」：这张卡以卡的导向为准，这一项雷点不适用。`);
-    lines.push(`- 尺度：${intensityInfo(p.intensity).card}`);
+    lines.push(`- 尺度：${profileIntensityInfo(p).card}`);
     // 叙事偏好跟着这张卡选的画像走，「文风」是整个项目的（常常是从原著提取的）：视角和写法冲突时以这里为准
     if (p.style) lines.push(`- 叙事偏好：${p.style}。开场白、备选开场白和示例对话按这个写；与「文风」一节的视角或写法冲突时以这里为准，「文风」里其余的要求照常执行。用第二人称“你”时只写“你”看到、听到、感觉到的，仍不替“你”说话、行动或做决定。`);
     if (preferred.length) {
@@ -532,7 +578,8 @@ export function userProfileStatusText(profile, { orientationName = '' } = {}) {
     const lines = ['# 用户偏好', '这张卡是为一位口味明确的用户写的，变量设计可以照顾 TA 的偏好：'];
     if (p.likes.length) lines.push(`- 喜欢的元素：${listText(p.likes)}。其中能在扮演中变化、值得追踪的，可以做成变量或记录里的字段（例如 足控、丝袜 → 服饰里的袜子和鞋子；制服 → 当前着装；支配、臣服 → 主导权或服从度）；和这张卡无关的不用硬加，也不要为了凑偏好超出变量上限。`);
     if (dislikes.length) lines.push(`- 雷点（一律避免）：${listText(dislikes)}。不设计与这些内容有关的变量，desc 和 check 里也不要出现。`);
-    lines.push(`- 尺度：${intensityInfo(p.intensity).label}。变量名、desc 和 check 都不超出这个尺度。`);
+    // 内置尺度只写名字；自定义尺度连说明一起写（名字可能是自己起的简称，光看名字说不清）
+    lines.push(`- 尺度：${profileIntensityInfo(p).status}。变量名、desc 和 check 都不超出这个尺度。`);
     lines.push('- 所有涉及恋爱或亲密内容的人物（包括 {{user}}）都是成年人（18 岁以上）。');
     return lines.join('\n');
 }
@@ -567,7 +614,7 @@ export function userProfileEntryContent(profile, { orientationName = '' } = {}) 
         `【${USER_PROFILE_ENTRY_TITLE}】`,
         p.likes.length ? `聊天时照顾 {{user}} 的偏好：${listText(p.likes)}。在合适的时候自然地带出来（角色的穿着、小动作、对话和场景），不要每次回复都提，也不要生硬堆砌。` : '',
         dislikes.length ? `绝对避免：${listText(dislikes)}。不写这些内容，也不把剧情往这些方向引。` : '',
-        `尺度：${intensityInfo(p.intensity).chat}`,
+        `尺度：${profileIntensityInfo(p).chat}`,
         p.style ? `叙事偏好：${p.style}。` : '',
         '所有涉及恋爱或亲密内容的人物（包括 {{user}}）都是成年人。',
     ].filter(Boolean).join('\n');
@@ -597,16 +644,16 @@ export function userProfileEntry(card) {
 /**
  * 一行摘要（写卡表单、画像列表、编辑框里显示）：喜欢 / 雷点 / 尺度 / 叙事。
  * @param {object|null} profile 设置里的画像或快照
- * @param {{max?: number}} opt max：每类最多列几个标签
+ * @param {{max?: number, settings?: object|null}} opt max：每类最多列几个标签；settings：解析设置里画像的自定义尺度（快照自带名称，不需要）
  */
-export function userProfileSummary(profile, { max = 4 } = {}) {
+export function userProfileSummary(profile, { max = 4, settings = null } = {}) {
     if (!profile) return '';
     const p = normalizeUserProfile(profile);
     const few = (tags) => (tags.length > max ? `${tags.slice(0, max).join('、')} 等 ${tags.length} 项` : tags.join('、'));
     return [
         p.likes.length ? `喜欢 ${few(p.likes)}` : '',
         p.dislikes.length ? `雷点 ${few(p.dislikes)}` : '',
-        `尺度 ${intensityInfo(p.intensity).label}`,
+        `尺度 ${profileIntensityInfo(profile, settings).label}`,
         p.style ? `叙事 ${p.style.length > 16 ? `${p.style.slice(0, 16)}…` : p.style}` : '',
     ].filter(Boolean).join(' · ');
 }

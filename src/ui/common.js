@@ -135,13 +135,18 @@ export async function confirmDialog(message, { title = '确认', okLabel = '确�
     return !!value;
 }
 
-export async function promptDialog(message, defaultValue = '', { title = '输入', multiline = false, placeholder = '' } = {}) {
+let promptSeq = 0;
+
+/** 输入一段文字的对话框；maxlength：最多几个字（输入框直接限制，不悄悄截掉）。说明文字和输入框关联（读屏念得出问的是什么） */
+export async function promptDialog(message, defaultValue = '', { title = '输入', multiline = false, placeholder = '', maxlength = 0 } = {}) {
+    const id = `nl-prompt-${++promptSeq}`;
+    const max = maxlength > 0 ? ` maxlength="${maxlength}"` : '';
     const input = multiline
-        ? `<textarea class="nl-input nl-textarea" rows="6" placeholder="${esc(placeholder)}">${esc(defaultValue)}</textarea>`
-        : `<input class="nl-input" type="text" value="${esc(defaultValue)}" placeholder="${esc(placeholder)}">`;
+        ? `<textarea class="nl-input nl-textarea" id="${id}" rows="6"${max} placeholder="${esc(placeholder)}">${esc(defaultValue)}</textarea>`
+        : `<input class="nl-input" id="${id}" type="text"${max} value="${esc(defaultValue)}" placeholder="${esc(placeholder)}">`;
     const { value, root } = await openDialog({
         title,
-        body: `<div class="nl-field"><label>${esc(message)}</label>${input}</div>`,
+        body: `<div class="nl-field"><label for="${id}">${esc(message)}</label>${input}</div>`,
         buttons: [{ label: '取消', value: null }, { label: '确定', value: 'ok', primary: true }],
         onMount: (b, close) => {
             const el = b.querySelector('input');

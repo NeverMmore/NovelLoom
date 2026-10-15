@@ -2,7 +2,7 @@
 
 export const MODULE = 'novel_loom';
 export const PREFIX = 'nl';
-export const VERSION = '0.16.0';
+export const VERSION = '0.17.0';
 export const DB_NAME = 'NovelLoomDB';
 export const DB_VERSION = 1;
 
@@ -263,4 +263,10 @@ export const DEFAULT_SETTINGS = {
     orientationTemplates: [], // [{id:'otpl_…', name, brief, cardGuide, entry, depth, role, order, createdAt, updatedAt}]
     /** 用户画像：保存在扩展设置里，跨项目共享；最多一个默认（见 userprofile.js） */
     userProfiles: [], // [{id:'uprof_…', name, isDefault, orientations, likes, dislikes, intensity, persona, style, notes, chatEntry, createdAt, updatedAt}]
+    /**
+     * 用户画像的常用库：每一项的自定义选项，所有画像共用（见 profilelib.js）。内置的分组、标签、尺度、建议不存这里，读的时候合并。
+     * groups：内置分组 {id, tags（加进去的自定义标签）, hidden（隐藏的内置标签）} / 自定义分组 {id:'ugrp_…', name, target:'likes'|'dislikes', tags}；
+     * intensities：自定义尺度 [{id:'uint_…', name, desc}]；style：叙事偏好的建议 {tags, hidden}；snippets：常用文字 [{id:'usnip_…', field:'persona'|'notes', name, text}]
+     */
+    profileLibrary: { groups: [], intensities: [], style: { tags: [], hidden: [] }, snippets: [] },
 };

@@ -6,6 +6,7 @@ import { mergeOrientationTemplates } from './orientation.js';
 import { buildOutlineText, characterProfileText, getVolumes, mergeEntry, normalizeProject } from './project.js';
 import { PORTRAIT_STORE_MODES } from './statusbar-portraits.js';
 import { templatePortraits } from './statusbar-templates.js';
+import { mergeProfileLibrary } from './profilelib.js';
 import { mergeUserProfiles } from './userprofile.js';
 import { buildWorldbookEntries, parseExternalWorld, toSTWorld } from './worldbook.js';
 import { downloadFile, safeFileName, structuredCloneSafe, uid } from './utils.js';
@@ -103,8 +104,14 @@ export function applyConfig(settings, json) {
     }
     // 卡的导向·我的模板：同样按 id 合并，逐个规整（内置模板的 id 跳过）
     if (Array.isArray(s.orientationTemplates)) mergeOrientationTemplates(settings, structuredCloneSafe(s.orientationTemplates));
+    // 用户画像的常用库（自定义标签与分组、隐藏的内置标签、自定义尺度、叙事偏好的建议、常用文字）：合并、不重复；
+    // 先合并库，得到自定义尺度的 id 对照，再合并画像
+    let intensityMap = null;
+    if (s.profileLibrary && typeof s.profileLibrary === 'object' && !Array.isArray(s.profileLibrary)) {
+        intensityMap = mergeProfileLibrary(settings, structuredCloneSafe(s.profileLibrary), { hidden: true, byId: true }).intensityMap;
+    }
     // 用户画像：按 id 合并、逐个规整；导入的配置里有默认画像时以导入的为准，最多一个默认
-    if (Array.isArray(s.userProfiles)) mergeUserProfiles(settings, structuredCloneSafe(s.userProfiles));
+    if (Array.isArray(s.userProfiles)) mergeUserProfiles(settings, structuredCloneSafe(s.userProfiles), { intensityMap });
     settings.chatgen.isRunning = false;
     return { warnings };
 }

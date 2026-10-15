@@ -61,13 +61,35 @@ function mineDetailHtml(t) {
         <div class="nl-row"><button class="nl-btn nl-primary" data-ot-act="save">保存</button><span class="nl-muted nl-small" data-ot-saved hidden>${icon('check', { size: 12 })} 已保存</span></div>`;
 }
 
+/** 新建一个「我的模板」（对话框里的「新建」和打开时就新建共用） */
+function createTemplate() {
+    const created = addOrientationTemplate(app.settings, { name: uniqueOrientationName(app.settings, '我的导向'), brief: '', cardGuide: '', entry: '【剧情导向：我的导向】\n- ' });
+    app.saveSettings();
+    return created;
+}
+
+/** 模板里用户能改的内容（判断新建的模板有没有改过） */
+const TEMPLATE_FIELDS = ['name', 'brief', 'cardGuide', 'entry', 'depth', 'role', 'order'];
+const templateContent = (t) => (t ? JSON.stringify(TEMPLATE_FIELDS.map((k) => t[k])) : '');
+
 /**
  * 打开导向模板管理。关闭后返回（调用方据此刷新下拉框）。
- * @param {{select?: string}} opt select：打开时选中的模板 id
+ * @param {{select?: string, create?: boolean}} opt select：打开时选中的模板 id；
+ *   create：打开时就新建一个我的模板并选中它（用户画像页的「新建导向」）；关闭时这个模板一点没改过（直接关掉）就删掉，
+ *   不留下空模板
+ * @returns {Promise<{createdId: string}>} createdId：create 时新建的模板 id（关闭时已经被删掉、或者没改过被丢掉的话为 ''）
  */
-export async function openOrientationTemplatesDialog({ select = '' } = {}) {
+export async function openOrientationTemplatesDialog({ select = '', create = false } = {}) {
     const box = document.createElement('div');
     let selected = select;
+    let createdId = '';
+    /** create 时新建模板的原始内容：关闭时还是这样就丢掉 */
+    let pristine = '';
+    if (create) {
+        createdId = createTemplate().id;
+        selected = createdId;
+        pristine = templateContent(getOrientationTemplate(app.settings, createdId));
+    }
 
     const render = () => {
         const list = listOrientationTemplates(app.settings);
@@ -145,11 +167,8 @@ export async function openOrientationTemplatesDialog({ select = '' } = {}) {
         const t = getOrientationTemplate(app.settings, selected);
         try {
             switch (btn.dataset.otAct) {
-                case 'new': {
-                    const created = addOrientationTemplate(app.settings, { name: uniqueOrientationName(app.settings, '我的导向'), brief: '', cardGuide: '', entry: '【剧情导向：我的导向】\n- ' });
-                    app.saveSettings();
-                    return selectId(created.id, '[data-ot-f="name"]');
-                }
+                case 'new':
+                    return selectId(createTemplate().id, '[data-ot-f="name"]');
                 case 'import': {
                     const file = await pickFile('.json,application/json');
                     if (!file) return undefined;
@@ -241,4 +260,15 @@ export async function openOrientationTemplatesDialog({ select = '' } = {}) {
             } catch { /* ignore */ }
         }
     }
+    if (createdId) {
+        const t = getOrientationTemplate(app.settings, createdId);
+        if (!t) createdId = '';
+        else if (templateContent(t) === pristine) {
+            // 点了「新建导向」又直接关掉（什么都没改）：当作取消，不留下空模板
+            removeOrientationTemplate(app.settings, createdId);
+            app.saveSettings();
+            createdId = '';
+        }
+    }
+    return { createdId };
 }

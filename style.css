@@ -817,14 +817,16 @@ h4.nl-role-system, h4.nl-role-user, h4.nl-role-assistant { display: flex; align-
     display: inline-flex;
     align-items: center;
     gap: 2px;
-    height: 24px;
+    min-height: 24px;
+    max-width: 100%;
     padding: 0 2px 0 9px;
-    border-radius: 999px;
+    border-radius: 12px;
     background: var(--nl-surface-2);
     color: var(--nl-text);
     font-size: var(--nl-fs-sm);
-    white-space: nowrap;
 }
+/* 标签文字：一般一行；旧版自由填写的叙事偏好可能是一整句，换行显示，不撑破窄屏 */
+.nl-up-chip-t { min-width: 0; overflow-wrap: anywhere; line-height: 1.4; }
 .nl-up-chip-x {
     display: inline-flex;
     align-items: center;
@@ -866,10 +868,90 @@ h4.nl-role-system, h4.nl-role-user, h4.nl-role-assistant { display: flex; align-
 .nl-up-row-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 「管理用户画像」对话框：顶部的新建 / 导入 / 导出全部 */
 .nl-up-tools { margin-bottom: var(--nl-s2); }
+/* 常用库（每一项都可以添加自定义的并保存）：
+   自定义的项（标签、分组名、尺度、我的导向模板）文字后面一个淡淡的小圆点，和内置的区分开（不用虚线——虚线表示「在另一类里」）；
+   「添加」「新建导向」「自定义尺度」是行内操作（强调色文字、没有边框）；「编辑常用标签」等是行内链接；
+   编辑常用标签时建议区变成描边的分组框（8px 圆角、不填底色），标签带 ×：自定义的删掉、内置的隐藏（「恢复默认」放回来） */
+.nl-up-dot { display: inline-block; flex-shrink: 0; width: 4px; height: 4px; margin-left: 4px; border-radius: 50%; background: currentColor; opacity: 0.55; vertical-align: 0.2em; }
+.nl-seg-btn > .nl-up-dot { margin-left: -2px; }
+.nl-up-chip > .nl-up-dot { margin: 0 2px; }
+.nl-up-add {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    height: 24px;
+    padding: 0 8px;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--nl-accent-ink);
+    cursor: pointer;
+    font: inherit;
+    font-size: var(--nl-fs-xs);
+    font-weight: 500;
+    white-space: nowrap;
+    transition: background-color 0.12s var(--nl-ease);
+}
+.nl-up-add:hover { background: var(--nl-hover); }
+.nl-seg > .nl-up-add { height: 28px; }
+.nl-up-link {
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--nl-accent-ink);
+    cursor: pointer;
+    font: inherit;
+    font-size: var(--nl-fs-xs);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-color: var(--nl-accent-line);
+    white-space: nowrap;
+}
+.nl-up-link:hover { text-decoration-color: currentColor; }
+.nl-up-link.nl-up-link-danger { color: var(--nl-err); text-decoration-color: color-mix(in srgb, var(--nl-err) 45%, transparent); }
+.nl-up-meta,
+.nl-up-unsaved { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--nl-s3); }
+/* 说明文字按整句的宽度排：一行放不下说明 + 「编辑常用标签」时，链接整个换到下一行，说明不会被挤得只剩一两个字落在第二行 */
+.nl-up-meta > .nl-grow { flex: 1 1 auto; }
+/* 「添加」存不进去的原因：分组里单独一行 */
+.nl-up-lib-note { flex-basis: 100%; }
+.nl-up-sugg.nl-up-editing { padding: var(--nl-s2) var(--nl-s3); border: 1px solid var(--nl-line); border-radius: var(--nl-r); }
+.nl-up-sugg-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--nl-s1) var(--nl-s3); margin-top: 2px; }
+.nl-up-group-acts { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px var(--nl-s3); min-height: 24px; margin-left: 2px; padding-left: var(--nl-s2); border-left: 1px solid var(--nl-line); }
+.nl-up-lib-input {
+    width: 9em;
+    max-width: 100%;
+    height: 24px;
+    padding: 0 9px;
+    border: 1px solid var(--nl-accent-line);
+    border-radius: 999px;
+    outline: none;
+    background: var(--nl-field);
+    box-shadow: var(--nl-ring);
+    color: var(--nl-text);
+    font: inherit;
+    font-size: var(--nl-fs-xs);
+}
+.nl-up-lib-input::placeholder { color: var(--nl-text-3); opacity: 1; }
+/* 自定义尺度的管理列表、常用文字的列表：描边分组框里的行（细线隔开） */
+.nl-up-int-list { padding: 0 var(--nl-s3); border: 1px solid var(--nl-line); border-radius: var(--nl-r); }
+.nl-up-int-row,
+.nl-up-snip-row { display: flex; align-items: center; gap: var(--nl-s2); padding: var(--nl-s2) 0; }
+.nl-up-int-row + .nl-up-int-row,
+.nl-up-snip-row + .nl-up-snip-row { border-top: 1px solid var(--nl-line); }
+.nl-up-int-row .nl-small { overflow-wrap: anywhere; }
+.nl-up-snip-list { margin-top: var(--nl-s2); }
+.nl-up-snip-acts { flex-shrink: 0; gap: var(--nl-s1); }
+.nl-up-snip-bar { display: flex; flex-wrap: wrap; gap: var(--nl-s1) var(--nl-s3); }
+.nl-up-fieldset { min-width: 0; margin: var(--nl-s2) 0; padding: 0; border: none; }
+.nl-up-fieldset > legend { margin-bottom: 6px; padding: 0; font-size: var(--nl-fs-sm); font-weight: 500; color: var(--nl-text-2); }
+.nl-up-fieldset label:has(> input[type="radio"]) { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 @media (max-width: 800px) {
     .nl-up-sugg-group { flex-direction: column; gap: 4px; }
     .nl-up-sugg-name { flex: none; padding-top: 0; }
     .nl-up-default { justify-content: flex-start; }
+    .nl-up-snip-row { flex-wrap: wrap; }
+    .nl-up-snip-text { flex-basis: 100%; }
 }
 /* 项目页「新建原创项目」：窄屏时按钮换到下一行，项目名输入框不被挤得看不全提示文字 */
 .nl-orig-new > .nl-input { flex: 1 1 18em; }
