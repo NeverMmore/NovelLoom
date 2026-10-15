@@ -244,6 +244,22 @@ export function emptyState(text, action = '', { title = '', ico = '' } = {}) {
     return `<div class="nl-empty">${ico ? icon(ico, { size: 28 }) : ''}${title ? `<div class="nl-empty-title">${esc(title)}</div>` : ''}<div>${esc(text)}</div>${action}</div>`;
 }
 
+/**
+ * 没有原文的项目（原创项目，或分段被全部删掉的项目）在「分段」「提取」页显示的空状态：
+ * 去「角色卡」原创写卡，或在「角色」「世界书」里手动添加资料（按钮用 data-goto，由页面跳转）。
+ * @param {object} project
+ * @param {string} ico 图标（页面自己的）
+ */
+export function noSourceEmptyHtml(project, ico = 'chunks') {
+    const who = project?.original ? '原创项目' : '这个项目';
+    const actions = `<div class="nl-row nl-wrap nl-empty-actions">
+        <button class="nl-btn nl-primary" data-goto="cards">${icon('cards', { size: 14 })}去原创写卡</button>
+        <button class="nl-btn" data-goto="characters">${icon('characters', { size: 14 })}角色</button>
+        <button class="nl-btn" data-goto="worldbook">${icon('worldbook', { size: 14 })}世界书</button>
+    </div>`;
+    return `<section class="nl-card">${emptyState(`${who}没有原文，可以直接去「角色卡」原创写卡，或在「角色」「世界书」里手动添加资料。`, actions, { title: '没有原文', ico })}</section>`;
+}
+
 const ROLE_LABEL = { system: '系统', user: '用户', assistant: 'AI' };
 
 /** 按消息链渲染提示词预览 */

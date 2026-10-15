@@ -230,7 +230,7 @@
 /* 日志 */
 .nl-logbar { border-top: 1px solid var(--nl-line); font-size: var(--nl-fs-xs); background: var(--nl-surface-1); }
 .nl-logbar-head { display: flex; align-items: center; gap: var(--nl-s2); height: 36px; padding: 0 var(--nl-s3) 0 var(--nl-s6); }
-.nl-logbar-head > b { font-weight: 600; color: var(--nl-text-2); display: inline-flex; align-items: center; gap: 6px; }
+.nl-logbar-head > b { font-weight: 600; color: var(--nl-text-2); display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; white-space: nowrap; }
 .nl-log-last { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 auto; color: var(--nl-text-2); }
 .nl-log {
     max-height: 200px;
@@ -373,6 +373,8 @@
 }
 .nl-empty > .nl-ico { color: var(--nl-text-3); }
 .nl-empty-title { font-size: var(--nl-fs-md); font-weight: 600; color: var(--nl-text); }
+/* 空状态里有几个去处时（原创项目的「分段」「提取」页）：按钮居中排一行，窄屏换行 */
+.nl-empty-actions { justify-content: center; }
 
 /* ---------------- 控件 ---------------- */
 .nl-input {
@@ -549,8 +551,9 @@ input.nl-input[list]::-webkit-calendar-picker-indicator {
     font-size: var(--nl-fs-sm);
     transition: background-color 0.12s var(--nl-ease), color 0.12s var(--nl-ease);
 }
-.nl-seg-btn:hover { background: var(--nl-hover); color: var(--nl-text); }
+.nl-seg-btn:hover:not(:disabled) { background: var(--nl-hover); color: var(--nl-text); }
 .nl-seg-btn.active { background: var(--nl-accent-soft); border-color: var(--nl-accent-line); color: var(--nl-text); font-weight: 500; }
+.nl-seg-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .nl-spin {
     display: inline-block;
@@ -792,6 +795,84 @@ h4.nl-role-system, h4.nl-role-user, h4.nl-role-assistant { display: flex; align-
 .nl-orient-edit .nl-field { margin: var(--nl-s1) 0 0; }
 .nl-orient-edit-title { font-size: var(--nl-fs-sm); font-weight: 600; color: var(--nl-ink); }
 .nl-orient-edit .nl-row > .nl-input { min-width: 10em; }
+/* 用户画像：标签输入框（已选标签 + 输入，外观同输入框）、分组的建议标签（小号分段按钮）、写卡表单里「按画像选导向」 */
+.nl-up-tagbox {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 3px 6px;
+    border: 1px solid var(--nl-line-strong);
+    border-radius: var(--nl-r-sm);
+    background: var(--nl-field);
+    cursor: text;
+    transition: border-color 0.12s var(--nl-ease), box-shadow 0.12s var(--nl-ease);
+}
+.nl-up-tagbox:hover:not(:focus-within) { border-color: color-mix(in srgb, var(--nl-ink) 30%, transparent); }
+/* 标签已满、输入框停用时不再显示文字光标（点空白处也不会聚焦） */
+.nl-up-tagbox:has(.nl-up-tag-input:disabled) { cursor: default; }
+.nl-up-tagbox:focus-within { border-color: var(--nl-accent-line); box-shadow: var(--nl-ring); }
+.nl-up-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    height: 24px;
+    padding: 0 2px 0 9px;
+    border-radius: 999px;
+    background: var(--nl-surface-2);
+    color: var(--nl-text);
+    font-size: var(--nl-fs-sm);
+    white-space: nowrap;
+}
+.nl-up-chip-x {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--nl-text-2);
+    cursor: pointer;
+}
+.nl-up-chip-x:hover { background: var(--nl-pressed); color: var(--nl-text); }
+.nl-up-tag-input {
+    flex: 1 1 8em;
+    min-width: 6em;
+    height: 24px;
+    padding: 0 4px;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--nl-text);
+    font: inherit;
+    font-size: var(--nl-fs);
+}
+.nl-up-tag-input::placeholder { color: var(--nl-text-3); opacity: 1; }
+.nl-up-sugg { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+.nl-up-sugg-group { display: flex; align-items: flex-start; gap: var(--nl-s2); }
+.nl-up-sugg-name { flex: 0 0 5.5em; padding-top: 3px; font-size: var(--nl-fs-xs); color: var(--nl-text-3); }
+.nl-up-sugg-list { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.nl-up-sugg-btn.nl-seg-btn,
+.nl-up-pick.nl-seg-btn { height: 24px; padding: 0 9px; font-size: var(--nl-fs-xs); }
+/* 已经在另一类（喜欢 / 雷点）里的建议、同时又在雷点里的偏好导向：虚线边框、文字变淡 */
+.nl-seg-btn.nl-up-in-other { border-style: dashed; color: var(--nl-text-3); }
+.nl-up-default { justify-content: flex-end; }
+.nl-up-default .nl-check-line { min-height: 32px; }
+.nl-up-picks { display: flex; flex-wrap: wrap; gap: 4px; }
+.nl-up-row-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 「管理用户画像」对话框：顶部的新建 / 导入 / 导出全部 */
+.nl-up-tools { margin-bottom: var(--nl-s2); }
+@media (max-width: 800px) {
+    .nl-up-sugg-group { flex-direction: column; gap: 4px; }
+    .nl-up-sugg-name { flex: none; padding-top: 0; }
+    .nl-up-default { justify-content: flex-start; }
+}
+/* 项目页「新建原创项目」：窄屏时按钮换到下一行，项目名输入框不被挤得看不全提示文字 */
+.nl-orig-new > .nl-input { flex: 1 1 18em; }
 /* 编辑框顶部：名称与绑定世界书名称在窄屏换行，不挤成一两个字宽 */
 .nl-card-edit-head > .nl-field.nl-grow { flex: 1 1 12em; }
 .nl-lint { font-size: var(--nl-fs-sm); padding: 2px 0; }

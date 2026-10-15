@@ -23,6 +23,7 @@ import {
 import { createSnapshot, saveProject } from '../store.js';
 import { buildStorySummary, buildVolumeSummary, findReplace } from '../tools.js';
 import { getVolumes, volumeRangeLabel } from '../project.js';
+import { projectHasSource } from '../original.js';
 import { isAbortError, truncate, uniq } from '../utils.js';
 import { busy, chainPreviewHtml, confirmDialog, emptyState, esc, icon, openDialog, optionList, qs, rerollBtn } from './common.js';
 import { PROJECT_STYLE_ID, STYLE_TASKS, listStyleChoices, parseBanned, resolveStyleId } from '../style.js';
@@ -215,7 +216,9 @@ function styleSummary(p) {
     const name = (id) => listStyleChoices(p, app.settings).find((c) => c.id === id)?.name || id;
     const parts = [];
     const own = [s.perspective, s.tone, s.mood].filter(Boolean).join('；');
-    parts.push(own ? `原著：${own}` : '原著文风尚未提取');
+    // 没有原文的项目（原创项目）谈不上“原著文风”：填过就是项目文风，没填说没有原文
+    if (projectHasSource(p)) parts.push(own ? `原著：${own}` : '原著文风尚未提取');
+    else parts.push(own ? `项目文风：${own}` : '没有原文，项目文风还没有填（可以在「文风」页手写）');
     if (s.samples?.length) parts.push(`范文 ${s.samples.length} 段`);
     const nb = parseBanned(s.banned).length;
     if (nb) parts.push(`禁用词 ${nb} 个`);
@@ -230,13 +233,15 @@ export const outlineTab = {
             const p = app.project;
             const withOutline = p.chunks.filter((c) => c.outline?.length || c.important?.length);
             const vols = getVolumes(p).filter((v) => !v.implicit);
+            // 没有原文、也没有章节概要（原创项目）：AI 没东西可总结，不给「AI 生成梗概」，引导手写或去原创写卡
+            const noSrc = !projectHasSource(p) && !withOutline.length;
             el.innerHTML = `
             <section class="nl-card">
                 <div class="nl-card-head">
                     <div><h3>故事梗概</h3></div>
-                    ${rerollBtn('summary', '', { label: p.outline.summary ? '重新生成梗概' : 'AI 生成梗概', title: '重新生成故事梗概' })}
+                    ${noSrc ? '' : rerollBtn('summary', '', { label: p.outline.summary ? '重新生成梗概' : 'AI 生成梗概', title: '重新生成故事梗概' })}
                 </div>
-                <textarea class="nl-input nl-textarea" rows="6" data-f="summary" placeholder="提取完成后可让 AI 根据章节概要生成；也可以手写。会用于角色卡、续写与“剧情大纲”世界书条目。">${esc(p.outline.summary)}</textarea>
+                <textarea class="nl-input nl-textarea" rows="6" data-f="summary" placeholder="${noSrc ? '这个项目没有原文，可以在这里手写故事梗概；会用于角色卡、续写与“剧情大纲”世界书条目。' : '提取完成后可让 AI 根据章节概要生成；也可以手写。会用于角色卡、续写与“剧情大纲”世界书条目。'}">${esc(p.outline.summary)}</textarea>
             </section>
 
             ${vols.length ? `
@@ -295,7 +300,9 @@ export const outlineTab = {
                         <div class="nl-row"><b>#${c.index + 1} ${esc(c.title)}</b><span class="nl-spacer"></span><button class="nl-btn nl-sm" data-act="edit-outline" data-i="${c.index}">编辑</button></div>
                         ${(c.outline || []).map((o) => `<div class="nl-small">${o.name ? `<b>${esc(o.name)}</b>：` : ''}${esc(o.notes)}</div>`).join('')}
                         ${(c.important || []).map((imp) => `<div class="nl-small nl-important">${icon('pin', { size: 14, label: '重要章节' })} ${esc(imp.chapter || '')} ${esc(imp.reason)}${(imp.quotes || []).map((q) => `<blockquote>「${esc(q.text)}」</blockquote>`).join('')}</div>`).join('')}
-                    </div>`).join('') || emptyState('提取后每段的章节概要和重要章节会列在这里（在提取设置中开启“章节概要与重要章节”）。', '', { title: '还没有章节概要', ico: 'outline' })}
+                    </div>`).join('') || (noSrc
+                        ? emptyState('这个项目没有原文，所以没有章节概要。可以在上面手写故事梗概，或去「角色卡」按你的设定原创写卡。', '<button class="nl-btn nl-sm" data-act="goto-cards">去原创写卡</button>', { title: '没有章节概要', ico: 'outline' })
+                        : emptyState('提取后每段的章节概要和重要章节会列在这里（在提取设置中开启“章节概要与重要章节”）。', '', { title: '还没有章节概要', ico: 'outline' }))}
                 </div>
             </section>`;
             // 页面级操作：整份大纲 / 全部角色档案的导出（页面已被切走时不再改动标题栏）
@@ -540,6 +547,8 @@ export const outlineTab = {
                 }
                 case 'goto-style':
                     return switchTab('style');
+                case 'goto-cards':
+                    return switchTab('cards');
                 case 'summary':
                     await busy(btn, async () => {
                         await buildStorySummary(p, app.settings);

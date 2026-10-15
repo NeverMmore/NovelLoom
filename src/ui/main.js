@@ -11,6 +11,7 @@ import { worldbookTab } from './tab-worldbook.js';
 import { outlineTab } from './tab-outline.js';
 import { styleTab } from './tab-style.js';
 import { relationsTab } from './tab-relations.js';
+import { profilesTab } from './tab-profiles.js';
 import { cardsTab } from './tab-cards.js';
 import { continueTab } from './tab-continue.js';
 import { planTab } from './tab-plan.js';
@@ -19,6 +20,7 @@ import { settingsTab } from './tab-settings.js';
 import { icon } from './icons.js';
 import { pipelineState } from './pipeline.js';
 import { VERSION } from '../constants.js';
+import { listUserProfiles } from '../userprofile.js';
 
 /** 页面：按流程阶段分组；desc 显示在页面标题下，告诉新手这一页做什么 */
 const TABS = [
@@ -30,6 +32,7 @@ const TABS = [
     { id: 'worldbook', group: '整理', label: '世界书', icon: 'worldbook', mod: worldbookTab, needProject: true, desc: '编辑条目、查找替换、回退快照，一键写入酒馆。' },
     { id: 'outline', group: '整理', label: '大纲', icon: 'outline', mod: outlineTab, needProject: true, desc: '故事梗概、分卷梗概和每一章的概要。' },
     { id: 'style', group: '整理', label: '文风', icon: 'style', mod: styleTab, needProject: true, desc: '原著文风、范文与禁用词；按任务或视角角色选择文风。' },
+    { id: 'profiles', group: '生成', label: '用户画像', icon: 'profile', mod: profilesTab, needProject: false, desc: '保存你的口味：喜欢的元素、雷点、尺度和叙事偏好，写卡时选一个画像量身定制。' },
     { id: 'cards', group: '生成', label: '角色卡', icon: 'cards', mod: cardsTab, needProject: true, desc: '生成角色卡和群聊场景卡，审稿、试聊后写入酒馆。' },
     { id: 'plan', group: '续写', label: '写大纲', icon: 'plan', mod: planTab, needProject: true, desc: '按你的要求规划接下来的章节，续写时逐章使用。' },
     { id: 'foreshadow', group: '续写', label: '伏笔看板', icon: 'foreshadow', mod: foreshadowTab, needProject: true, desc: '汇总全书伏笔，追踪哪些埋下了、哪些已经回收。' },
@@ -37,8 +40,9 @@ const TABS = [
     { id: 'settings', group: '', label: '设置', icon: 'settings', mod: settingsTab, needProject: false, desc: 'API 连接、提示词、消息链与防截断。' },
 ];
 
-/** 侧栏各页右侧的数字：这一步做了多少 */
+/** 侧栏各页右侧的数字：这一步做了多少（用户画像存在扩展设置里，没打开项目也显示） */
 function navCount(id, p) {
+    if (id === 'profiles') return listUserProfiles(app.settings).length || '';
     if (!p) return '';
     switch (id) {
         case 'chunks': return p.chunks.length || '';
@@ -132,6 +136,8 @@ export async function openMain(tabId) {
     root.addEventListener('click', onRootClick);
     qs(root, '.nl-project-select').addEventListener('change', onProjectSelect);
     unsubs.push(app.events.on('log', appendLog));
+    // 页面改了侧栏数字依据的数据（如用户画像的个数）时立即刷新，不用等每秒一次的刷新
+    unsubs.push(app.events.on('nav', () => updateNav()));
     unsubs.push(app.events.on('project', () => {
         refreshProjectSelect();
         switchTab(currentTabId, true);
@@ -276,7 +282,11 @@ export function switchTab(id, force = false) {
     holder.replaceChildren(el);
     qs(root, '.nl-main').scrollTop = 0;
     if (tab.needProject && !app.project) {
-        el.innerHTML = `<div class="nl-empty">${icon(tab.icon, { size: 28 })}<div class="nl-empty-title">还没有打开项目</div><div>「${esc(tab.label)}」要用到一本已导入的小说。先在「项目」页导入 TXT，或打开已有项目。</div><button class="nl-btn nl-primary" data-goto="project">去项目页</button></div>`;
+        // 角色卡不需要小说（原创写卡）：只要有一个项目；分段、提取等页面才真的要导入的原文
+        const why = tab.id === 'cards'
+            ? '「角色卡」要先打开一个项目。没有小说也可以：在「项目」页「新建原创项目（不导入 TXT）」，直接按你的设定写卡；也可以导入 TXT，或打开已有项目。'
+            : `「${tab.label}」要先打开一个项目。先在「项目」页导入 TXT，或新建原创项目（不导入 TXT），或打开已有项目。`;
+        el.innerHTML = `<div class="nl-empty">${icon(tab.icon, { size: 28 })}<div class="nl-empty-title">还没有打开项目</div><div>${esc(why)}</div><button class="nl-btn nl-primary" data-goto="project">去项目页</button></div>`;
         el.querySelector('[data-goto]').addEventListener('click', () => switchTab('project'));
         current = null;
         return;

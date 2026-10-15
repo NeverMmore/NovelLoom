@@ -124,6 +124,8 @@ export const ORIENTATION_PROMPT_LINES = {
     head: '【卡的导向：{name}】{brief}',
     guide: '写卡要求：{cardGuide}',
     notes: '另外在 JSON 里输出字段 orientation_notes（字符串，3-6 行，每行以“- ”开头）：结合本书的人物与设定，写出这个导向在本书里的具体落点，例如谁是原伴侣或第三者、哪些角色可能倾心于 {{user}}、关键阻碍或冲突是什么。只写设定，不写剧情过程；会追加到世界书「剧情导向」词条的【本书落点】部分。',
+    // 原创写卡（没有原著）：落点结合这张卡的人物与设定
+    notesOriginal: '另外在 JSON 里输出字段 orientation_notes（字符串，3-6 行，每行以“- ”开头）：结合这张卡的人物与设定，写出这个导向的具体落点，例如谁是原伴侣或第三者、哪些角色可能倾心于 {{user}}、关键阻碍或冲突是什么。只写设定，不写剧情过程；会追加到世界书「剧情导向」词条的【本书落点】部分。',
 };
 
 /** 词条正文里【本书落点】的分隔 */
@@ -385,15 +387,16 @@ function fill(line, o) {
 /**
  * 写卡提示词里的导向段：导向名称与说明、写卡要求（有的话）、要求输出 orientation_notes（refine 开着时）。
  * @param {object|null} orientation 卡片快照或 orientationFromPick 的结果
- * @param {{askNotes?: boolean}} opt askNotes=false：不要求输出 orientation_notes（只作背景资料时）
+ * @param {{askNotes?: boolean, original?: boolean}} opt askNotes=false：不要求输出 orientation_notes（只作背景资料时）；
+ *   original：原创写卡（没有原著，落点结合这张卡的人物与设定）
  * @returns {string} 没有导向时为 ''
  */
-export function orientationPromptBlock(orientation, { askNotes = true } = {}) {
+export function orientationPromptBlock(orientation, { askNotes = true, original = false } = {}) {
     const o = normalizeCardOrientation(orientation);
     if (!o) return '';
     const lines = [fill(ORIENTATION_PROMPT_LINES.head, o)];
     if (o.cardGuide) lines.push(fill(ORIENTATION_PROMPT_LINES.guide, o));
-    if (askNotes && o.refine) lines.push(ORIENTATION_PROMPT_LINES.notes);
+    if (askNotes && o.refine) lines.push(original ? ORIENTATION_PROMPT_LINES.notesOriginal : ORIENTATION_PROMPT_LINES.notes);
     return lines.join('\n');
 }
 

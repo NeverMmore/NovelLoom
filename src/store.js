@@ -28,6 +28,8 @@ export function getSettings() {
     }
     // 「AI 推断名称」的选项：超出范围的数值、不认识的模式回到默认
     s.nameResolve = normalizeNameResolve(s.nameResolve);
+    // 用户画像：不是数组时回到空列表（画像本身在用的时候逐个规整，见 userprofile.js）
+    if (!Array.isArray(s.userProfiles)) s.userProfiles = [];
     return s;
 }
 
@@ -141,6 +143,9 @@ export async function listProjects() {
             chunkCount: p.chunks?.length || 0,
             doneCount: (p.chunks || []).filter((c) => c.status === 'done').length,
             characterCount: Object.keys(p.characters || {}).length,
+            cardCount: (p.cards || []).length,
+            // 原创项目（不导入 TXT）：项目列表里不显示「已提取 0/0 段」
+            original: !!p.original,
         }))
         .sort((a, b) => b.updatedAt - a.updatedAt);
 }

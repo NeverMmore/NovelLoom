@@ -6,7 +6,7 @@ import { getVolumes, projectStats, volumeOf } from '../project.js';
 import { API_MODES } from '../llm.js';
 import { createSnapshot } from '../store.js';
 import { formatDuration, formatNumber } from '../utils.js';
-import { bindSettings, busy, chainPreviewHtml, esc, icon, openDialog, optionList, qs } from './common.js';
+import { bindSettings, busy, chainPreviewHtml, esc, icon, noSourceEmptyHtml, openDialog, optionList, qs } from './common.js';
 
 const MODES = [
     { value: 'serial', label: '串行 · 滚动累积（最连贯，推荐）' },
@@ -38,6 +38,11 @@ export const extractTab = {
 
         const render = () => {
             const p = app.project;
+            // 原创项目（不导入 TXT）没有可提取的原文
+            if (!p.chunks.length) {
+                el.innerHTML = noSourceEmptyHtml(p, 'extract');
+                return;
+            }
             const st = projectStats(p);
             const start = app.pendingStartIndex;
             el.innerHTML = `

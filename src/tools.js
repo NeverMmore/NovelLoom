@@ -124,7 +124,8 @@ export async function expandCharacter(project, settings, name, { signal, nsfw = 
 
 export async function buildStorySummary(project, settings, { signal, uptoIndex = Infinity } = {}) {
     const outline = buildOutlineText(project, uptoIndex, 30000);
-    if (!outline) throw new Error('还没有章节概要，请先提取');
+    // 原创项目（没有任何分段）谈不上「先提取」：提示手写
+    if (!outline) throw new Error(project.chunks?.length ? '还没有章节概要，请先提取' : '这个项目没有原文，也就没有章节概要可以总结：可以直接手写故事梗概');
     const res = await callLLM({
         api: settings.api,
         system: getPrompt(settings, 'summarySystem'),

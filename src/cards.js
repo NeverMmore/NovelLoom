@@ -13,6 +13,11 @@ import {
 import { bannedRulesFor, styleTextFor } from './style.js';
 import { normalizeCardOrientation, orientationPromptBlock, parseOrientationNotes } from './orientation.js';
 import { normalizeUserRole, userRoleCharName, userRolePromptBlock } from './userrole.js';
+import { normalizeCardUserProfile, userProfileNotesLines, userProfilePromptBlock } from './userprofile.js';
+import {
+    ORIGINAL_SOURCE, isOriginalCard, normalizeCardOriginal, originalBackgroundText, originalDesignFields, originalDesignGuide, originalDesignJson, originalDesignView,
+    originalLoreCategories, originalPromptText, parseOriginalDesign,
+} from './original.js';
 import { truncate, uid, uniq } from './utils.js';
 import { toCharacterBook } from './worldbook.js';
 
@@ -141,16 +146,85 @@ export function cardPromptOpt(card) {
         greetings: card.data?.alternate_greetings?.length ?? 0,
         userRole: card.userRole || null,
         orientation: card.orientation || null,
+        userProfile: card.userProfile || null,
+        // 原创卡：按卡上的原创设定（已经设计好的人物和条目）写，不找原著资料
+        ...(isOriginalCard(card) ? { source: ORIGINAL_SOURCE, original: card.original || null } : {}),
     };
+}
+
+/** 没有指定文风时 styleTextFor 的默认文字说「保持前文风格」，原创卡没有前文：换一句 */
+function originalStyleText(project, settings) {
+    const t = styleTextFor(project, settings, 'card');
+    return /^（(?:未设置|不指定)文风，保持前文风格）$/.test(t) ? '（未指定文风：按设定和用户要求把握语气、节奏和对话写法）' : t;
+}
+
+/**
+ * 原创写卡的提示词（cardOriginal / cardOriginalSystem，见 original.js）：没有原著资料，按用户的原创设定写。
+ * opt.original 里还没有设计好的人物时（新写卡）要 AI 另外输出 character（单人卡）/ cast（世界卡）与 lore；
+ * 已经设计好时（整卡重新生成、单字段重roll、推演的背景资料）把定下的人物和世界设定放进提示词，只重写卡片字段。
+ * 「已经设计好」= 有设计好的人物或条目，或者已经存进了项目（AI 没给 cast 的世界卡也算：不能重新设计，否则存进项目的条目成了孤儿、
+ * 新设计又没存，写入时两套条目一起出现；要加主要角色就在「角色」页加）。
+ * 名字：用户定了就用；设计好了用设计的名字（世界卡用卡上的卡名）；都没有时由 AI 起名（charName 为 ''）。
+ */
+function buildOriginalCardPrompt(project, settings, opt) {
+    const isWorld = opt.kind === 'world';
+    const kind = isWorld ? 'world' : 'character';
+    const orig = normalizeCardOriginal(opt.original) || normalizeCardOriginal({});
+    const fixed = orig.characters.length > 0 || orig.lore.length > 0 || orig.saved;
+    const role = userRoleFor(project, opt);
+    const charName = isWorld ? String(opt.cardName ?? '').trim() || orig.name : fixed && orig.characters[0] ? orig.characters[0].name : orig.name;
+    const categories = originalLoreCategories(settings);
+    const greetings = Number.isFinite(opt.greetings) ? opt.greetings : settings.cards.greetings;
+    const orient = normalizeCardOrientation(opt.orientation);
+    const askNotes = !!orient && orient.refine && opt.askNotes !== false;
+    const orientationBlock = orientationPromptBlock(orient, { askNotes: opt.askNotes !== false, original: true });
+    const userRoleBlock = userRolePromptBlock(project, role, { world: isWorld, orientation: !!orientationBlock, original: true });
+    const userProfileBlock = userProfilePromptBlock(opt.userProfile, { orientation: !!orientationBlock, orientationName: orient?.name || '', userRoleKind: role.kind, original: true });
+    const designGuide = originalDesignGuide({ kind, fixed, name: charName, categories });
+    const designJson = originalDesignJson({ kind, fixed, categories });
+    const vars = {
+        BOOK: project.bookName,
+        CHAR_NAME: charName || (isWorld ? '卡名由你来起' : '名字由你来起'),
+        CARD_KIND: isWorld ? '世界/旁白卡' : '单人角色卡',
+        // 已经设计好时：名字是定下的（不再说「由你来起」），附上定下的人物和世界设定
+        ORIGINAL: originalPromptText(orig, { kind, view: fixed ? originalDesignView(project, orig) : null, name: charName, fixed }),
+        STYLE: originalStyleText(project, settings),
+        REQUIREMENT: [opt.requirement, settings.cards.defaultRequirement].filter(Boolean).join('\n')
+            || (role.kind === 'new' ? '（无特别要求，{{user}} 以符合设定的新身份出现）' : '（无特别要求）'),
+        USER_ROLE: userRoleBlock ? `\n${userRoleBlock}\n` : '',
+        ORIENTATION: orientationBlock ? `\n${orientationBlock}\n` : '',
+        USER_PROFILE: userProfileBlock ? `\n${userProfileBlock}\n` : '',
+        DESIGN_GUIDE: designGuide,
+        DESIGN_FIELDS: originalDesignFields({ kind, fixed }),
+        ORIENTATION_JSON: askNotes ? '\n  "orientation_notes": "- ……\\n- ……",' : '',
+        DESIGN_JSON: designJson,
+        GREETINGS: greetings,
+        FIRST_MES_LEN: opt.firstMesLen || '400-800 字',
+        WRITING_RULES,
+    };
+    const template = getPrompt(settings, 'cardOriginal');
+    let prompt = render(template, vars);
+    prompt = appendIfMissing(template, prompt, 'USER_ROLE', userRoleBlock);
+    prompt = appendIfMissing(template, prompt, 'ORIENTATION', orientationBlock);
+    prompt = appendIfMissing(template, prompt, 'USER_PROFILE', userProfileBlock);
+    // 用户改过的模板里没有设计要求 / 设计字段时照样追加：新写卡一定要拿到人物和条目
+    prompt = appendIfMissing(template, prompt, 'DESIGN_GUIDE', `# 设计要求\n${designGuide}`);
+    if (designJson) prompt = appendIfMissing(template, prompt, 'DESIGN_JSON', `# 另外输出\n在同一个 JSON 对象里另外输出这些字段：\n{${designJson.replace(/^,/, '')}\n}`);
+    if (isWorld) prompt = `${prompt}\n\n${render(getPrompt(settings, 'worldCardExtra'), vars)}`;
+    return { system: render(getPrompt(settings, 'cardOriginalSystem'), vars), prompt, charName, userRole: role, original: orig, fixed };
 }
 
 /**
  * 写卡提示词
- * @param {object} opt {kind, charName, cardName, timepoint, requirement, greetings, firstMesLen, userRole, orientation, askNotes}
+ * @param {object} opt {kind, charName, cardName, timepoint, requirement, greetings, firstMesLen, userRole, orientation, userProfile, askNotes, source, original}
  *   userRole：{{user}} 的身份（见 userrole.js）；orientation：卡的导向快照（见 orientation.js）；
- *   askNotes=false：导向段里不要求输出 orientation_notes（单字段重roll 等只把写卡提示词当背景资料时）
+ *   userProfile：用户画像快照（见 userprofile.js；没有时提示词与以前一字不差）；
+ *   askNotes=false：导向段里不要求输出 orientation_notes（单字段重roll 等只把写卡提示词当背景资料时）；
+ *   source='original'：原创写卡，original 是用户写的设定（或卡上的 card.original），见 buildOriginalCardPrompt
+ * @returns {{system: string, prompt: string, charName: string, userRole: object, original?: object, fixed?: boolean}}
  */
 export function buildCardPrompt(project, settings, opt) {
+    if (opt?.source === ORIGINAL_SOURCE) return buildOriginalCardPrompt(project, settings, opt);
     const upto = Number.isFinite(opt.timepoint) ? opt.timepoint : Infinity;
     const isWorld = opt.kind === 'world';
     const role = userRoleFor(project, opt);
@@ -190,6 +264,8 @@ export function buildCardPrompt(project, settings, opt) {
     const orientationBlock = orientationPromptBlock(orient, { askNotes: opt.askNotes !== false });
     // 同时选了导向时，「{{user}} 的身份」里两人现在的关系以导向为准（原著关系只作底子）
     const userRoleBlock = userRolePromptBlock(project, role, { upto, world: isWorld, orientation: !!orientationBlock });
+    // 用户画像：偏好的导向只作参考（选了卡的导向时以导向为准，与导向同名的雷点不适用）；{{user}} 的默认形象只在原创新身份时用
+    const userProfileBlock = userProfilePromptBlock(opt.userProfile, { orientation: !!orientationBlock, orientationName: orient?.name || '', userRoleKind: role.kind });
     const vars = {
         BOOK: project.bookName,
         CHAR_NAME: charName,
@@ -202,9 +278,10 @@ export function buildCardPrompt(project, settings, opt) {
         STYLE: styleTextFor(project, settings, 'card'),
         REQUIREMENT: [opt.requirement, settings.cards.defaultRequirement].filter(Boolean).join('\n')
             || (role.kind === 'new' ? '（无特别要求，{{user}} 以原著中可自然融入的新身份出现）' : '（无特别要求）'),
-        // 前后各带一个换行：模板里写成「{REQUIREMENT}\n{USER_ROLE}{ORIENTATION}\n# 字段写法」，没有内容时与原来的空行一致
+        // 前后各带一个换行：模板里写成「{REQUIREMENT}\n{USER_ROLE}{ORIENTATION}{USER_PROFILE}\n# 字段写法」，没有内容时与原来的空行一致
         USER_ROLE: userRoleBlock ? `\n${userRoleBlock}\n` : '',
         ORIENTATION: orientationBlock ? `\n${orientationBlock}\n` : '',
+        USER_PROFILE: userProfileBlock ? `\n${userProfileBlock}\n` : '',
         // 只在要求输出本书落点时填：JSON 模板里 creator_notes 后面多一行 orientation_notes（不要时提示词与原来一字不差）
         ORIENTATION_JSON: askNotes ? '\n  "orientation_notes": "- ……\\n- ……",' : '',
         GREETINGS: greetings,
@@ -215,6 +292,7 @@ export function buildCardPrompt(project, settings, opt) {
     let prompt = render(template, vars);
     prompt = appendIfMissing(template, prompt, 'USER_ROLE', userRoleBlock);
     prompt = appendIfMissing(template, prompt, 'ORIENTATION', orientationBlock);
+    prompt = appendIfMissing(template, prompt, 'USER_PROFILE', userProfileBlock);
     if (isWorld) prompt = `${prompt}\n\n${render(getPrompt(settings, 'worldCardExtra'), vars)}`;
     return { system: render(getPrompt(settings, 'cardSystem'), vars), prompt, charName, userRole: role };
 }
@@ -279,14 +357,18 @@ function cardUserName(project, card) {
 /**
  * 生成角色卡
  * @param {object} opt 见 buildCardPrompt；卡片名按 cardNameFor（不采用 AI 写的 name）
- * @returns {Promise<object>} card 记录（带 userRole、orientation 快照；世界卡另记 cardName = 表单里填的卡名）
+ * @returns {Promise<object>} card 记录（带 userRole、orientation、userProfile 快照；世界卡另记 cardName = 表单里填的卡名）
  */
 export async function generateCard(project, settings, opt, { signal, onLog } = {}) {
-    const { system, prompt, charName, userRole } = buildCardPrompt(project, settings, opt);
-    onLog?.(`🎴 正在生成「${charName}」的角色卡…`);
+    const { system, prompt, charName, userRole, original, fixed } = buildCardPrompt(project, settings, opt);
+    const isOriginal = opt?.source === ORIGINAL_SOURCE;
+    const label = charName || (opt.kind === 'world' ? '原创世界卡' : '原创角色');
+    onLog?.(isOriginal ? `🎴 正在按原创设定写「${label}」…` : `🎴 正在生成「${charName}」的角色卡…`);
     const res = await callLLM({
-        api: settings.api, system, prompt, ...chainFor(settings, 'card', project), expect: 'json', signal, maxTokens: Math.max(settings.api.maxTokens || 0, 6000),
-        onNotice: (m, l) => onLog?.(`「${charName}」${m}`, l),
+        api: settings.api, system, prompt, ...chainFor(settings, 'card', project), expect: 'json', signal,
+        // 原创写卡还要输出人物档案和世界书条目，回复更长
+        maxTokens: Math.max(settings.api.maxTokens || 0, isOriginal && !fixed ? 8000 : 6000),
+        onNotice: (m, l) => onLog?.(`「${label}」${m}`, l),
     });
     const raw = removeTags(res.text, settings.extraction.filterTags);
     let json;
@@ -297,7 +379,30 @@ export async function generateCard(project, settings, opt, { signal, onLog } = {
         throw e;
     }
     const userName = userRole.kind === 'character' ? userRoleCharName(project, userRole) : '';
-    const data = normalizeCardData(json, { name: charName, userName });
+    let name = charName;
+    let orig = null;
+    if (isOriginal) {
+        orig = original;
+        if (!fixed) {
+            // 新写卡：取出 AI 设计的人物和条目；名字 = 用户定的 > AI 设计的 > AI 写的 name
+            const design = parseOriginalDesign(json, { kind: opt.kind, settings });
+            const aiName = String(json?.name ?? '').trim().slice(0, 40);
+            if (opt.kind === 'world') {
+                name = charName || aiName || project.bookName || project.name || '旁白';
+            } else {
+                name = charName || design.characters[0]?.name || aiName || '原创角色';
+                if (!design.characters.length) {
+                    onLog?.(`「${name}」AI 没有返回人物档案（character），按卡片内容记了一份简要的`, 'warn');
+                    design.characters.push({ name, identity: '', personality: String(json?.personality ?? '').trim().slice(0, 200), importance: 'main' });
+                }
+                design.characters[0].name = name;
+            }
+            orig = normalizeCardOriginal({ ...original, characters: design.characters, lore: design.lore, saved: false });
+            if (!orig.lore.length) onLog?.(`「${name}」AI 没有返回世界书条目（lore）`, 'warn');
+            if (opt.kind === 'world' && !orig.characters.length) onLog?.(`「${name}」AI 没有返回主要角色（cast）`, 'warn');
+        }
+    }
+    const data = normalizeCardData(json, { name, userName });
     let orientation = normalizeCardOrientation(opt.orientation);
     if (orientation) {
         // 沿用快照里已有的本书落点（整卡重新生成且没开细化时）；开了细化就用 AI 这次写的
@@ -314,6 +419,7 @@ export async function generateCard(project, settings, opt, { signal, onLog } = {
         requirement: opt.requirement || '',
         userRole,
         orientation,
+        userProfile: normalizeCardUserProfile(opt.userProfile),
         createdAt: Date.now(),
         updatedAt: Date.now(),
         data,
@@ -321,6 +427,14 @@ export async function generateCard(project, settings, opt, { signal, onLog } = {
         stAvatar: '',
         worldName: '',
     };
+    if (isOriginal) {
+        // 原创卡：没有故事时间点；单人卡关联的角色 = 存进项目后的名字（还没存时是设计的名字），世界卡记下最终的卡名
+        card.source = ORIGINAL_SOURCE;
+        card.original = orig;
+        card.timepoint = null;
+        if (opt.kind === 'world') card.cardName = name;
+        else card.charName = orig.characters[0]?.savedAs || orig.characters[0]?.name || name;
+    }
     return card;
 }
 
@@ -403,7 +517,8 @@ function cardText(card) {
 }
 
 /**
- * 「重新生成本书落点」的提示词：导向（名称、说明、词条正文）+ {{user}} 的身份 + 卡片内容 + 原著资料（角色资料 / 相关角色 / 剧情进展）。
+ * 「重新生成本书落点」的提示词：导向（名称、说明、词条正文）+ {{user}} 的身份 + 卡片内容 + 原著资料（角色资料 / 相关角色 / 剧情进展）
+ * + 用户画像的雷点与成年人一条（卡上有画像时）。原创卡用「原创卡落点」模板（orientationNotesOriginal），背景是用户的设定和设计好的人物、世界设定。
  * @param {object} orientation 当前的导向（编辑框里可能已经改过词条正文）；不传时用 card.orientation
  * @returns {{system: string, prompt: string}}
  */
@@ -416,7 +531,10 @@ export function buildOrientationNotesPrompt(project, settings, card, { orientati
     const role = userRoleFor(project, opt);
     const parts = [];
     try {
-        if (isWorld) {
+        if (isOriginalCard(card)) {
+            // 原创卡没有原著：背景资料是用户的设定和设计好的人物、世界设定
+            parts.push(originalBackgroundText(project, card, { maxChars: 5000 }));
+        } else if (isWorld) {
             const roleChar = role.kind === 'character' ? userRoleCharName(project, role) : '';
             const mains = Object.values(project.characters || {})
                 .filter((c) => c.firstChunk <= upto && c.name !== roleChar)
@@ -433,28 +551,37 @@ export function buildOrientationNotesPrompt(project, settings, card, { orientati
             const related = relatedCharacters(project, view, upto, 8, settings);
             if (related) parts.push(`## 相关角色\n${related}`);
         }
-        const outline = buildOutlineText(project, upto, 2500);
+        const outline = isOriginalCard(card) ? '' : buildOutlineText(project, upto, 2500);
         if (outline) parts.push(`## 剧情进展\n${outline}`);
     } catch { /* 资料不全：只用已经拿到的部分 */ }
+    const original = isOriginalCard(card);
     // 这里一定有导向：「{{user}} 的身份」里两人现在的关系以导向为准（原创新身份时没有这一节）
-    const roleBlock = userRolePromptBlock(project, role, { upto, world: isWorld, orientation: true });
+    const roleBlock = userRolePromptBlock(project, role, { upto, world: isWorld, orientation: true, original });
+    // 用户画像（卡片快照）：雷点（与这个导向同名的不算）+ 成年人；没有画像时为空，提示词与以前一字不差。
+    // 原创卡的模板里已经写了成年人一条，这里只给雷点
+    const profileLines = userProfileNotesLines(card.userProfile, { orientationName: o.name, original, adult: !original });
     const vars = {
         BOOK: project.bookName,
         CHAR_NAME: card.data?.name || cardNameFor(project, opt),
         CARD_KIND: isWorld ? '世界/旁白卡' : '单人角色卡',
-        TIMEPOINT: timepointLabel(project, upto),
+        TIMEPOINT: original ? '卡片开场时（原创设定）' : timepointLabel(project, upto),
         ORIENTATION_NAME: o.name,
         ORIENTATION_BRIEF: o.brief,
         ORIENTATION_ENTRY: o.entry || '（空）',
         USER_ROLE: roleBlock ? `\n${roleBlock}\n` : '',
         CARD_CONTENT: cardText(card),
         CONTEXT: parts.join('\n\n') || '（无）',
+        USER_PROFILE_LINE: profileLines,
         INSTRUCTION_LINE: instruction.trim() ? `- 额外要求（优先满足）：${instruction.trim()}` : '',
     };
-    const template = getPrompt(settings, 'orientationNotes');
+    // 原创卡没有原著：用「原创卡落点」的模板（背景是用户的设定和设计好的人物、世界设定，不说“原著”“本书”）
+    const key = original ? 'orientationNotesOriginal' : 'orientationNotes';
+    const template = getPrompt(settings, key);
+    let prompt = appendIfMissing(template, render(template, vars), 'USER_ROLE', roleBlock);
+    prompt = appendIfMissing(template, prompt, 'USER_PROFILE_LINE', profileLines.trimEnd());
     return {
-        system: render(getPrompt(settings, 'orientationNotesSystem'), vars),
-        prompt: appendIfMissing(template, render(template, vars), 'USER_ROLE', roleBlock),
+        system: render(getPrompt(settings, `${key}System`), vars),
+        prompt,
     };
 }
 

@@ -42,7 +42,8 @@ export function buildWorldbookEntries(project, settings, opt = {}) {
             for (const raw of chars) {
                 const c = characterAt(raw, upto);
                 if (onlyVol) {
-                    c.experiences = c.experiences.filter((e) => e.chunk >= vol.startChunk);
+                    // chunk 为负的经历（原创角色设计出来的）不属于任何分段，哪一卷都带
+                    c.experiences = c.experiences.filter((e) => e.chunk < 0 || e.chunk >= vol.startChunk);
                     c.quotes = c.quotes.filter((q) => q.chunk === undefined || q.chunk >= vol.startChunk);
                 }
                 const cfg = raw.entryConfig || {};

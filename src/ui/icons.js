@@ -11,6 +11,7 @@ const P = {
     worldbook: '<path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/>',
     outline: '<path d="M21 6H8M21 12h-8M21 18h-8M3 6v10a2 2 0 0 0 2 2h3M3 10a2 2 0 0 0 2 2h3"/>',
     style: '<path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/><path d="M16 8 2 22M17.5 15H9"/>',
+    profile: '<circle cx="9" cy="7.5" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 10.6-5"/><path d="M18 21l-2.6-2.6a1.75 1.75 0 0 1 2.6-2.35 1.75 1.75 0 0 1 2.6 2.35z"/>',
     cards: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M5.8 16.5c.6-1.4 1.8-2.2 3.2-2.2s2.6.8 3.2 2.2M15 10h3M15 14h3"/>',
     plan: '<path d="M10 6h11M10 12h11M10 18h11M4 6h1v4M4 10h2M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/>',
     foreshadow: '<path d="M4 22V4M4 4h13l-2.5 4.5L17 13H4"/>',

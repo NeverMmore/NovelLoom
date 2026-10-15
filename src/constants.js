@@ -2,7 +2,7 @@
 
 export const MODULE = 'novel_loom';
 export const PREFIX = 'nl';
-export const VERSION = '0.15.0';
+export const VERSION = '0.16.0';
 export const DB_NAME = 'NovelLoomDB';
 export const DB_VERSION = 1;
 
@@ -261,4 +261,6 @@ export const DEFAULT_SETTINGS = {
     statusBarTemplates: [], // [{id:'sbtpl_…', name, desc, mode, spec|null, html, theme, sample, createdAt, updatedAt}]
     /** 卡的导向·我的模板：保存在扩展设置里，跨项目共享（内置模板不存这里；见 orientation.js） */
     orientationTemplates: [], // [{id:'otpl_…', name, brief, cardGuide, entry, depth, role, order, createdAt, updatedAt}]
+    /** 用户画像：保存在扩展设置里，跨项目共享；最多一个默认（见 userprofile.js） */
+    userProfiles: [], // [{id:'uprof_…', name, isDefault, orientations, likes, dislikes, intensity, persona, style, notes, chatEntry, createdAt, updatedAt}]
 };

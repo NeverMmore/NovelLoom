@@ -20,12 +20,22 @@ import { blobToDataUrl, cardOwnWorld, dataUrlToBlob, defaultWorldName, prepareCa
 import { characterExistsInST, openCharacterInST } from '../stio.js';
 import { castRecordPath, serverPortraitHint, statusBarActive } from '../statusbar.js';
 import { getStatusBarTemplate } from '../statusbar-templates.js';
-import { bannedRulesFor, getStyleProfile } from '../style.js';
+import { PROJECT_STYLE_ID, bannedRulesFor, getStyleProfile, styleBlock } from '../style.js';
 import { greetingText, testChatReply } from '../testchat.js';
 import { USER_ROLE_KINDS, normalizeUserRole, userRoleLabel } from '../userrole.js';
+import {
+    USER_PROFILE_ENTRY_TITLE, defaultUserProfile, getUserProfile, isDislikedName, listUserProfiles, normalizeCardUserProfile, profileOrientationPicks,
+    userProfileEntryContent, userProfileSnapshot, userProfileSnapshotOutdated, userProfileSummary,
+} from '../userprofile.js';
+import {
+    isOriginalCard, normalizeCardOriginal, normalizeOriginalInput, originalInputProblem, originalNovelAvailable, originalSaveForced, originalSaveLog, originalSavePlan,
+    projectHasSource, saveOriginalDesign, suffixedName,
+} from '../original.js';
+import { createSnapshot, saveProject } from '../store.js';
 import { downloadFile, estimateTokens, pickFile, safeFileName, truncate, uniq } from '../utils.js';
 import { alertDialog, bindSettings, busy, chainPreviewHtml, confirmDialog, emptyState, esc, fmtTime, icon, importanceLabel, openDialog, optionList, promptDialog, rerollBtn } from './common.js';
 import { openOrientationTemplatesDialog } from './orientation-dialog.js';
+import { openUserProfilesDialog } from './tab-profiles.js';
 import { generateStatusBarForCard, openStatusBarDialog, openStatusBarPublishHint, statusBarTagHtml, statusBarTemplateOptions } from './statusbar-dialog.js';
 
 const GREETING_SEP = '\n\n=====\n\n';
@@ -57,7 +67,7 @@ export function cardWorldField(project, settings, card) {
 
 /** “绑定世界书名称”这一栏的标签（own：专用世界书不是因为状态栏，而是因为本卡条目） */
 export function cardWorldLabelHtml(sb, own = false) {
-    if (sb && own) return '绑定世界书名称 <span class="nl-muted" title="带剧情导向或 {{user}} 身份条目的卡写入并绑定自己专用的一本世界书（资料条目 + 本卡条目）">（本卡专用）</span>';
+    if (sb && own) return '绑定世界书名称 <span class="nl-muted" title="原创卡，以及带剧情导向、用户偏好、{{user}} 身份条目的卡写入并绑定自己专用的一本世界书（资料条目 + 本卡条目）">（本卡专用）</span>';
     return sb ? '绑定世界书名称 <span class="nl-muted" title="带状态栏的卡总是写入并绑定自己专用的一本世界书（资料条目 + 状态栏条目）">（状态栏卡专用）</span>' : '绑定世界书名称';
 }
 
@@ -84,11 +94,13 @@ export function applyCardWorldInput(card, field, input) {
 /**
  * 写卡选项里「同时生成状态栏」下面的说明：世界/旁白卡的状态栏为整个群像设计（{{char}} 是旁白）。
  * @param {'character'|'world'} kind
+ * @param {boolean} original 原创写卡（主要角色是 AI 按设定设计的那几个）
  */
-export function statusBarFormNote(kind) {
+export function statusBarFormNote(kind, original = false) {
     const tail = '导出的卡需要酒馆助手（JS-Slash-Runner）4.6 以上。生成后可以在卡片的「状态栏」里修改、配立绘、预览。';
+    const cast = original ? 'AI 会给按设定设计出的主要角色' : 'AI 会把项目里的主要角色（到所选时间点为止）';
     return kind === 'world'
-        ? `世界/旁白卡的状态栏为整个群像设计：{{char}} 是旁白，AI 会把项目里的主要角色（到所选时间点为止）各记一套状态（好感、心情、服饰……），剧情中途出场的 NPC 随时加入，再加上时间、地点和主角自己的状态。${tail}`
+        ? `世界/旁白卡的状态栏为整个群像设计：{{char}} 是旁白，${cast}各记一套状态（好感、心情、服饰……），剧情中途出场的 NPC 随时加入，再加上时间、地点和主角自己的状态。${tail}`
         : `写完角色卡后接着让 AI 设计一套变量（好感、心情、位置……）和显示在每条回复下面的状态栏。${tail}`;
 }
 
@@ -186,15 +198,23 @@ export function orientationOptionsHtml(settings, selected, { current = null, cus
  * @param {string} kind new | character | custom
  * @param {string} charName {{user}} 扮演的原著角色
  * @param {string} cardKind character | world
+ * @param {boolean} original 原创写卡（{{char}} 与项目里的角色原本没有关系）
+ * @param {boolean} noSource 项目没有原文（按「项目资料」写卡：角色是原创存进来的或手动加的，不说“原著”）
  */
-export function userRoleFormNote(kind, charName = '', cardKind = 'character') {
+export function userRoleFormNote(kind, charName = '', cardKind = 'character', original = false, noSource = false) {
     const who = charName ? `「${charName}」` : '这个角色';
     // 选了原著角色 / 自定义时身份以这里为准，上面的「你的要求」里不用再写（写了冲突时也以这里为准）
     const noDup = '上面的要求里不用再写 {{user}} 的身份。';
-    if (kind === 'character' && cardKind === 'world') return `AI 会把${who}写成 {{user}}，原著里其他角色和 TA 的关系就是和你的关系，主要角色一览里不再单独列出 TA；卡自己的世界书里会加一条「{{user}} 的身份」。${noDup}`;
-    if (kind === 'character') return `AI 会把${who}写成 {{user}}，原著里 TA 和 {{char}} 的关系就是你和 {{char}} 的关系（选了卡的导向时以导向为准）；卡自己的世界书里会加一条「{{user}} 的身份」。${noDup}`;
+    if (original) {
+        if (kind === 'character') return `AI 会把${who}写成 {{user}}，按 TA 的身份和经历安排和${cardKind === 'world' ? '这个世界' : ' {{char}} '}的关系；卡自己的世界书里会加一条「{{user}} 的身份」。${noDup}`;
+        if (kind === 'custom') return `按这段身份写卡；卡自己的世界书里会加一条「{{user}} 的身份」。${noDup}`;
+        return '{{user}} 是一个新身份；具体是谁（如“刚搬来的邻居”）可以写在设定或要求里。';
+    }
+    const src = noSource ? '项目资料里' : '原著里';
+    if (kind === 'character' && cardKind === 'world') return `AI 会把${who}写成 {{user}}，${src}其他角色和 TA 的关系就是和你的关系，主要角色一览里不再单独列出 TA；卡自己的世界书里会加一条「{{user}} 的身份」。${noDup}`;
+    if (kind === 'character') return `AI 会把${who}写成 {{user}}，${src} TA 和 {{char}} 的关系就是你和 {{char}} 的关系（选了卡的导向时以导向为准）；卡自己的世界书里会加一条「{{user}} 的身份」。${noDup}`;
     if (kind === 'custom') return `按这段身份写卡；卡自己的世界书里会加一条「{{user}} 的身份」。${noDup}`;
-    return '{{user}} 不是原著里的任何人；具体身份（如“刚转学来的同桌”）可以写在上面的要求里。';
+    return `{{user}} 不是${noSource ? '项目里' : '原著里'}的任何人；具体身份（如“刚转学来的同桌”）可以写在上面的要求里。`;
 }
 
 /** 卡片列表里的「剧情导向」标签（没有导向时为空） */
@@ -203,13 +223,156 @@ export function orientationTagHtml(card) {
     return o ? `<span class="nl-tag" title="剧情导向（写入酒馆时是卡自己世界书里的常驻条目）">导向：${esc(o.name)}</span>` : '';
 }
 
+/** 卡片列表里的「用户画像」标签（没有画像时为空） */
+export function userProfileTagHtml(card) {
+    const p = normalizeCardUserProfile(card?.userProfile);
+    if (!p) return '';
+    const title = `按用户画像量身定制：${userProfileSummary(p)}${p.chatEntry ? '；写入酒馆时卡自己的世界书里有「用户偏好」条目' : ''}`;
+    return `<span class="nl-tag" title="${esc(title)}">画像：${esc(p.name)}</span>`;
+}
+
+/** 卡片上的画像快照在下拉框里的值：画像 id（快照没有 id 时用占位值）；没有画像时为 '' */
+export const PROFILE_CARD_VALUE = '__card__';
+export function profileValueOf(snapshot) {
+    const s = normalizeCardUserProfile(snapshot);
+    return s ? s.id || PROFILE_CARD_VALUE : '';
+}
+
+/**
+ * 「用户画像」下拉框的选项：不使用、设置里的画像（默认的标出来）。
+ * @param {object} settings
+ * @param {string} selected
+ * @param {{current?: object|null}} opt current：卡片上的画像快照（编辑框用；画像已经删掉时也列出来）
+ */
+export function userProfileOptionsHtml(settings, selected, { current = null } = {}) {
+    const list = listUserProfiles(settings);
+    const cur = normalizeCardUserProfile(current);
+    const curVal = profileValueOf(cur);
+    const orphan = cur && !list.some((p) => p.id === cur.id)
+        ? `<option value="${esc(curVal)}" ${selected === curVal ? 'selected' : ''}>${esc(cur.name)}（这张卡上的）</option>`
+        : '';
+    return [
+        `<option value="" ${selected ? '' : 'selected'}>不使用</option>`,
+        orphan,
+        ...list.map((p) => `<option value="${esc(p.id)}" ${p.id === selected ? 'selected' : ''}>${esc(p.name)}${p.isDefault ? '（默认）' : ''}</option>`),
+    ].join('');
+}
+
+/**
+ * 写卡表单「用户画像」下面的一行说明：选了画像时是会带上的内容摘要。
+ * @param {object|null} profile 选中的画像
+ * @param {boolean} hasProfiles 设置里有没有画像
+ * @param {boolean} original 原创写卡（没有原著）
+ * @param {boolean} noSource 项目没有原文（按「项目资料」写卡）
+ */
+export function userProfileFormNote(profile, hasProfiles = true, original = false, noSource = false) {
+    if (profile) return `会按这个画像量身定制：${userProfileSummary(profile)}。`;
+    return hasProfiles ? `不使用画像：按${sourceWord(original, noSource)}和你的要求写。` : '还没有用户画像：点「管理用户画像」保存你的口味（喜欢的元素、雷点、尺度），写卡时选上它就能量身定制。';
+}
+
+/** 「按什么写」：原创写卡 = 你的设定；没有原文的项目 = 项目资料；否则原著 */
+export function sourceWord(original = false, noSource = false) {
+    return original ? '你的设定' : noSource ? '项目资料' : '原著';
+}
+
+/**
+ * 写卡表单里选的导向正好是所选画像的雷点时，「卡的导向」下面的提醒；没有冲突时为 ''。
+ * @param {object|null} profile 选中的画像
+ * @param {string} orientationName 选中的导向名称（不限时为 ''）
+ */
+export function orientationDislikeNote(profile, orientationName = '') {
+    if (!profile || !isDislikedName(profile, orientationName)) return '';
+    return `用户画像「${profile.name}」把「${orientationName}」列为雷点：这张卡以卡的导向为准，写卡时这一项雷点不适用（其余雷点照样避开）。`;
+}
+
+// ---------------- 原创写卡（不导入 TXT，见 original.js） ----------------
+
+/**
+ * 写卡表单「写卡依据」下面的说明
+ * @param {boolean} original 选的是原创设定
+ * @param {boolean} novelAvailable 项目里有原文或角色资料（没有时只能原创）
+ * @param {boolean} hasSource 项目有原文（没有原文、只有手动 / 原创存进来的角色时叫「项目资料」）
+ */
+export function cardSourceNote(original, novelAvailable = true, hasSource = true) {
+    if (!novelAvailable) return '这个项目没有原文和角色资料，按你写的设定原创：写明的 AI 照办，没写的由 AI 补全。';
+    if (original) return '不用原文：按你写的设定原创人物和世界，写明的 AI 照办，没写的由 AI 补全。';
+    return hasSource ? '按提取出的原著资料写卡（角色档案、相关角色、世界书、剧情进展）。' : '按项目里已有的角色资料和世界书写卡。';
+}
+
+/**
+ * 写卡表单「文风」一行显示的名字。没有原文的项目（原创项目）谈不上“本书原著文风”：
+ * 项目自己的文风还空着时显示「未设置（按设定把握）」，在「文风」页填过时显示「项目文风」。
+ * @param {object} project
+ * @param {object} settings
+ */
+export function cardStyleName(project, settings) {
+    const profile = getStyleProfile(project, settings, 'card');
+    if (!profile) return '不指定';
+    if (profile.id !== PROJECT_STYLE_ID || projectHasSource(project)) return profile.name || '不指定';
+    return styleBlock(profile, { empty: '' }) ? '项目文风' : '未设置（按设定把握）';
+}
+
+/**
+ * 「把 AI 设计的角色和设定存进项目」下面的说明
+ * @param {boolean} forced 单人卡、项目里还没有角色：一定要存
+ * @param {boolean} on 勾着
+ */
+export function originalSaveNote(forced, on = true) {
+    if (forced) return '项目里还没有角色：单人卡的角色一定会存进项目，卡片和它关联。';
+    return on
+        ? '存成手动角色和世界书条目：可以在「角色」「世界书」页修改，写入酒馆时进世界书；重新提取不会删掉它们。'
+        : '不存：人物和设定只放在这张卡上，写入酒馆时作为卡自己世界书里的条目。';
+}
+
+/**
+ * 「{{user}} 扮演」的选项：原创写卡（或项目没有原文、按「项目资料」写卡）时「原著角色」叫「项目里的角色」，没有可选的角色时不给这一项。
+ * @param {boolean} original 原创写卡，或项目没有原文
+ * @param {boolean} hasChars 有可选的角色
+ */
+export function userRoleKindOptions(original = false, hasChars = true) {
+    if (!original) return USER_ROLE_KINDS;
+    return USER_ROLE_KINDS.filter((k) => k.value !== 'character' || hasChars).map((k) => (k.value === 'character' ? { ...k, label: '项目里的角色' } : k));
+}
+
+/** 原创卡的设定存没存进项目（编辑框里一行说明） */
+export function originalSaveStateText(card) {
+    const o = normalizeCardOriginal(card?.original);
+    if (!o) return '';
+    const who = card?.kind === 'world' ? `${o.characters.length} 个主要角色` : o.characters[0] ? `角色「${o.characters[0].name}」` : '';
+    const lore = o.lore.length ? `${o.lore.length} 条世界书条目` : '';
+    const parts = `${who}${who && lore ? '和 ' : ''}${lore}`;
+    if (!parts) return o.saved ? '设定已存进项目。' : '这张卡没有 AI 设计的人物或条目。';
+    return o.saved
+        ? `${parts}已存进项目：在「角色」「世界书」页修改，之后的重新生成和写入酒馆用项目里的。`
+        : `没有存进项目：${parts}放在这张卡上，写入酒馆时作为卡自己世界书里的条目。`;
+}
+
+/** 编辑框里「你写的设定」：用户在表单里写的原创设定（给人看的，不是提示词） */
+export function originalInputSummary(card) {
+    const o = normalizeCardOriginal(card?.original);
+    if (!o) return '';
+    const world = card?.kind === 'world';
+    return [
+        world ? `卡名：${o.name || '（没填，AI 起的名字）'}` : `角色名：${o.name || '（没填，AI 起的名字）'}`,
+        !world && o.concept ? `角色设定：\n${o.concept}` : '',
+        o.world ? `${world ? '世界观' : '世界观 / 背景'}：\n${o.world}` : '',
+        world && o.cast ? `主要角色：\n${o.cast}` : '',
+        o.ref ? `参考氛围：${o.ref}` : '',
+    ].filter(Boolean).join('\n\n');
+}
+
 /**
  * 写卡表单里记住的选择（切换页面后保留）。{{user}} 扮演（方式、角色、自定义的身份）和卡名只在同一个项目里沿用：
  * 换了项目还沿用「原著角色」的话，会默默选中新项目的第一个角色当 {{user}}。
  */
 let lastCardForm = null;
-const REMEMBERED_FORM_KEYS = ['userRoleKind', 'userRoleChar', 'userRoleText', 'orientationId', 'orientationCustomName', 'orientationCustomBrief', 'orientationRefine', 'cardName'];
-const PROJECT_FORM_KEYS = new Set(['userRoleKind', 'userRoleChar', 'userRoleText', 'cardName']);
+// userProfileId：null = 还没手动选过，跟随默认画像；'' = 手动选了「不使用」
+// source（写卡依据）：null = 按项目自动（没有原文和角色时原创）；原创设定的几栏（orig*）跟着项目走，「存进项目」的勾选跨项目记住
+const REMEMBERED_FORM_KEYS = [
+    'userRoleKind', 'userRoleChar', 'userRoleText', 'orientationId', 'orientationCustomName', 'orientationCustomBrief', 'orientationRefine', 'cardName', 'userProfileId',
+    'source', 'origName', 'origConcept', 'origWorld', 'origRef', 'origCardName', 'origCast', 'origSave',
+];
+const PROJECT_FORM_KEYS = new Set(['userRoleKind', 'userRoleChar', 'userRoleText', 'cardName', 'source', 'origName', 'origConcept', 'origWorld', 'origRef', 'origCardName', 'origCast']);
 
 export const cardsTab = {
     mount(el, { switchTab }) {
@@ -217,6 +380,10 @@ export const cardsTab = {
             kind: 'character', charName: app.pendingCardChar || '', cardName: '', timepoint: '', requirement: '', greetings: app.settings.cards.greetings, firstMesLen: '400-800 字', avatarDataUrl: '', statusBarRequirement: '',
             userRoleKind: 'new', userRoleChar: '', userRoleText: '',
             orientationId: '', orientationCustomName: '', orientationCustomBrief: '', orientationRefine: true,
+            // 用户画像：null = 跟随默认画像；「聊天时也照顾这些偏好」null = 跟随画像自己的设置（换画像时回到 null，只管这一次写卡）
+            userProfileId: null, userProfileChat: null,
+            // 写卡依据：null = 自动（项目里没有原文和角色时原创，否则原著）；原创设定：单人卡的角色名 / 角色设定，世界卡的卡名 / 主要角色，共用的世界观 / 参考氛围
+            source: null, origName: '', origConcept: '', origWorld: '', origRef: '', origCardName: '', origCast: '', origSave: true,
         };
         if (lastCardForm) {
             for (const k of REMEMBERED_FORM_KEYS) {
@@ -227,6 +394,8 @@ export const cardsTab = {
         const rememberForm = () => {
             lastCardForm = { projectId: app.project?.id, ...Object.fromEntries(REMEMBERED_FORM_KEYS.map((k) => [k, form[k]])) };
         };
+        // 从「角色」页点「生成角色卡」过来：按这个角色的资料写
+        if (app.pendingCardChar) form.source = 'novel';
         delete app.pendingCardChar;
         const groupForm = { members: new Set(), timepoint: '', requirement: '' };
         /** 状态栏对话框的上下文（见 statusbar-dialog.js） */
@@ -245,6 +414,8 @@ export const cardsTab = {
             .map((c) => ({ value: c.name, label: `${c.name}（${importanceLabel(c.importance)} · ${c.chunksSeen.length} 段）` }));
 
         const timeOptions = () => {
+            // 没有分段的项目（原创项目）只有「全部资料」
+            if (!app.project.chunks.length) return [{ value: '', label: '全部资料' }];
             const vols = getVolumes(app.project).filter((v) => !v.implicit);
             const opts = [{ value: '', label: '全书结束时（使用全部资料）' }];
             for (const c of app.project.chunks) {
@@ -255,8 +426,20 @@ export const cardsTab = {
             return opts;
         };
 
-        /** 「{{user}} 扮演 → 原著角色」可选的角色：单人卡不能选卡片本人 */
-        const userRoleChars = () => charOptions().filter((c) => form.kind === 'world' || c.value !== form.charName);
+        /**
+         * 写卡依据：项目里没有原文和角色时只能原创；否则按表单的选择。没选过时：有原文的项目按原著，
+         * 没有原文的项目（原创项目，原创写卡后存进了角色也一样）按原创。
+         */
+        const novelAvailable = () => originalNovelAvailable(app.project);
+        const isOriginal = () => !novelAvailable() || (form.source ? form.source === 'original' : !projectHasSource(app.project));
+        /** 项目没有原文（原创项目）：按「项目资料」写卡时也不说“原著”“本书” */
+        const noSource = () => !projectHasSource(app.project);
+        /** 原创单人卡在还没有角色的项目里写：角色一定要存进项目 */
+        const saveForced = () => isOriginal() && originalSaveForced(app.project, form.kind);
+        const wantOriginalSave = () => saveForced() || form.origSave !== false;
+
+        /** 「{{user}} 扮演 → 原著角色」可选的角色：单人卡不能选卡片本人（原创单人卡的角色是新写的，项目里的角色都能选） */
+        const userRoleChars = () => charOptions().filter((c) => form.kind === 'world' || isOriginal() || c.value !== form.charName);
         /** 记住的「{{user}} 扮演」角色在当前可选列表里时返回它，否则空串 */
         const userRoleCharValid = () => (userRoleChars().some((c) => c.value === form.userRoleChar) ? form.userRoleChar : '');
         const userRoleCharHtml = () => {
@@ -268,27 +451,105 @@ export const cardsTab = {
             return `${cur ? '' : '<option value="" selected>请选择角色…</option>'}${optionList(list, cur)}`;
         };
 
-        /** 「{{user}} 扮演」「卡的导向」切换后只更新这几处显示，不整页重绘（否则“写卡选项”会收起来） */
+        /** 表单里选的画像 id：没手动选过时用默认画像；手动选的画像已经删掉时也回到默认画像；'' = 不使用 */
+        const profileId = () => {
+            const id = form.userProfileId;
+            if (id === '') return '';
+            if (id && getUserProfile(app.settings, id)) return id;
+            return defaultUserProfile(app.settings)?.id || '';
+        };
+        const pickedProfile = () => getUserProfile(app.settings, profileId());
+        /** 这次写卡要不要加「用户偏好」条目：没单独改过时跟随画像 */
+        const profileChat = () => (form.userProfileChat ?? pickedProfile()?.chatEntry ?? true);
+        const profilePicksHtml = () => profileOrientationPicks(app.settings, pickedProfile(), form.orientationId)
+            .map((o) => `<button type="button" class="nl-seg-btn nl-up-pick" data-act="up-orient-pick" data-orient-id="${esc(o.id)}" title="把卡的导向设为「${esc(o.name)}」（来自用户画像的偏好）">按画像选导向：${esc(o.name)}</button>`).join('');
+
+        /** 「{{user}} 扮演」「卡的导向」「用户画像」切换后只更新这几处显示，不整页重绘（否则“写卡选项”会收起来） */
         const syncFormExtras = () => {
+            const prof = pickedProfile();
+            const orig = isOriginal();
+            const noSrc = noSource();
+            const sum = el.querySelector('[data-up-summary]');
+            if (sum) sum.textContent = userProfileFormNote(prof, listUserProfiles(app.settings).length > 0, orig, noSrc);
+            const saveNote = el.querySelector('[data-orig-save-note]');
+            if (saveNote) saveNote.textContent = originalSaveNote(saveForced(), wantOriginalSave());
+            const chatLine = el.querySelector('[data-up-chat]');
+            if (chatLine) {
+                chatLine.toggleAttribute('hidden', !prof);
+                const cb = chatLine.querySelector('input');
+                if (cb) cb.checked = !!profileChat();
+            }
+            const picks = el.querySelector('[data-up-picks]');
+            if (picks) {
+                const html = profilePicksHtml();
+                if (picks.innerHTML !== html) picks.innerHTML = html;
+                picks.toggleAttribute('hidden', !html);
+            }
             const kind = form.userRoleKind;
             el.querySelector('[data-ur-char]')?.toggleAttribute('hidden', kind !== 'character');
             el.querySelector('[data-ur-custom]')?.toggleAttribute('hidden', kind !== 'custom');
             const note = el.querySelector('[data-ur-note]');
-            if (note) note.textContent = userRoleFormNote(kind, userRoleCharValid(), form.kind);
+            if (note) note.textContent = userRoleFormNote(kind, userRoleCharValid(), form.kind, orig, noSrc);
             const id = form.orientationId;
             el.querySelector('[data-orient-custom]')?.toggleAttribute('hidden', id !== ORIENTATION_CUSTOM);
             el.querySelector('[data-orient-refine]')?.toggleAttribute('hidden', !id);
+            const t = id && id !== ORIENTATION_CUSTOM ? getOrientationTemplate(app.settings, id) : null;
             const brief = el.querySelector('[data-orient-brief]');
-            if (brief) {
-                const t = id && id !== ORIENTATION_CUSTOM ? getOrientationTemplate(app.settings, id) : null;
-                brief.textContent = t ? t.brief : id === ORIENTATION_CUSTOM ? '输入这次的导向名称和说明（不存成模板）。' : '不加导向，按原著和你的要求写。';
+            if (brief) brief.textContent = t ? t.brief : id === ORIENTATION_CUSTOM ? '输入这次的导向名称和说明（不存成模板）。' : `不加导向，按${sourceWord(orig, noSrc)}和你的要求写。`;
+            // 选的导向正好是画像里的雷点：提醒以卡的导向为准（不替用户改）
+            const clash = el.querySelector('[data-up-orient-clash]');
+            if (clash) {
+                const text = orientationDislikeNote(prof, t ? t.name : id === ORIENTATION_CUSTOM ? String(form.orientationCustomName || '').trim() : '');
+                clash.textContent = text;
+                clash.toggleAttribute('hidden', !text);
             }
+        };
+
+        /** 原创设定的几栏（单人卡 / 世界卡不同） */
+        const originalFormHtml = () => {
+            const forced = saveForced();
+            const world = form.kind === 'world';
+            const save = `
+                <label class="nl-check-line"><input type="checkbox" data-form="origSave" ${wantOriginalSave() ? 'checked' : ''} ${forced ? 'disabled' : ''} aria-describedby="nl-orig-save-note"><span>把 AI 设计的角色和设定存进项目</span></label>
+                <div class="nl-muted nl-small" id="nl-orig-save-note" data-orig-save-note>${esc(originalSaveNote(forced, wantOriginalSave()))}</div>`;
+            const ref = `<div class="nl-field"><label for="nl-orig-ref">参考氛围 <span class="nl-muted">（可选）</span></label><input class="nl-input" id="nl-orig-ref" data-form="origRef" maxlength="200" value="${esc(form.origRef)}" placeholder="例如：九十年代港片的江湖气；日系校园的夏天"></div>`;
+            if (world) {
+                return `
+                <div class="nl-orig-form" data-orig-form>
+                    <div class="nl-grid2">
+                        <div class="nl-field"><label for="nl-orig-cardname">卡名 <span class="nl-muted">（可留空，让 AI 起名）</span></label><input class="nl-input" id="nl-orig-cardname" data-form="origCardName" maxlength="20" value="${esc(form.origCardName)}" placeholder="例如「雾港旧事」"></div>
+                        ${ref}
+                    </div>
+                    <div class="nl-field"><label for="nl-orig-world">世界观 <span class="nl-muted">（必填）</span></label>
+                        <textarea class="nl-input nl-textarea" id="nl-orig-world" rows="5" data-form="origWorld" aria-required="true" placeholder="时代、地点、世界规则、主要势力、正在发生的事……写得越具体，AI 越能照着写">${esc(form.origWorld)}</textarea></div>
+                    <div class="nl-field"><label for="nl-orig-cast">主要角色 <span class="nl-muted">（可选，一行一个「名字：设定」；没写的由 AI 设计）</span></label>
+                        <textarea class="nl-input nl-textarea" id="nl-orig-cast" rows="4" data-form="origCast" placeholder="沈砚：雾港警署的探长，三十岁，嘴硬心软&#10;阿绫：码头茶楼的老板娘，消息最灵通">${esc(form.origCast)}</textarea></div>
+                    ${save}
+                </div>`;
+            }
+            return `
+                <div class="nl-orig-form" data-orig-form>
+                    <div class="nl-grid2">
+                        <div class="nl-field"><label for="nl-orig-name">角色名 <span class="nl-muted">（可留空，让 AI 起名）</span></label><input class="nl-input" id="nl-orig-name" data-form="origName" maxlength="20" value="${esc(form.origName)}" placeholder="例如「林晚」"></div>
+                        ${ref}
+                    </div>
+                    <div class="nl-field"><label for="nl-orig-concept">角色设定 <span class="nl-muted">（必填）</span></label>
+                        <textarea class="nl-input nl-textarea" id="nl-orig-concept" rows="5" data-form="origConcept" aria-required="true" placeholder="身份、外貌、性格、经历、和 {{user}} 的关系……写了的 AI 照办，没写的由 AI 补全">${esc(form.origConcept)}</textarea></div>
+                    <div class="nl-field"><label for="nl-orig-world">世界观 / 背景 <span class="nl-muted">（可选）</span></label>
+                        <textarea class="nl-input nl-textarea" id="nl-orig-world" rows="3" data-form="origWorld" placeholder="故事发生在哪里、什么时代、有什么特别的规则；不写就按角色设定配一个合适的背景">${esc(form.origWorld)}</textarea></div>
+                    ${save}
+                </div>`;
         };
 
         const render = () => {
             const p = app.project;
             const chars = charOptions();
             if (!form.charName && chars.length) form.charName = chars[0].value;
+            const orig = isOriginal();
+            const noSrc = noSource();
+            const novelOk = novelAvailable();
+            // 原创写卡、项目里没有可选的角色：「{{user}} 扮演」没有「项目里的角色」这一项
+            if (orig && form.userRoleKind === 'character' && !userRoleChars().length) form.userRoleKind = 'new';
             if (form.orientationId && form.orientationId !== ORIENTATION_CUSTOM && !getOrientationTemplate(app.settings, form.orientationId)) form.orientationId = '';
             const sbTpls = cardStatusBarTemplateOptions(app.settings, form.kind);
             if (!sbTpls.some((t) => t.value === (app.settings.cards.statusBarTemplateId || ''))) app.settings.cards.statusBarTemplateId = '';
@@ -307,22 +568,41 @@ export const cardsTab = {
                         <div class="nl-row"><button class="nl-btn nl-sm" data-act="form-avatar">${icon('upload', { size: 14 })}上传封面</button>${form.avatarDataUrl ? '<button class="nl-btn nl-sm" data-act="form-avatar-clear">清除封面</button>' : ''}</div>
                     </div>
                 </div>
+                <div class="nl-field nl-src-field">
+                    <label id="nl-src-label">写卡依据</label>
+                    <div class="nl-seg" role="group" aria-labelledby="nl-src-label" aria-describedby="nl-src-note">
+                        <button type="button" class="nl-seg-btn ${orig ? '' : 'active'}" aria-pressed="${!orig}" data-act="card-source" data-val="novel" ${novelOk ? '' : 'disabled'}>${projectHasSource(p) ? '原著资料' : '项目资料'}</button>
+                        <button type="button" class="nl-seg-btn ${orig ? 'active' : ''}" aria-pressed="${orig}" data-act="card-source" data-val="original">原创设定</button>
+                    </div>
+                    <div class="nl-muted nl-small" id="nl-src-note" data-src-note>${esc(cardSourceNote(orig, novelOk, projectHasSource(p)))}</div>
+                </div>
                 <div class="nl-grid2">
                     <div class="nl-field"><label>卡片类型</label><select class="nl-input" data-form="kind">${optionList([{ value: 'character', label: '单人角色卡（{{char}} = 某个角色）' }, { value: 'world', label: '世界/旁白卡（{{char}} = 叙述者，扮演所有 NPC）' }], form.kind)}</select></div>
+                    ${orig ? '' : `
                     <div class="nl-field" ${form.kind === 'world' ? 'hidden' : ''}><label>角色</label><select class="nl-input" data-form="charName">${optionList(chars, form.charName)}</select></div>
                     <div class="nl-field" ${form.kind === 'world' ? '' : 'hidden'}><label for="nl-card-name">卡名 <span class="nl-muted">（留空 = 书名）</span></label><input class="nl-input" id="nl-card-name" data-form="cardName" value="${esc(form.cardName)}" placeholder="${esc(p.bookName)}"></div>
-                    <div class="nl-field"><label>故事时间点（防剧透：只用该时间点之前的资料）</label><select class="nl-input" data-form="timepoint">${optionList(timeOptions(), form.timepoint)}</select></div>
-                    <div class="nl-field"><label>备选开场白数量 / 开场白长度</label><div class="nl-row"><input class="nl-input" type="number" min="0" max="6" data-form="greetings" value="${form.greetings}"><input class="nl-input" data-form="firstMesLen" value="${esc(form.firstMesLen)}"></div></div>
+                    <div class="nl-field"><label>故事时间点（防剧透：只用该时间点之前的资料）</label><select class="nl-input" data-form="timepoint">${optionList(timeOptions(), form.timepoint)}</select></div>`}
+                    <div class="nl-field"><label>备选开场白数量 / 开场白长度</label><div class="nl-row"><input class="nl-input" type="number" min="0" max="6" data-form="greetings" value="${form.greetings}" aria-label="备选开场白数量"><input class="nl-input" data-form="firstMesLen" value="${esc(form.firstMesLen)}" aria-label="开场白长度"></div></div>
                 </div>
+                ${orig ? originalFormHtml() : ''}
                 <div class="nl-field"><label>你的要求（与角色的关系、开场场景、尺度、视角等）</label>
                     <textarea class="nl-input nl-textarea" rows="3" data-form="requirement" placeholder="例如：开场在放学后的天台；{{char}} 对 {{user}} 还有戒心；第二人称叙述">${esc(form.requirement)}</textarea></div>
+                <div class="nl-field nl-up-form">
+                    <label for="nl-up-pick">用户画像 <span class="nl-muted">（按你的口味量身定制）</span></label>
+                    <div class="nl-row">
+                        <select class="nl-input nl-grow" id="nl-up-pick" data-form="userProfileId" aria-describedby="nl-up-summary">${userProfileOptionsHtml(app.settings, profileId())}</select>
+                        <button class="nl-btn nl-sm" data-act="profile-manage" title="新建、修改、导入导出用户画像">${icon('profile', { size: 14 })}管理用户画像</button>
+                    </div>
+                    <div class="nl-muted nl-small" id="nl-up-summary" data-up-summary></div>
+                    <label class="nl-check-line" data-up-chat ${pickedProfile() ? '' : 'hidden'}><input type="checkbox" data-form="userProfileChat" ${profileChat() ? 'checked' : ''}><span>聊天时也照顾这些偏好 <span class="nl-muted">（卡自己的世界书里加一条常驻的「用户偏好」）</span></span></label>
+                </div>
                 <div class="nl-grid2">
                     <div class="nl-field">
                         <label for="nl-ur-kind">{{user}} 扮演</label>
-                        <select class="nl-input" id="nl-ur-kind" data-form="userRoleKind" aria-describedby="nl-ur-note">${optionList(USER_ROLE_KINDS, form.userRoleKind)}</select>
-                        <select class="nl-input" data-form="userRoleChar" data-ur-char aria-label="{{user}} 扮演的原著角色" ${form.userRoleKind === 'character' ? '' : 'hidden'}>${userRoleCharHtml()}</select>
+                        <select class="nl-input" id="nl-ur-kind" data-form="userRoleKind" aria-describedby="nl-ur-note">${optionList(userRoleKindOptions(orig || noSrc, userRoleChars().length > 0), form.userRoleKind)}</select>
+                        <select class="nl-input" data-form="userRoleChar" data-ur-char aria-label="{{user}} 扮演的${orig || noSrc ? '项目里的' : '原著'}角色" ${form.userRoleKind === 'character' ? '' : 'hidden'}>${userRoleCharHtml()}</select>
                         <textarea class="nl-input nl-textarea" rows="2" data-form="userRoleText" data-ur-custom aria-label="{{user}} 的身份" placeholder="例如：{{user}} 是莉莉丝新雇的调酒师，二十岁，刚搬到下城区" ${form.userRoleKind === 'custom' ? '' : 'hidden'}>${esc(form.userRoleText)}</textarea>
-                        <div class="nl-muted nl-small" id="nl-ur-note" data-ur-note>${esc(userRoleFormNote(form.userRoleKind, userRoleCharValid(), form.kind))}</div>
+                        <div class="nl-muted nl-small" id="nl-ur-note" data-ur-note>${esc(userRoleFormNote(form.userRoleKind, userRoleCharValid(), form.kind, orig, noSrc))}</div>
                     </div>
                     <div class="nl-field">
                         <label for="nl-orient">卡的导向</label>
@@ -335,7 +615,9 @@ export const cardsTab = {
                             <textarea class="nl-input nl-textarea" rows="2" data-form="orientationCustomBrief" aria-label="导向说明" maxlength="200" placeholder="说明这次想要的剧情方向，例如：{{user}} 是 {{char}} 的徒弟，师徒之间暗生情愫，但谁都不敢说破">${esc(form.orientationCustomBrief)}</textarea>
                         </div>
                         <div class="nl-muted nl-small" id="nl-orient-brief" data-orient-brief></div>
-                        <label class="nl-check-line" data-orient-refine ${form.orientationId ? '' : 'hidden'}><input type="checkbox" data-form="orientationRefine" ${form.orientationRefine ? 'checked' : ''}> 让 AI 结合本书细化导向词条</label>
+                        <div class="nl-warn nl-small" data-up-orient-clash role="status" hidden></div>
+                        <div class="nl-up-picks" data-up-picks role="group" aria-label="按用户画像选导向" hidden></div>
+                        <label class="nl-check-line" data-orient-refine ${form.orientationId ? '' : 'hidden'}><input type="checkbox" data-form="orientationRefine" ${form.orientationRefine ? 'checked' : ''}><span>让 AI 结合${orig ? '这张卡的设定' : noSrc ? '这个项目的资料' : '本书'}细化导向词条</span></label>
                     </div>
                 </div>
                 <details>
@@ -355,19 +637,19 @@ export const cardsTab = {
                     </div>
                     <div class="nl-sb-form">
                         <label><input type="checkbox" data-setting="cards.statusBar"> 同时生成状态栏（MVU 变量）${form.kind === 'world' ? '：为整个群像设计' : ''}</label>
-                        <div class="nl-muted nl-small" data-sb-form-note>${esc(statusBarFormNote(form.kind))}</div>
+                        <div class="nl-muted nl-small" data-sb-form-note>${esc(statusBarFormNote(form.kind, orig))}</div>
                         <div class="nl-grid2" data-sb-form-opts ${sbOn ? '' : 'hidden'}>
                             <div class="nl-field"><label>状态栏模板</label><select class="nl-input" data-setting="cards.statusBarTemplateId"${sbTplWarn ? ' aria-describedby="nl-sb-tpl-warn"' : ''}>${optionList(sbTpls, sbTplId)}</select>${statusBarTemplateWarningHtml(sbTplWarn)}</div>
                             <div class="nl-field"><label>状态栏要求（可选）</label><input class="nl-input" data-form="statusBarRequirement" value="${esc(form.statusBarRequirement)}" placeholder="${form.kind === 'world' ? '例如：主要角色记录好感、心情和服饰；NPC 只记身份和阵营' : '例如：重点记录好感和体力；记录随身物品'}"></div>
                         </div>
                     </div>
                 </details>
-                <div class="nl-muted nl-small">文风：<b>${esc(getStyleProfile(p, app.settings, 'card')?.name || '不指定')}</b>（用于开场白与示例对话；勾选“文风”条目时也写进世界书）${bannedRulesFor(p, app.settings, 'card').length ? ` · 审稿会检查 ${bannedRulesFor(p, app.settings, 'card').length} 个禁用词` : ''} <a href="#" data-act="goto-style">修改</a></div>
+                <div class="nl-muted nl-small">文风：<b>${esc(cardStyleName(p, app.settings))}</b>（用于开场白与示例对话；勾选“文风”条目时也写进世界书）${bannedRulesFor(p, app.settings, 'card').length ? ` · 审稿会检查 ${bannedRulesFor(p, app.settings, 'card').length} 个禁用词` : ''} <a href="#" data-act="goto-style">修改</a></div>
                 <div class="nl-row">
-                    <button class="nl-btn nl-primary" data-act="generate" ${!chars.length && form.kind !== 'world' ? 'disabled' : ''}>生成</button>
+                    <button class="nl-btn nl-primary" data-act="generate" ${!orig && !chars.length && form.kind !== 'world' ? 'disabled' : ''}>${orig ? '原创写卡' : '生成'}</button>
                     <button class="nl-btn" data-act="preview">预览提示词</button>
                     <span class="nl-muted nl-small" data-sb-gen-hint ${sbOn ? '' : 'hidden'}>会同时生成状态栏</span>
-                    ${!chars.length ? '<span class="nl-muted">还没有角色资料，请先提取。</span>' : ''}
+                    ${!orig && !chars.length ? '<span class="nl-muted">还没有角色资料，请先提取，或改用「原创设定」。</span>' : ''}
                 </div>
             </section>
 
@@ -380,8 +662,8 @@ export const cardsTab = {
                     <div class="nl-cardbox" data-id="${esc(c.id)}">
                         ${c.avatarDataUrl ? `<img class="nl-avatar" src="${c.avatarDataUrl}" alt="">` : avatarEmpty()}
                         <div class="nl-grow">
-                            <div><b>${esc(c.data.name)}</b> <span class="nl-tag">${c.kind === 'world' ? '世界卡' : '角色卡'}</span> ${statusBarTagHtml(c)} ${orientationTagHtml(c)} ${c.stAvatar ? (characterExistsInST(c.stAvatar) ? '<span class="nl-tag nl-ok">已在酒馆</span>' : '<span class="nl-tag">酒馆中已删除</span>') : ''}</div>
-                            <div class="nl-muted nl-small">${esc(timepointLabel(p, Number.isFinite(c.timepoint) ? c.timepoint : Infinity))} · ${fmtTime(c.updatedAt)} · 约 ${estimateTokens(c.data.description + c.data.first_mes)} tokens</div>
+                            <div><b>${esc(c.data.name)}</b> <span class="nl-tag">${c.kind === 'world' ? '世界卡' : '角色卡'}</span> ${isOriginalCard(c) ? '<span class="nl-tag" title="按你的设定原创，不依赖原著资料">原创</span>' : ''} ${statusBarTagHtml(c)} ${orientationTagHtml(c)} ${userProfileTagHtml(c)} ${c.stAvatar ? (characterExistsInST(c.stAvatar) ? '<span class="nl-tag nl-ok">已在酒馆</span>' : '<span class="nl-tag">酒馆中已删除</span>') : ''}</div>
+                            <div class="nl-muted nl-small">${isOriginalCard(c) ? '原创设定' : !p.chunks.length ? '全部资料' : esc(timepointLabel(p, Number.isFinite(c.timepoint) ? c.timepoint : Infinity))} · ${fmtTime(c.updatedAt)} · 约 ${estimateTokens(c.data.description + c.data.first_mes)} tokens</div>
                             <div class="nl-small">${lintSummary(c.lint)}</div>
                             <div class="nl-small nl-clamp">${esc(truncate(c.data.first_mes, 120))}</div>
                         </div>
@@ -397,7 +679,7 @@ export const cardsTab = {
                             ${rerollBtn('regen', `data-id="${esc(c.id)}"`, { label: '重新生成', title: '整张卡重新生成' })}
                             <button class="nl-btn nl-sm nl-danger" data-act="delete" data-id="${esc(c.id)}">删除</button>
                         </div>
-                    </div>`).join('') || emptyState('在上面选好角色和故事时间点后点「生成」，生成的角色卡会出现在这里，可以审稿、试聊后写入酒馆。', '', { title: '还没有角色卡', ico: 'cards' })}
+                    </div>`).join('') || emptyState(orig ? '在上面写好原创设定后点「原创写卡」，生成的角色卡会出现在这里，可以审稿、试聊后写入酒馆。' : '在上面选好角色和故事时间点后点「生成」，生成的角色卡会出现在这里，可以审稿、试聊后写入酒馆。', '', { title: '还没有角色卡', ico: 'cards' })}
                 </div>
             </section>
 
@@ -440,11 +722,17 @@ export const cardsTab = {
             syncFormExtras();
         };
 
+        /** 表单里写的原创设定（单人卡：角色名 / 角色设定；世界卡：卡名 / 主要角色；共用：世界观 / 参考氛围） */
+        const originalInput = () => normalizeOriginalInput(form.kind === 'world'
+            ? { name: form.origCardName, world: form.origWorld, cast: form.origCast, ref: form.origRef }
+            : { name: form.origName, concept: form.origConcept, world: form.origWorld, ref: form.origRef });
+
         const opts = () => ({
             kind: form.kind,
-            charName: form.charName,
-            cardName: form.kind === 'world' ? form.cardName : '',
-            timepoint: form.timepoint === '' ? Infinity : Number(form.timepoint),
+            ...(isOriginal()
+                // 原创写卡：不用原著的角色和时间点
+                ? { source: 'original', original: originalInput(), charName: '', cardName: form.kind === 'world' ? originalInput().name : '', timepoint: Infinity }
+                : { charName: form.charName, cardName: form.kind === 'world' ? form.cardName : '', timepoint: form.timepoint === '' ? Infinity : Number(form.timepoint) }),
             requirement: form.requirement,
             greetings: Number(form.greetings) || 0,
             firstMesLen: form.firstMesLen,
@@ -452,14 +740,76 @@ export const cardsTab = {
             orientation: orientationFromPick(app.settings, {
                 id: form.orientationId, customName: form.orientationCustomName, customBrief: form.orientationCustomBrief, refine: form.orientationRefine,
             }),
+            // 用户画像快照（不使用时为 null）；「用户偏好」条目按这次的勾选
+            userProfile: profileId() ? userProfileSnapshot(app.settings, profileId(), { chatEntry: !!profileChat() }) : null,
         });
 
         /** 生成前检查表单里「{{user}} 扮演」「卡的导向」是否填完整；有问题返回提示文字 */
         const formProblem = () => {
-            if (form.userRoleKind === 'character' && !userRoleChars().some((c) => c.value === form.userRoleChar)) return '请选择 {{user}} 扮演的原著角色';
+            if (isOriginal()) {
+                const problem = originalInputProblem(originalInput(), form.kind);
+                if (problem) return problem;
+            }
+            if (form.userRoleKind === 'character' && !userRoleChars().some((c) => c.value === form.userRoleChar)) return isOriginal() || noSource() ? '请选择 {{user}} 扮演的角色' : '请选择 {{user}} 扮演的原著角色';
             if (form.userRoleKind === 'custom' && !String(form.userRoleText || '').trim()) return '请填写 {{user}} 的身份，或改回「原创新身份」';
             if (form.orientationId === ORIENTATION_CUSTOM && !String(form.orientationCustomName || '').trim() && !String(form.orientationCustomBrief || '').trim()) return '请填写自定义导向的名称和说明，或选择别的导向';
             return '';
+        };
+
+        /**
+         * 原创写卡存进项目时与项目里已有的同名：问用户另存为新的（加后缀）、覆盖，还是不存（forced：单人卡必须存，不给「不存」）。
+         * @returns {Promise<'suffix'|'overwrite'|'skip'>}
+         */
+        const askOriginalCollision = async (plan, forced) => {
+            const label = (c) => {
+                const what = c.type === 'character' ? `角色「${c.name}」` : `${c.category}「${c.name}」`;
+                if (c.via === 'alias') return `${what}（是「${c.owner}」的别名）`;
+                if (c.via === 'keyword') return `${what}（是${c.ownerCategory}「${c.owner}」的${c.owner === c.name ? '同名条目' : '关键词'}）`;
+                return what;
+            };
+            const first = plan.collisions[0];
+            const example = suffixedName(first.name, () => false);
+            const onlyLoose = plan.collisions.every((c) => c.via === 'alias' || c.via === 'keyword');
+            const { value } = await openDialog({
+                title: '项目里已有同名的资料',
+                body: `
+                    <p>AI 设计的这些与项目里已有的同名：${esc(plan.collisions.map(label).join('、'))}。</p>
+                    <ul class="nl-small nl-orig-choices">
+                        <li><b>另存为新的</b>：加后缀存成新的（例如「${esc(example)}」），项目里原来的不动；卡里仍用原来的名字，这张卡写入酒馆时不带原来那份同名的资料。</li>
+                        <li><b>覆盖</b>：用新设计替换项目里的同名资料，原来的内容会丢失（覆盖前自动存一份快照，可以在「世界书 → 修改历史」恢复）。${onlyLoose ? '' : '只是别名或关键词相同的不能覆盖，照样另存为新的。'}</li>
+                        ${forced ? '' : '<li><b>不存进项目</b>：人物和设定只放在这张卡上，写入酒馆时作为卡自己世界书里的条目。</li>'}
+                    </ul>`,
+                // 都只是别名 / 关键词相同：没有可以覆盖的，不给「覆盖」
+                buttons: [...(forced ? [] : [{ label: '不存进项目', value: 'skip' }]), ...(onlyLoose ? [] : [{ label: '覆盖', value: 'overwrite', danger: true }]), { label: '另存为新的', value: 'suffix', primary: true }],
+                // Esc / 点遮罩：不做破坏性的选择
+                dismissValue: forced ? 'suffix' : 'skip',
+            });
+            return value || (forced ? 'suffix' : 'skip');
+        };
+
+        /**
+         * 把原创卡上 AI 设计的角色和条目存进 project（同名时先问）；返回存进去的结果，没存时返回 null。
+         * project 由调用方明确给出：写卡要等 AI 半分钟，期间用户可能在侧栏换了项目，设定要存进写卡时的那个项目，不能存进新打开的项目。
+         * 存完马上保存（编辑框里点的话，取消编辑框也不会丢）：是当前项目就 app.saveNow()，否则直接存那个项目。
+         */
+        const saveOriginalToProject = async (project, card, { forced = false } = {}) => {
+            const plan = originalSavePlan(project, card.original);
+            let collision = 'suffix';
+            if (plan.collisions.length) {
+                const choice = await askOriginalCollision(plan, forced);
+                if (choice === 'skip') {
+                    app.log(`「${card.data.name}」的设定没有存进项目，放在卡上（写入酒馆时进卡自己的世界书）`, 'info');
+                    return null;
+                }
+                collision = choice;
+                if (collision === 'overwrite') await createSnapshot(project, `原创写卡「${card.data.name}」覆盖同名资料前`);
+            }
+            const res = saveOriginalDesign(project, card, { collision });
+            if (project === app.project) await app.saveNow();
+            else await saveProject(project);
+            app.events.emit('nav');
+            app.log(`🧩 已把「${card.data.name}」的设定存进项目${project === app.project ? '' : `「${project.name}」`}：${originalSaveLog(res)}`, 'success');
+            return res;
         };
 
         const editCard = async (card) => {
@@ -482,6 +832,15 @@ export const cardsTab = {
                 const notes = r.querySelector('[data-orient-notes]')?.value ?? base.notes;
                 return normalizeCardOrientation({ ...base, entry, notes, refine: base.refine || !!String(notes).trim() });
             };
+            // 用户画像：编辑框里的草稿（换画像、开关「用户偏好」条目都先改草稿，保存时写回 card.userProfile；
+            // 编辑框里的单字段重roll 按草稿写）。draftIsSaved：草稿是不是卡上原来的快照（只改了条目开关也算）
+            const savedProfile = normalizeCardUserProfile(card.userProfile);
+            let profileDraft = savedProfile;
+            let draftIsSaved = !!savedProfile;
+            const profileEditNote = (d) => (d ? `${userProfileSummary(d)}。` : '不使用：不按用户画像定制，也不加「用户偏好」条目。');
+            // 条目预览按编辑框里现在选的导向算：与导向同名的雷点不写进「绝对避免」（见 userprofile.js 的 effectiveDislikes）
+            const profileEntryPreview = (d, orientName = savedOrient?.name || '') => (d?.chatEntry ? userProfileEntryContent(d, { orientationName: orientName }) : `（不加「${USER_PROFILE_ENTRY_TITLE}」条目）`);
+            const profileOutdated = () => draftIsSaved && userProfileSnapshotOutdated(app.settings, savedProfile);
             const { value, root } = await openDialog({
                 title: `编辑角色卡：${d.name}`,
                 wide: true,
@@ -505,15 +864,33 @@ export const cardsTab = {
                         <div class="nl-row nl-wrap">
                             <label class="nl-orient-edit-title" for="nl-oe-pick">剧情导向</label>
                             <select class="nl-input nl-grow" id="nl-oe-pick" data-orient-pick>${orientationOptionsHtml(app.settings, orientId(savedOrient), { current: savedOrient, custom: false })}</select>
-                            ${rerollBtn('reroll-orient-notes', savedOrient ? '' : 'disabled', { label: '重新生成本书落点', title: '只让 AI 结合本书重新写【本书落点】，词条正文和卡片其余部分不变' })}
+                            ${rerollBtn('reroll-orient-notes', savedOrient ? '' : 'disabled', { label: '重新生成本书落点', title: `只让 AI 结合${isOriginalCard(card) ? '这张卡的设定' : !projectHasSource(app.project) ? '这个项目的资料' : '本书'}重新写【本书落点】，词条正文和卡片其余部分不变` })}
                         </div>
                         <div class="nl-muted nl-small" data-orient-edit-note>${savedOrient ? `写入酒馆时放进这张卡自己的世界书：常驻条目「${esc(orientationEntryTitle(savedOrient))}」，插在聊天深度 ${esc(savedOrient.depth)}。` : '不限：不加剧情导向词条。'}</div>
                         <div data-orient-edit-body ${savedOrient ? '' : 'hidden'}>
                             <div class="nl-field"><label for="nl-oe-entry">词条正文</label><textarea class="nl-input nl-textarea" id="nl-oe-entry" rows="6" data-orient-entry>${esc(savedOrient?.entry || '')}</textarea></div>
                             <div class="nl-field"><label for="nl-oe-notes">本书落点 <span class="nl-muted">（接在词条正文后面的【本书落点】；留空就只有正文）</span></label><textarea class="nl-input nl-textarea" id="nl-oe-notes" rows="4" data-orient-notes placeholder="- 原伴侣是……&#10;- 关键阻碍是……">${esc(savedOrient?.notes || '')}</textarea></div>
                         </div>
-                        <div class="nl-muted nl-small">{{user}} 扮演：${esc(userRoleLabel(app.project, card.userRole))}${normalizeUserRole(card.userRole).kind !== 'new' ? '（写成卡自己世界书里的「{{user}} 的身份」条目）' : ''}</div>
+                        <div class="nl-muted nl-small">{{user}} 扮演：${esc(userRoleLabel(app.project, card.userRole, { original: isOriginalCard(card) || !projectHasSource(app.project) }))}${normalizeUserRole(card.userRole).kind !== 'new' ? '（写成卡自己世界书里的「{{user}} 的身份」条目）' : ''}</div>
                     </section>
+                    <section class="nl-orient-edit nl-up-edit" data-up-edit>
+                        <div class="nl-row nl-wrap">
+                            <label class="nl-orient-edit-title" for="nl-ue-pick">用户画像</label>
+                            <select class="nl-input nl-grow" id="nl-ue-pick" data-up-edit-pick>${userProfileOptionsHtml(app.settings, profileValueOf(savedProfile), { current: savedProfile })}</select>
+                        </div>
+                        <div class="nl-muted nl-small" data-up-edit-note>${esc(profileEditNote(savedProfile))}</div>
+                        <div class="nl-row nl-wrap" data-up-edit-outdated ${profileOutdated() ? '' : 'hidden'}><span class="nl-muted nl-small nl-grow">「${esc(savedProfile?.name || '')}」在用户画像页改过，这张卡用的还是生成时的版本。</span><button class="nl-btn nl-sm" data-card-act="up-refresh">改用最新版本</button></div>
+                        <label class="nl-check-line" data-up-edit-chat-line ${savedProfile ? '' : 'hidden'}><input type="checkbox" data-up-edit-chat ${savedProfile?.chatEntry ? 'checked' : ''}><span>聊天时也照顾这些偏好 <span class="nl-muted">（卡自己世界书里的常驻条目「${USER_PROFILE_ENTRY_TITLE}」）</span></span></label>
+                        <details data-up-edit-entry ${savedProfile ? '' : 'hidden'}><summary>查看「${USER_PROFILE_ENTRY_TITLE}」条目</summary><div class="nl-pre nl-small" data-up-edit-preview>${esc(profileEntryPreview(savedProfile))}</div></details>
+                        <div class="nl-muted nl-small">换画像只影响之后的重新生成和写入酒馆的条目，已经写好的字段不会自动改；可以点字段旁的骰子按现在的画像重新生成。</div>
+                    </section>
+                    ${isOriginalCard(card) ? `
+                    <section class="nl-orient-edit nl-orig-edit" data-orig-edit>
+                        <div class="nl-orient-edit-title">原创设定</div>
+                        <div class="nl-muted nl-small">这张卡按你的设定原创：整卡重新生成、字段旁的骰子都按这份设定写。</div>
+                        <details><summary>你写的设定</summary><div class="nl-pre nl-small" data-orig-input>${esc(originalInputSummary(card))}</div></details>
+                        <div class="nl-row nl-wrap"><span class="nl-small nl-grow" data-orig-save-state>${esc(originalSaveStateText(card))}</span>${normalizeCardOriginal(card.original)?.saved ? '' : '<button class="nl-btn nl-sm" data-card-act="orig-save" title="把 AI 设计的角色和世界书条目存进项目，之后可以在「角色」「世界书」页修改">存进项目</button>'}</div>
+                    </section>` : ''}
                     <details><summary>更多字段</summary>
                         ${field('system_prompt', '系统提示词覆盖（system_prompt）', 3)}
                         ${field('post_history_instructions', '历史后指令（post_history_instructions）', 3)}
@@ -528,6 +905,28 @@ export const cardsTab = {
                         const k = e.target.dataset.card;
                         const tok = k && r.querySelector(`[data-tok="${k}"]`);
                         if (tok) tok.textContent = `${estimateTokens(e.target.value)} tokens`;
+                    });
+                    // 用户画像一节：换画像、开关条目后更新说明、条目预览和「改用最新版本」
+                    const syncProfileEdit = () => {
+                        r.querySelector('[data-up-edit-note]').textContent = profileEditNote(profileDraft);
+                        r.querySelector('[data-up-edit-chat-line]')?.toggleAttribute('hidden', !profileDraft);
+                        const cb = r.querySelector('[data-up-edit-chat]');
+                        if (cb) cb.checked = !!profileDraft?.chatEntry;
+                        r.querySelector('[data-up-edit-entry]')?.toggleAttribute('hidden', !profileDraft);
+                        const pv = r.querySelector('[data-up-edit-preview]');
+                        if (pv) pv.textContent = profileEntryPreview(profileDraft, readOrientEdit(r)?.name || '');
+                        r.querySelector('[data-up-edit-outdated]')?.toggleAttribute('hidden', !profileOutdated());
+                    };
+                    r.querySelector('[data-up-edit-pick]')?.addEventListener('change', (e) => {
+                        const id = e.target.value;
+                        // 换回卡上原来的画像：用卡上的快照（生成时的版本）；换成别的画像：取它现在的内容
+                        draftIsSaved = !!id && id === profileValueOf(savedProfile);
+                        profileDraft = !id ? null : draftIsSaved ? savedProfile : userProfileSnapshot(app.settings, id);
+                        syncProfileEdit();
+                    });
+                    r.querySelector('[data-up-edit-chat]')?.addEventListener('change', (e) => {
+                        if (profileDraft) profileDraft = { ...profileDraft, chatEntry: e.target.checked };
+                        syncProfileEdit();
                     });
                     // 每个导向在这个编辑框里改过的正文和落点（按下拉框的值记）：换导向前先记下当前的，误换了再换回来时恢复刚才的编辑
                     // （取消对话框则全部不保存）
@@ -548,6 +947,8 @@ export const cardsTab = {
                         body?.toggleAttribute('hidden', !next);
                         if (reroll) reroll.disabled = !next;
                         if (note) note.textContent = next ? `写入酒馆时放进这张卡自己的世界书：常驻条目「${orientationEntryTitle(next)}」，插在聊天深度 ${next.depth}。${next === savedOrient ? '' : '换了导向，可以点「重新生成本书落点」让 AI 按新导向写。'}` : '不限：不加剧情导向词条。';
+                        // 换了导向：「用户偏好」条目的预览跟着变（与导向同名的雷点不写进「绝对避免」）
+                        syncProfileEdit();
                         if (!next) return;
                         const kept = orientDrafts[id];
                         entryEl.value = kept ? kept.entry : next.entry;
@@ -585,7 +986,14 @@ export const cardsTab = {
                             if (instruction === null) return;
                             card.data = collect();
                             await busy(rerollField, async () => {
-                                await regenerateCardField(app.project, app.settings, card, k, { instruction });
+                                // 按编辑框里现在选的用户画像重新生成（还没保存的草稿也算）；卡上的画像在保存时才改
+                                const keepProfile = card.userProfile;
+                                card.userProfile = profileDraft;
+                                try {
+                                    await regenerateCardField(app.project, app.settings, card, k, { instruction });
+                                } finally {
+                                    card.userProfile = keepProfile;
+                                }
                                 const inp = r.querySelector(`[data-card="${k}"]`);
                                 if (inp) inp.value = k === 'alternate_greetings' ? card.data.alternate_greetings.join(GREETING_SEP) : card.data[k];
                                 const tok = r.querySelector(`[data-tok="${k}"]`);
@@ -626,6 +1034,26 @@ export const cardsTab = {
                                 const lab = r.querySelector('[data-card-world-label]');
                                 if (lab) lab.innerHTML = cardWorldLabelHtml(next.sb);
                             }
+                        } else if (act === 'orig-save') {
+                            // 原创卡：把 AI 设计的角色和条目存进项目（同名时先问）
+                            const res = await busy(b, () => saveOriginalToProject(app.project, card), '保存中…');
+                            if (!res) return;
+                            const state = r.querySelector('[data-orig-save-state]');
+                            b.remove();
+                            if (state) {
+                                // 按钮没了：焦点放到说明上，键盘还停在这一节
+                                state.textContent = originalSaveStateText(card);
+                                state.setAttribute('tabindex', '-1');
+                                state.focus({ preventScroll: true });
+                            }
+                        } else if (act === 'up-refresh') {
+                            // 改用画像页里现在的版本（条目开关保持编辑框里的选择）
+                            const fresh = savedProfile?.id ? userProfileSnapshot(app.settings, savedProfile.id, { chatEntry: profileDraft?.chatEntry ?? savedProfile.chatEntry }) : null;
+                            if (!fresh) return;
+                            profileDraft = fresh;
+                            draftIsSaved = false;
+                            syncProfileEdit();
+                            r.querySelector('[data-up-edit-pick]')?.focus({ preventScroll: true });
                         } else if (act === 'lint') {
                             const data = collect();
                             card.lint = lintCardFor(app.project, app.settings, data);
@@ -650,6 +1078,7 @@ export const cardsTab = {
             if (!value) return;
             card.data = readCardForm(root, card);
             card.orientation = readOrientEdit(root);
+            card.userProfile = profileDraft ? normalizeCardUserProfile(profileDraft) : null;
             applyCardWorldInput(card, worldField, root.querySelector('[data-card-world]').value);
             card.lint = lintCardFor(app.project, app.settings, card.data);
             card.updatedAt = Date.now();
@@ -1122,7 +1551,7 @@ export const cardsTab = {
             const r = await busy(btn, async () => {
                 const res = await publishCard(app.project, app.settings, card, { overwrite: true, onLog: () => {} });
                 await app.saveNow();
-                app.log(`🎴 已写入酒馆：角色「${card.data.name}」${app.settings.cards.linkWorldbook || res.statusBar || res.ownWorld ? `，绑定世界书「${res.worldName}」（${res.entryCount} 条）` : ''}${res.statusBar ? '，带状态栏' : ''}${normalizeCardOrientation(card.orientation) ? `，剧情导向「${normalizeCardOrientation(card.orientation).name}」` : ''}`, 'success');
+                app.log(`🎴 已写入酒馆：角色「${card.data.name}」${app.settings.cards.linkWorldbook || res.statusBar || res.ownWorld ? `，绑定世界书「${res.worldName}」（${res.entryCount} 条）` : ''}${res.statusBar ? '，带状态栏' : ''}${normalizeCardOrientation(card.orientation) ? `，剧情导向「${normalizeCardOrientation(card.orientation).name}」` : ''}${normalizeCardUserProfile(card.userProfile)?.chatEntry ? `，用户偏好「${normalizeCardUserProfile(card.userProfile).name}」` : ''}`, 'success');
                 // 写入后自动允许本卡的局部正则 / 角色脚本（设置页「状态栏」一节可关）的结果，排在写入结果后面
                 if (res.allow) app.log(res.allow.message, res.allow.level);
                 globalThis.toastr?.success(`角色「${card.data.name}」已写入酒馆`, 'NovelLoom');
@@ -1142,16 +1571,25 @@ export const cardsTab = {
                 case 'regen': {
                     // 整卡重新生成沿用这张卡生成时的选项（{{user}} 的身份、卡的导向快照、世界卡的卡名）
                     const o = card ? { ...cardPromptOpt(card), firstMesLen: form.firstMesLen } : opts();
-                    if (o.kind !== 'world' && !p.characters[o.charName]) return app.log('请选择角色', 'warn');
+                    // 原创写卡不需要项目里的角色（整卡重新生成也按卡上的原创设定写）
+                    const original = o.source === 'original';
+                    if (!original && o.kind !== 'world' && !p.characters[o.charName]) return app.log('请选择角色', 'warn');
                     if (!card) {
                         const problem = formProblem();
                         if (problem) return app.log(problem, 'warn');
                     }
+                    // 新写的原创卡：AI 设计的角色和设定按勾选存进项目（单人卡在还没有角色的项目里一定要存）
+                    const saveDesign = !card && original && wantOriginalSave();
+                    const saveMust = !card && original && saveForced();
                     // 新建时按“写卡选项”接着生成状态栏；整卡重新生成只沿用旧状态栏（标记为过时），不重新生成
                     const withStatusBar = !card && wantStatusBar();
                     const sbOpt = { requirement: form.statusBarRequirement, templateId: app.settings.cards.statusBarTemplateId || '' };
                     const result = await busy(btn, async () => {
                         const r = await generateCard(p, app.settings, o, { onLog: (m, l) => app.log(m, l) });
+                        // AI 写卡要半分钟到一分钟，这期间侧栏还能换项目：卡和 AI 设计的设定只存回写卡时的那个项目
+                        // （换走又换回来时是重新载入的同一个项目，用现在打开的这份），不碰新打开的别的项目
+                        const proj = app.project?.id === p.id ? app.project : p;
+                        const switched = proj !== app.project;
                         if (card) {
                             r.id = card.id;
                             r.avatarDataUrl = card.avatarDataUrl;
@@ -1162,10 +1600,20 @@ export const cardsTab = {
                                 r.statusBar = card.statusBar;
                                 if (r.statusBar.spec?.variables?.length) r.statusBar.stale = true;
                             }
-                            p.cards[p.cards.indexOf(card)] = r;
+                            const i = proj.cards.findIndex((c) => c.id === card.id);
+                            if (i >= 0) proj.cards[i] = r;
+                            else proj.cards.push(r);
                         } else {
+                            if (saveDesign) await saveOriginalToProject(proj, r, { forced: saveMust });
+                            else if (original) app.log(`「${r.data.name}」的设定放在卡上（没有存进项目），写入酒馆时进卡自己的世界书`);
                             r.avatarDataUrl = form.avatarDataUrl || '';
-                            p.cards.push(r);
+                            proj.cards.push(r);
+                        }
+                        if (switched) {
+                            // 已经换到别的项目：存进原来的项目就结束，不接着生成状态栏、不打开编辑框
+                            await saveProject(proj);
+                            app.log(`「${r.data.name}」写好时已经换了项目，卡片存进了项目「${proj.name}」`, 'warn');
+                            return null;
                         }
                         await app.saveNow(); // 先保存卡片：后面的状态栏失败也不会丢卡
                         if (withStatusBar) {
@@ -1203,6 +1651,42 @@ export const cardsTab = {
                     rememberForm();
                     syncFormExtras();
                     return;
+                }
+                case 'card-source': {
+                    // 写卡依据：原著资料 / 原创设定（没有原文和角色时只能原创）
+                    const v = btn.dataset.val === 'original' ? 'original' : 'novel';
+                    if (v === 'novel' && !novelAvailable()) return undefined;
+                    form.source = v;
+                    rememberForm();
+                    render();
+                    el.querySelector(`[data-act="card-source"][data-val="${v}"]`)?.focus({ preventScroll: true });
+                    return undefined;
+                }
+                case 'profile-manage': {
+                    // 在对话框里管理画像（与「用户画像」页同一套编辑区）：不离开角色卡页，表单里填了一半的内容都在
+                    await openUserProfilesDialog({ select: profileId() });
+                    // 画像可能新增、改名或删除：只刷新下拉框（选的被删掉了就回到默认画像），不整页重绘
+                    if (form.userProfileId && !getUserProfile(app.settings, form.userProfileId)) {
+                        form.userProfileId = null;
+                        form.userProfileChat = null;
+                    }
+                    const sel = el.querySelector('[data-form="userProfileId"]');
+                    if (sel) sel.innerHTML = userProfileOptionsHtml(app.settings, profileId());
+                    rememberForm();
+                    syncFormExtras();
+                    return undefined;
+                }
+                case 'up-orient-pick': {
+                    // 按画像选导向：只在用户点的时候改，不会悄悄改
+                    const id = btn.dataset.orientId;
+                    if (!getOrientationTemplate(app.settings, id)) return undefined;
+                    form.orientationId = id;
+                    const sel = el.querySelector('[data-form="orientationId"]');
+                    if (sel) sel.value = id;
+                    rememberForm();
+                    syncFormExtras();
+                    sel?.focus({ preventScroll: true });
+                    return undefined;
                 }
                 case 'preview': {
                     try {
@@ -1342,6 +1826,8 @@ export const cardsTab = {
             const k = e.target.dataset.form;
             if (!k) return;
             form[k] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+            // 换了画像：「聊天时也照顾这些偏好」回到这个画像自己的设置
+            if (k === 'userProfileId') form.userProfileChat = null;
             if (REMEMBERED_FORM_KEYS.includes(k)) rememberForm();
             if (k === 'kind') return render();
             if (k === 'charName' && e.type === 'change') {
@@ -1350,7 +1836,7 @@ export const cardsTab = {
                 if (sel) sel.innerHTML = userRoleCharHtml();
                 rememberForm();
             }
-            if (['userRoleKind', 'userRoleChar', 'orientationId', 'charName'].includes(k)) syncFormExtras();
+            if (['userRoleKind', 'userRoleChar', 'orientationId', 'orientationCustomName', 'charName', 'userProfileId', 'origSave'].includes(k)) syncFormExtras();
         };
 
         el.addEventListener('click', onClick);

@@ -71,7 +71,7 @@ export const DEFAULT_PROMPTS = {
 
 # 用户要求
 {REQUIREMENT}
-{USER_ROLE}{ORIENTATION}
+{USER_ROLE}{ORIENTATION}{USER_PROFILE}
 # 字段写法
 - description：角色档案，数据库格式，依次包含
   基本信息（姓名/年龄/性别/身份/与{{user}}的关系）
@@ -112,6 +112,68 @@ export const DEFAULT_PROMPTS = {
 
     worldCardExtra: `# 世界卡说明
 这是一张“世界/旁白卡”：{{char}} 是故事的叙述者兼所有 NPC 的扮演者，不是单个人物。description 写成世界总览（世界规则、主要势力、主要角色一览、叙述规范），first_mes 以旁白视角开场，把{{user}}放进故事里的具体位置。mes_example 展示旁白叙述与 NPC 对话的写法。`,
+
+    // ---------------- 原创写卡：不导入 TXT，按用户的设定原创（见 original.js、cards.js 的 buildCardPrompt） ----------------
+
+    cardOriginalSystem: `你是资深的 SillyTavern 角色卡作者，也擅长原创人设和世界观。这次没有原著可依：你按用户给出的原创设定设计人物和世界，再写成角色卡。用户写明的每一处设定都照办，不改名、不改设定、不弱化；唯一的例外是成年人规则：所有涉及恋爱或亲密内容的人物（包括 {{user}}）都是成年人（18 岁以上），设定里未成年的角色不写进恋爱或亲密内容，这一条优先于用户的任何设定和偏好。用户没写到的地方由你补全，补的细节要具体、彼此咬合、能在扮演里用上。人物靠习惯动作、具体物件、说话方式和关系里的小反应站起来，而不是靠形容词。你只输出一个 JSON 对象。`,
+
+    cardOriginal: `# 任务
+按用户的原创设定写一张{CARD_KIND}（{CHAR_NAME}）。没有原著可依：「用户的原创设定」是唯一的依据，写明的照办，没写的由你补全。
+
+# 用户的原创设定
+{ORIGINAL}
+
+# 文风
+{STYLE}
+
+# 用户要求
+{REQUIREMENT}
+{USER_ROLE}{ORIENTATION}{USER_PROFILE}
+# 设计要求
+{DESIGN_GUIDE}
+- 用户写明的名字、身份、外貌、性格、经历和关系一律照办（成年人一条除外，见下）；没写到的地方顺着设定的逻辑补全，宁可具体也不要含糊：写出地名、组织名和物件的名字，不写“某城市”“某组织”。
+- 补全的细节要为扮演服务：给角色具体的习惯、常去的地方、随身的物件、在意的人和事，让开场白和对话有东西可写；不堆砌与扮演无关的设定。
+- 卡片的每个字段{DESIGN_FIELDS}说的都是同一批人物、同一个世界：名字、年龄、经历、关系和世界规则处处一致，不自相矛盾。
+- 写作规则里的“原文”在这里指用户的设定：设定没写到的细节可以补，但不能和设定矛盾。
+- 设定里没有交代年龄的角色一律写成成年人；所有涉及恋爱或亲密内容的人物（包括 {{user}}）都是成年人（18 岁以上），未成年的角色不写进恋爱或亲密内容。这一条优先于上面的“照办”和用户的任何设定、偏好。
+
+# 字段写法
+- description：角色档案，数据库格式，依次包含
+  基本信息（姓名/年龄/性别/身份/与{{user}}的关系）
+  外貌特征（只写能让人认出她/他的特征）
+  背景设定（让角色成为现在这样的关键事件）
+  性格调色盘：底色、主色调（1-2 个）、点缀（0-2 个），每种性格写 2-3 条“衍生”，衍生写成具体的场景与行为。
+  人际关系（具体画面）
+  说话方式（口癖、称呼习惯、句式特点）
+  雷区（绝对不会做的事、忌讳的话题，各写 1-2 条，用于指导扮演时的边界）
+- personality：一句话性格摘要。
+- scenario：开场时的时间、地点、处境，与{{user}}的切入关系。
+- first_mes：叙事式开场白，{FIRST_MES_LEN}。从一个具体画面切入（不是天气和环境铺陈），角色通过动作、物件和对话出场，结尾留一个{{user}}可以接话的互动点。不替{{user}}说话、不描写{{user}}的心理与动作。
+- alternate_greetings：{GREETINGS} 个不同场景的备选开场白，要求同上。
+- mes_example：3 组示例对话，每组以 <START> 开头，格式为“{{user}}: …”与“{{char}}: …”交替；{{char}} 的台词要有自己的节奏、句子长短和口癖，不要写成书面语。
+- system_prompt：留空字符串，除非用户要求。
+- post_history_instructions：留空字符串，除非用户要求。
+- creator_notes：一句话说明这是原创角色卡，以及它的核心看点。
+- tags：3-6 个标签。
+在卡片字段中用 {{char}} 指代角色本人、{{user}} 指代用户。
+
+{WRITING_RULES}
+
+# 输出 JSON 模板
+{
+  "name": "名字",
+  "description": "……",
+  "personality": "……",
+  "scenario": "……",
+  "first_mes": "……",
+  "alternate_greetings": ["……"],
+  "mes_example": "<START>\\n{{user}}: ……\\n{{char}}: ……",
+  "system_prompt": "",
+  "post_history_instructions": "",
+  "creator_notes": "……",{ORIENTATION_JSON}
+  "tags": ["……"]{DESIGN_JSON}
+}
+只输出 JSON。`,
 
     continueSystem: `你是一名擅长模仿文风的网络小说作者，负责续写《{BOOK}》。你严格保持原著的人物性格、说话方式和世界规则，不让人物做出违背既有设定的事，不重复前文。叙事视角、语言和写法按「文风」一节执行；给了范文就模仿范文的句式与节奏。直接输出正文。`,
 
@@ -349,7 +411,38 @@ export const DEFAULT_PROMPTS = {
 # 要求
 - 结合本书的人物与设定，写出这个导向在本书里的具体落点，3-6 行，每行以“- ”开头：例如谁是原伴侣或第三者、哪些角色可能倾心于 {{user}}、关键阻碍或冲突是什么。
 - 只写设定，不写剧情过程；用 {{char}} 指代角色本人、{{user}} 指代用户，其他角色写原著里的名字。
-{INSTRUCTION_LINE}
+{USER_PROFILE_LINE}{INSTRUCTION_LINE}
+
+# 输出 JSON 模板
+{"orientation_notes": "- ……\\n- ……"}
+只输出 JSON。`,
+
+    // 原创卡（没有原著）的「本卡落点」：背景是用户的设定和 AI 设计好的人物、世界设定（见 cards.js 的 buildOrientationNotesPrompt）
+    orientationNotesOriginalSystem: `你是熟悉这张原创卡设定的角色卡作者，负责把一个剧情导向落到这张卡的具体人物和设定上。这张卡没有原著，用户的原创设定是唯一的依据。你只写设定，不写剧情过程。你只输出一个 JSON 对象。`,
+
+    orientationNotesOriginal: `# 任务
+为原创的{CARD_KIND}「{CHAR_NAME}」写世界书「剧情导向」词条里的【本书落点】部分（这张卡没有原著，“本书”指这张卡的设定）。
+
+# 导向
+【卡的导向：{ORIENTATION_NAME}】{ORIENTATION_BRIEF}
+词条正文（已经写好，不用重复）：
+<词条正文>
+{ORIENTATION_ENTRY}
+</词条正文>
+{USER_ROLE}
+# 角色卡内容（以这里为准）
+<角色卡内容>
+{CARD_CONTENT}
+</角色卡内容>
+
+# 卡片设定（原创）
+{CONTEXT}
+
+# 要求
+- 结合这张卡的人物与设定，写出这个导向在这张卡里的具体落点，3-6 行，每行以“- ”开头：例如谁是原伴侣或第三者、哪些角色可能倾心于 {{user}}、关键阻碍或冲突是什么。需要新的配角时按设定的逻辑补，和设定保持一致。
+- 只写设定，不写剧情过程；用 {{char}} 指代角色本人、{{user}} 指代用户，其他角色写设定里的名字。
+- 所有涉及恋爱或亲密内容的人物（包括 {{user}}）都是成年人（18 岁以上）：设定里未成年的角色不写进恋爱或亲密内容，年龄没有交代的一律写成成年人。
+{USER_PROFILE_LINE}{INSTRUCTION_LINE}
 
 # 输出 JSON 模板
 {"orientation_notes": "- ……\\n- ……"}
@@ -694,7 +787,7 @@ export const DEFAULT_PROMPTS = {
 
 # 用户要求
 {REQUIREMENT}
-{USER_ROLE}
+{USER_ROLE}{USER_PROFILE}
 # 设计要求
 - 只选扮演中会变化、对剧情或互动有意义的状态：时间与地点、关系数值（好感、信任等）、心情、着装、所在位置、持有物品、剧情阶段等。姓名、年龄、身份背景这类固定设定已经写在角色卡里，不要做成变量。
 - 变量总数不超过 {MAX_VARS} 个（记录类型按字段计：每个字段各算一个，分组里的字段也各算一个；记录里有多少条目不影响计数）。{MAX_VARS} 只是允许的最多个数，不必用满：宁少勿滥，单人卡通常 6-12 个就够；变量越多，每轮发送的规则和输出的更新就越长。
@@ -811,6 +904,8 @@ export const PROMPT_LABELS = {
     cardSystem: '角色卡 · 系统提示',
     card: '角色卡 · 主提示',
     worldCardExtra: '角色卡 · 世界卡附加说明',
+    cardOriginalSystem: '原创写卡 · 系统提示',
+    cardOriginal: '原创写卡 · 主提示',
     continueSystem: '续写 · 系统提示',
     continue: '续写 · 主提示',
     aliasSystem: '别名检测 · 系统提示',
@@ -832,6 +927,8 @@ export const PROMPT_LABELS = {
     cardFieldRegen: '角色卡单字段重roll · 主提示',
     orientationNotesSystem: '剧情导向 · 本书落点 · 系统提示',
     orientationNotes: '剧情导向 · 本书落点 · 主提示',
+    orientationNotesOriginalSystem: '剧情导向 · 原创卡落点 · 系统提示',
+    orientationNotesOriginal: '剧情导向 · 原创卡落点 · 主提示',
     deduceBranchesSystem: '剧情推演 · 走向 · 系统提示',
     deduceBranches: '剧情推演 · 走向 · 主提示',
     deduceStagesSystem: '剧情推演 · 分阶段 · 系统提示',
@@ -867,11 +964,22 @@ export const PROMPT_LABELS = {
 export const PROMPT_PLACEHOLDERS = {
     extract: ['{BOOK}', '{CHUNK_NO}', '{CHUNK_TITLE}', '{CHUNK_TEXT}', '{CATEGORY_GUIDE}', '{OPTIONAL_GUIDE}', '{KNOWN}', '{KNOWN_RULE}', '{JSON_TEMPLATE}', '{WRITING_RULES}', '{SUFFIX}'],
     // {USER_ROLE}「{{user}} 的身份」、{ORIENTATION} 卡的导向：自定义模板里没有这两个占位符时，相应内容会追加在末尾；
-    // {ORIENTATION_JSON}：只在开了「让 AI 结合本书细化导向词条」时填，JSON 模板里多一行 orientation_notes，其他时候为空
-    card: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}', '{TIMEPOINT}', '{CHAR_PROFILE}', '{RELATED}', '{WORLD}', '{OUTLINE}', '{STYLE}', '{REQUIREMENT}', '{USER_ROLE}', '{ORIENTATION}', '{ORIENTATION_JSON}', '{GREETINGS}', '{FIRST_MES_LEN}', '{WRITING_RULES}'],
+    // {ORIENTATION_JSON}：只在开了「让 AI 结合本书细化导向词条」时填，JSON 模板里多一行 orientation_notes，其他时候为空；
+    // {USER_PROFILE}「为这位用户量身定制」（写卡时选了用户画像才有）：自定义模板里没有这个占位符时同样追加在末尾
+    card: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}', '{TIMEPOINT}', '{CHAR_PROFILE}', '{RELATED}', '{WORLD}', '{OUTLINE}', '{STYLE}', '{REQUIREMENT}', '{USER_ROLE}', '{ORIENTATION}', '{USER_PROFILE}', '{ORIENTATION_JSON}', '{GREETINGS}', '{FIRST_MES_LEN}', '{WRITING_RULES}'],
+    // 原创写卡（系统提示与主提示用同一组变量）：{ORIGINAL} 用户写的设定（整卡重新生成 / 单字段重roll 时另附已定下的人物与世界设定）；
+    // {DESIGN_GUIDE} 设计要求里随卡片类型变化的几条（要 AI 设计人物与条目，或沿用已定下的）；{DESIGN_FIELDS} 一致性要求里提到的 character / cast / lore；
+    // {DESIGN_JSON} JSON 模板末尾的 character（单人卡）或 cast（世界卡）与 lore（已定下时为空）。
+    // {USER_ROLE} {ORIENTATION} {USER_PROFILE} 与写卡主提示相同，模板里没有时追加在末尾；没有 {DESIGN_JSON} 时也会在末尾追加输出要求
+    cardOriginalSystem: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}'],
+    cardOriginal: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}', '{ORIGINAL}', '{STYLE}', '{REQUIREMENT}', '{USER_ROLE}', '{ORIENTATION}', '{USER_PROFILE}', '{DESIGN_GUIDE}', '{DESIGN_FIELDS}', '{ORIENTATION_JSON}', '{DESIGN_JSON}', '{GREETINGS}', '{FIRST_MES_LEN}', '{WRITING_RULES}'],
     cardFieldRegen: ['{CONTEXT}', '{FIELD_LABEL}', '{CURRENT}', '{FORMAT_NOTE}', '{INSTRUCTION_LINE}', '{WRITING_RULES}'],
     orientationNotesSystem: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}'],
-    orientationNotes: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}', '{TIMEPOINT}', '{ORIENTATION_NAME}', '{ORIENTATION_BRIEF}', '{ORIENTATION_ENTRY}', '{USER_ROLE}', '{CARD_CONTENT}', '{CONTEXT}', '{INSTRUCTION_LINE}'],
+    // {USER_PROFILE_LINE}：卡片带用户画像时的雷点与成年人两行（没有画像时为空；模板里没有这个占位符时追加在末尾）
+    orientationNotes: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}', '{TIMEPOINT}', '{ORIENTATION_NAME}', '{ORIENTATION_BRIEF}', '{ORIENTATION_ENTRY}', '{USER_ROLE}', '{CARD_CONTENT}', '{CONTEXT}', '{USER_PROFILE_LINE}', '{INSTRUCTION_LINE}'],
+    // 原创卡的落点：{CONTEXT} 是用户的原创设定和设计好的人物、世界设定
+    orientationNotesOriginalSystem: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}'],
+    orientationNotesOriginal: ['{CHAR_NAME}', '{CARD_KIND}', '{ORIENTATION_NAME}', '{ORIENTATION_BRIEF}', '{ORIENTATION_ENTRY}', '{USER_ROLE}', '{CARD_CONTENT}', '{CONTEXT}', '{USER_PROFILE_LINE}', '{INSTRUCTION_LINE}'],
     deduceBranches: ['{CARD_CONTENT}', '{CONTEXT}', '{COUNT}', '{DIRECTIONS}', '{INSTRUCTION_LINE}', '{WRITING_RULES}'],
     deduceStages: ['{CARD_CONTENT}', '{CONTEXT}', '{BRANCHES}', '{INSTRUCTION_LINE}', '{WRITING_RULES}'],
     deduceChatBranches: ['{CARD_CONTENT}', '{CONTEXT}', '{COUNT}', '{DIRECTIONS}', '{INSTRUCTION_LINE}', '{WRITING_RULES}'],
@@ -887,9 +995,10 @@ export const PROMPT_PLACEHOLDERS = {
     foreshadow: ['{BOOK}', '{CHAPTERS}', '{EXISTING}'],
     continuity: ['{BOOK}', '{CHAPTER_TITLE}', '{CONTEXT}', '{TEXT}'],
     rewrite: ['{BOOK}', '{STYLE}', '{BEFORE}', '{SELECTED}', '{AFTER}', '{INSTRUCTION}'],
-    // 系统提示与主提示用同一组变量渲染，占位符列表相同；世界卡附加说明只在世界/旁白卡时渲染，结果填进主提示的 {WORLD_GUIDE}
-    statusSpecSystem: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}', '{TIMEPOINT}', '{CARD_CONTENT}', '{CONTEXT}', '{REQUIREMENT}', '{USER_ROLE}', '{MAX_VARS}', '{WORLD_GUIDE}', '{TEMPLATE_SPEC}', '{TYPE_GUIDE}', '{JSON_TEMPLATE}', '{INSTRUCTION_LINE}'],
-    statusSpec: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}', '{TIMEPOINT}', '{CARD_CONTENT}', '{CONTEXT}', '{REQUIREMENT}', '{USER_ROLE}', '{MAX_VARS}', '{WORLD_GUIDE}', '{TEMPLATE_SPEC}', '{TYPE_GUIDE}', '{JSON_TEMPLATE}', '{INSTRUCTION_LINE}'],
+    // 系统提示与主提示用同一组变量渲染，占位符列表相同；世界卡附加说明只在世界/旁白卡时渲染，结果填进主提示的 {WORLD_GUIDE}；
+    // {USER_PROFILE}：卡片带用户画像时的「用户偏好」（模板里没有这个占位符时追加在末尾）
+    statusSpecSystem: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}', '{TIMEPOINT}', '{CARD_CONTENT}', '{CONTEXT}', '{REQUIREMENT}', '{USER_ROLE}', '{USER_PROFILE}', '{MAX_VARS}', '{WORLD_GUIDE}', '{TEMPLATE_SPEC}', '{TYPE_GUIDE}', '{JSON_TEMPLATE}', '{INSTRUCTION_LINE}'],
+    statusSpec: ['{BOOK}', '{CHAR_NAME}', '{CARD_KIND}', '{TIMEPOINT}', '{CARD_CONTENT}', '{CONTEXT}', '{REQUIREMENT}', '{USER_ROLE}', '{USER_PROFILE}', '{MAX_VARS}', '{WORLD_GUIDE}', '{TEMPLATE_SPEC}', '{TYPE_GUIDE}', '{JSON_TEMPLATE}', '{INSTRUCTION_LINE}'],
     statusSpecWorld: ['{CHAR_NAME}', '{CAST}'],
     statusHtmlSystem: ['{CHAR_NAME}', '{CARD_KIND}', '{SPEC_SUMMARY}', '{SAMPLE_JSON}', '{BINDING_GUIDE}', '{LAYOUT_GUIDE}', '{STYLE_REF}', '{WORLD_GUIDE}', '{REQUIREMENT}', '{INSTRUCTION_LINE}'],
     statusHtml: ['{CHAR_NAME}', '{CARD_KIND}', '{SPEC_SUMMARY}', '{SAMPLE_JSON}', '{BINDING_GUIDE}', '{LAYOUT_GUIDE}', '{STYLE_REF}', '{WORLD_GUIDE}', '{REQUIREMENT}', '{INSTRUCTION_LINE}'],

@@ -146,7 +146,7 @@ export const charactersTab = {
             box.innerHTML = items.map((c) => {
                 const info = `
                     <div><b>${esc(c.name)}</b> <span class="nl-tag nl-imp-${c.importance}">${importanceLabel(c.importance)}</span>${c.locked ? ` <span class="nl-muted" title="已锁定">${icon('lock', { size: 13, label: '已锁定' })}</span>` : ''}</div>
-                    <div class="nl-muted nl-small">${esc(truncate(c.identity || '（无身份）', 40))} · 出场 ${c.chunksSeen.length} 段</div>`;
+                    <div class="nl-muted nl-small">${esc(truncate(c.identity || '（无身份）', 40))}${app.project.chunks.length ? ` · 出场 ${c.chunksSeen.length} 段` : ''}</div>`;
                 if (!selecting) {
                     return `
                 <div class="nl-char-item ${current === c.name ? 'active' : ''}" data-name="${esc(c.name)}" tabindex="0" role="button">${info}
@@ -160,7 +160,10 @@ export const charactersTab = {
                 </div>`;
             }).join('') || (Object.keys(app.project.characters).length
                 ? emptyState('没有符合筛选条件的角色。', '', { ico: 'search' })
-                : emptyState('先去「提取」页提取资料。', '<button class="nl-btn nl-sm" data-goto="extract">去提取</button>', { title: '没有角色', ico: 'characters' }));
+                : app.project.chunks.length
+                    ? emptyState('先去「提取」页提取资料。', '<button class="nl-btn nl-sm" data-goto="extract">去提取</button>', { title: '没有角色', ico: 'characters' })
+                    // 原创项目：角色来自原创写卡（存进项目）或手动新建
+                    : emptyState('在「角色卡」页原创写卡时，AI 设计的角色可以存到这里；也可以点右上角的「手动新建」添加。', '<button class="nl-btn nl-sm" data-goto="cards">去原创写卡</button>', { title: '没有角色', ico: 'characters' }));
             qs(el, '.nl-char-count').textContent = `${items.length} / ${Object.keys(app.project.characters).length}`;
             if (focusName !== undefined) {
                 const row = rows().find((r) => r.dataset.name === focusName);
@@ -214,7 +217,7 @@ export const charactersTab = {
                 <div class="nl-card-head">
                     <div>
                         <h3>${esc(c.name)}</h3>
-                        <div class="nl-card-desc">首次出场：${esc(chunkTitle(c.firstChunk))} · 最近：${esc(chunkTitle(c.lastChunk))}</div>
+                        <div class="nl-card-desc">${app.project.chunks.length ? `首次出场：${esc(chunkTitle(c.firstChunk))} · 最近：${esc(chunkTitle(c.lastChunk))}` : c.manual ? '手动添加的角色（项目里没有原文）' : '项目里没有原文'}</div>
                     </div>
                     <button class="nl-btn nl-sm" data-act="make-card">${icon('cards', { size: 14 })}生成角色卡</button>
                 </div>

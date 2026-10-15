@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const [outDir = '.impeccable/review/shots', ...args] = process.argv.slice(2);
-const TABS = args.length ? args : ['project', 'chunks', 'extract', 'characters', 'relations', 'worldbook', 'outline', 'style', 'cards', 'plan', 'foreshadow', 'continue', 'settings'];
+const TABS = args.length ? args : ['project', 'chunks', 'extract', 'characters', 'relations', 'worldbook', 'outline', 'style', 'profiles', 'cards', 'plan', 'foreshadow', 'continue', 'settings'];
 const PORT = process.env.SHOT_PORT || 8768;
 const SIZES = (process.env.SHOT_SIZES || 'desktop:1440x900,mobile:390x844').split(',').map((s) => {
     const [name, wh] = s.split(':');

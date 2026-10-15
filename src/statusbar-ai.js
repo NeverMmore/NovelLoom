@@ -27,6 +27,9 @@ import {
 import { STATUS_BINDING_GUIDE, STATUSBAR_THEMES, cleanFragment, compileStatusDocument, renderDefaultFragment } from './statusbar-runtime.js';
 import { templateVarCap } from './statusbar-templates.js';
 import { userRoleStatusText } from './userrole.js';
+import { userProfileStatusText } from './userprofile.js';
+import { normalizeCardOrientation } from './orientation.js';
+import { isOriginalCard, originalBackgroundText } from './original.js';
 import { abortError, isAbortError, truncate } from './utils.js';
 
 /** generateStatusBar 的 parts 可选值 */
@@ -105,6 +108,8 @@ function instructionLine(instruction) {
 // ---------------- 提示词 ----------------
 
 function timepointText(project, card) {
+    // 原创卡没有原著的时间线：初始值按开场时的情境
+    if (isOriginalCard(card)) return '卡片开场时';
     try {
         return project?.chunks ? timepointLabel(project, uptoOf(card)) : '全书结束时';
     } catch {
@@ -115,6 +120,8 @@ function timepointText(project, card) {
 /** 原著背景（精简版）：角色资料 + 相关世界设定 + 到时间点为止的剧情进展。资料不全时只返回能拿到的部分 */
 function backgroundContext(project, settings, card) {
     if (!project) return '（无）';
+    // 原创卡：背景是用户的设定和设计好的人物、世界设定（不拿项目里其他的原著资料）
+    if (isOriginalCard(card)) return originalBackgroundText(project, card, { maxChars: 5000 }) || '（无）';
     const upto = uptoOf(card);
     const parts = [];
     let focus = '';
@@ -310,6 +317,8 @@ export function buildStatusSpecPrompt(project, settings, card, { base = null, in
     try {
         userRole = userRoleStatusText(project, card);
     } catch { /* 资料不全：不写 */ }
+    // 用户画像（写卡时选的，卡片快照）：喜欢的元素里值得追踪的做成变量，雷点不出现（与卡的导向同名的雷点不算）；没有画像时为空
+    const userProfile = userProfileStatusText(card?.userProfile, { orientationName: normalizeCardOrientation(card?.orientation)?.name || '' });
     const vars = {
         BOOK: bookOf(project),
         CHAR_NAME: charName,
@@ -320,6 +329,7 @@ export function buildStatusSpecPrompt(project, settings, card, { base = null, in
         REQUIREMENT: String(sb.requirement || '').trim() || '（无特别要求）',
         // 主角（{{user}}）是谁：写卡时选了「{{user}} 扮演」原著角色 / 自定义身份时，主角.* 变量按这个身份设计；原创新身份时为空
         USER_ROLE: userRole ? `\n${userRole}\n` : '',
+        USER_PROFILE: userProfile ? `\n${userProfile}\n` : '',
         MAX_VARS: base ? countSpecLeaves(base) : maxVarsOf(settings),
         WORLD_GUIDE: guide,
         TEMPLATE_SPEC: base ? keepSection(base, { init, rules, castLine: world ? keepCastLine(base, cast) : '' }) : '',
@@ -331,6 +341,7 @@ export function buildStatusSpecPrompt(project, settings, card, { base = null, in
     let prompt = withWorldGuide(template, render(template, vars), guide);
     // 用户改过的模板里没有 {USER_ROLE} 时接在末尾，照样生效
     if (userRole && !String(template).includes('{USER_ROLE}')) prompt = `${prompt}\n\n${userRole}`;
+    if (userProfile && !String(template).includes('{USER_PROFILE}')) prompt = `${prompt}\n\n${userProfile}`;
     return {
         system: render(getPrompt(settings, 'statusSpecSystem'), vars),
         prompt,

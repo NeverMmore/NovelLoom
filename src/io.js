@@ -6,6 +6,7 @@ import { mergeOrientationTemplates } from './orientation.js';
 import { buildOutlineText, characterProfileText, getVolumes, mergeEntry, normalizeProject } from './project.js';
 import { PORTRAIT_STORE_MODES } from './statusbar-portraits.js';
 import { templatePortraits } from './statusbar-templates.js';
+import { mergeUserProfiles } from './userprofile.js';
 import { buildWorldbookEntries, parseExternalWorld, toSTWorld } from './worldbook.js';
 import { downloadFile, safeFileName, structuredCloneSafe, uid } from './utils.js';
 
@@ -102,6 +103,8 @@ export function applyConfig(settings, json) {
     }
     // 卡的导向·我的模板：同样按 id 合并，逐个规整（内置模板的 id 跳过）
     if (Array.isArray(s.orientationTemplates)) mergeOrientationTemplates(settings, structuredCloneSafe(s.orientationTemplates));
+    // 用户画像：按 id 合并、逐个规整；导入的配置里有默认画像时以导入的为准，最多一个默认
+    if (Array.isArray(s.userProfiles)) mergeUserProfiles(settings, structuredCloneSafe(s.userProfiles));
     settings.chatgen.isRunning = false;
     return { warnings };
 }

@@ -8,7 +8,7 @@ import { buildVolumeSummary } from '../tools.js';
 import { rewriteSelection } from '../rewrite.js';
 import { createSnapshot } from '../store.js';
 import { formatNumber, truncate } from '../utils.js';
-import { bindSettings, busy, confirmDialog, emptyState, esc, icon, openDialog, optionList, promptDialog, qs, qsa, rerollBtn, statusIcon } from './common.js';
+import { bindSettings, busy, confirmDialog, emptyState, esc, icon, noSourceEmptyHtml, openDialog, optionList, promptDialog, qs, qsa, rerollBtn, statusIcon } from './common.js';
 
 const ORIGIN = { source: '原文', generated: '续写', chat: '聊天', mixed: '混合' };
 
@@ -20,6 +20,11 @@ export const chunksTab = {
 
         const render = () => {
             const p = app.project;
+            // 原创项目（不导入 TXT）没有分段：说明去哪里写卡、加资料
+            if (!p.chunks.length) {
+                el.innerHTML = noSourceEmptyHtml(p, 'chunks');
+                return;
+            }
             const chunks = p.chunks.filter((c) => filter === 'all' || c.status === filter || (filter === 'generated' && c.origin !== 'source'));
             const vols = getVolumes(p).filter((v) => !v.implicit);
             const volHead = (c) => {
@@ -216,6 +221,8 @@ export const chunksTab = {
         };
 
         const onClick = async (e) => {
+            const go = e.target.closest('[data-goto]');
+            if (go) return switchTab(go.dataset.goto);
             const f = e.target.closest('[data-filter]');
             if (f) {
                 filter = f.dataset.filter;

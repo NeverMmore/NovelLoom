@@ -7,6 +7,7 @@
 import { DEFAULT_STATUS_BAR } from './constants.js';
 import { extractJson } from './json.js';
 import { estimateTokens } from './utils.js';
+import { originalCastNames } from './original.js';
 import {
     STATUS_TAG, buildInitialState, cloneJson, decodeFenceText, encodeFenceText, getPath, isFrontendText, isPlainObj, jsLit, jsStr,
     setPath, simulateStRegexReplace, splitPath, unwrapStatusFence, wrapStatusFence,
@@ -252,6 +253,9 @@ export function worldCastNames(project, card, { limit = 8, all = false } = {}) {
     const upto = Number.isFinite(card?.timepoint) ? card.timepoint : Infinity;
     // {{user}} 扮演的原著角色就是主角（主角.*），不算进主要角色（card.userRole，见 userrole.js）
     const me = card?.userRole?.kind === 'character' ? String(card.userRole.charKey || '').trim() : '';
+    // 原创世界卡：主要角色就是 AI 按设定设计的那几个（卡里的名字），不是项目里的全部角色
+    const cast = originalCastNames(card);
+    if (cast) return cast.filter((n) => n !== me && !segmentProblem(n, { allowSpace: true })).slice(0, Math.max(0, limit));
     const list = Object.entries(project?.characters || {})
         .filter(([key, c]) => !me || (key !== me && String(c?.name || '').trim() !== me))
         .map(([key, c]) => ({ name: String(c?.name || key).trim(), rank: CAST_RANK[c?.importance] || 0, first: Number.isFinite(c?.firstChunk) ? c.firstChunk : 0 }))

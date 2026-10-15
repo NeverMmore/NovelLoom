@@ -40,6 +40,31 @@ export function createProject({ name, fileName = '', encoding = '', text = '', c
     };
 }
 
+/**
+ * 原创项目：不导入 TXT，没有分段（source.fileName 为 ''，original = true）。资料来自「角色卡」页原创写卡时存进来的角色和条目，
+ * 或在「角色」「世界书」页手动添加的（见 original.js）。
+ */
+export function createEmptyProject({ name = '' } = {}) {
+    const n = String(name ?? '').trim() || ORIGINAL_PROJECT_NAME;
+    const p = createProject({ name: n });
+    p.original = true;
+    return p;
+}
+
+/** 原创项目没填名字时的默认名 */
+export const ORIGINAL_PROJECT_NAME = '原创项目';
+
+/**
+ * 没填名字的原创项目用哪个名字：「原创项目」「原创项目 2」「原创项目 3」…里第一个没被已有项目用掉的。
+ * 名字同时是书名、世界书名（《原创项目》世界书），两个都叫「原创项目」的项目写入酒馆时会互相覆盖世界书。
+ * @param {string[]} taken 已有项目的名字
+ */
+export function freeOriginalProjectName(taken = []) {
+    const used = new Set(taken.map((n) => String(n ?? '').trim()));
+    if (!used.has(ORIGINAL_PROJECT_NAME)) return ORIGINAL_PROJECT_NAME;
+    for (let i = 2; ; i++) if (!used.has(`${ORIGINAL_PROJECT_NAME} ${i}`)) return `${ORIGINAL_PROJECT_NAME} ${i}`;
+}
+
 /** 兼容旧数据/导入数据，补齐字段 */
 export function normalizeProject(p) {
     const base = createProject({ name: p?.name });
@@ -173,6 +198,10 @@ export function normalizeCharacter(c = {}) {
         nsfwNotes: c.nsfwNotes || '',
         entryConfig: c.entryConfig || {},
         updatedAt: c.updatedAt || Date.now(),
+        /** 原创写卡时存进来的角色：记着是哪张原创卡设计的（别的原创卡写入酒馆时不带它，见 publish.js 的 cardEntries） */
+        ...(c.originalCardId ? { originalCardId: String(c.originalCardId) } : {}),
+        /** 同名另存的原创角色（「林晚（原创）」）留作别名的卡里的名字：只属于那张原创卡，提取认人时不看它（见 original.js 的 isShadow） */
+        ...(c.originalShadow ? { originalShadow: String(c.originalShadow) } : {}),
     };
 }
 
@@ -210,10 +239,12 @@ export function findCharacterKey(project, name, aliases = []) {
     if (!n) return null;
     if (project.characters[n]) return n;
     const entries = Object.entries(project.characters);
-    const byName = entries.filter(([, ch]) => (ch.aliases || []).includes(n)).map(([key]) => key);
+    // 原创卡同名另存时留下的影子别名（originalShadow）只给那张卡的世界书触发用，认人时不算
+    const hasAlias = (ch, a) => (ch.aliases || []).includes(a) && ch.originalShadow !== a;
+    const byName = entries.filter(([, ch]) => hasAlias(ch, n)).map(([key]) => key);
     const specific = uniq(aliases).filter((a) => a !== n && isSpecificAlias(a));
     const byAlias = entries
-        .filter(([key, ch]) => specific.some((a) => a === key || (ch.aliases || []).includes(a)))
+        .filter(([key, ch]) => specific.some((a) => a === key || hasAlias(ch, a)))
         .map(([key]) => key);
     if (byName.length === 1) {
         // 名字只指向一个角色，但具体别名指向的是别人：名字是泛称时信别名，否则视为有歧义
@@ -235,6 +266,8 @@ export function findEntryKey(project, category, name, keywords = []) {
     const n = String(name || '').trim();
     if (cat[n]) return n;
     for (const [key, e] of Object.entries(cat)) {
+        // 原创卡同名另存的条目（「雾港（原创）」）：关键词里的卡内名字是影子，提取认条目时不看它，也不往它身上并
+        if (e.originalShadow) continue;
         if ((e.keywords || []).includes(n)) return key;
         if (keywords.includes(key)) return key;
     }
@@ -956,6 +989,11 @@ function dedupeRelationships(project) {
     });
 }
 
+/** 原创卡记着存进项目的角色名（card.original.characters[].savedAs）：角色改名 / 合并时跟着改 */
+function renameInOriginal(card, oldName, newName) {
+    for (const d of card?.original?.characters || []) if (d?.savedAs === oldName) d.savedAs = newName;
+}
+
 /** 重命名角色（同步别名、卡片引用、关系图谱） */
 export function renameCharacter(project, oldName, newName) {
     newName = String(newName || '').trim();
@@ -970,6 +1008,7 @@ export function renameCharacter(project, oldName, newName) {
     for (const card of project.cards) {
         if (card.charName === oldName) card.charName = newName;
         if (card.userRole?.charKey === oldName) card.userRole.charKey = newName; // {{user}} 扮演的原著角色
+        renameInOriginal(card, oldName, newName);
     }
     renameInRelationships(project, oldName, newName);
     renameInGroupCards(project, oldName, newName);
@@ -1025,6 +1064,7 @@ export function mergeCharactersInto(project, targetName, sourceNames) {
         for (const card of project.cards) {
             if (card.charName === n) card.charName = targetName;
             if (card.userRole?.charKey === n) card.userRole.charKey = targetName;
+            renameInOriginal(card, n, targetName);
         }
         renameInRelationships(project, n, targetName);
         renameInGroupCards(project, n, targetName);
@@ -1060,7 +1100,8 @@ export function mergeEntriesInto(project, category, targetName, sourceNames, tar
 
 /** 用 mapFn(oldIndex) → newIndex|null 重映射项目中的所有分块引用 */
 export function remapChunkRefs(project, mapFn) {
-    const m = (i) => (Number.isFinite(i) ? mapFn(i) : i);
+    // 负数（如原创角色设计出来的经历，chunk = -1）不属于任何分段：不重映射
+    const m = (i) => (Number.isFinite(i) && i >= 0 ? mapFn(i) : i);
     for (const [name, ch] of Object.entries(project.characters)) {
         ch.experiences = ch.experiences.map((e) => ({ ...e, chunk: m(e.chunk) })).filter((e) => e.chunk !== null);
         ch.quotes = ch.quotes.map((q) => ({ ...q, chunk: m(q.chunk) })).filter((q) => q.chunk !== null);

@@ -4,7 +4,7 @@ import { ChatGenRunner } from './chatgen.js';
 import { ContinuationRunner } from './continue.js';
 import { decodeText, normalizeNovelText } from './encoding.js';
 import { ExtractionRunner } from './extract.js';
-import { createProject, detectVolumesFromChunks, normalizeProject } from './project.js';
+import { createEmptyProject, createProject, detectVolumesFromChunks, freeOriginalProjectName, normalizeProject } from './project.js';
 import { splitNovel } from './splitter.js';
 import { CHAPTER_REGEX_PRESETS } from './constants.js';
 import * as store from './store.js';
@@ -145,6 +145,18 @@ export const app = {
         await store.saveProject(p);
         this.setProject(p);
         this.log(`📚 新建项目「${p.name}」：${text.length} 字，分为 ${chunks.length} 段（编码 ${encoding}）${vols ? `，识别到 ${vols} 卷` : ''}`, 'success');
+        return p;
+    },
+
+    /** 原创项目：不导入 TXT，没有分段，直接去「角色卡」原创写卡（见 original.js） */
+    async createEmptyProject({ name } = {}) {
+        // 没填名字：避开已有项目的名字（「原创项目 2」…），免得两个项目共用一个世界书名、写入酒馆时互相覆盖
+        let n = String(name ?? '').trim();
+        if (!n) n = freeOriginalProjectName((await store.listProjects()).map((x) => x.name));
+        const p = createEmptyProject({ name: n });
+        await store.saveProject(p);
+        this.setProject(p);
+        this.log(`📚 新建原创项目「${p.name}」：不导入原文，可以直接在「角色卡」页按你的设定原创写卡`, 'success');
         return p;
     },
 

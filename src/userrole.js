@@ -67,10 +67,13 @@ export function userRoleProfile(project, role, upto = Infinity) {
     }
 }
 
-/** 一句话说明（表单、编辑框里显示） */
-export function userRoleLabel(project, role) {
+/**
+ * 一句话说明（表单、编辑框里显示）
+ * @param {{original?: boolean}} opt original：原创卡（没有原著：叫「项目里的角色」）
+ */
+export function userRoleLabel(project, role, { original = false } = {}) {
     const r = normalizeUserRole(role);
-    if (r.kind === 'character') return `原著角色「${userRoleCharName(project, r)}」`;
+    if (r.kind === 'character') return `${original ? '项目里的角色' : '原著角色'}「${userRoleCharName(project, r)}」`;
     if (r.kind === 'custom') return `自定义：${truncate(r.text, 40)}`;
     return '原创新身份';
 }
@@ -84,12 +87,29 @@ const USER_ROLE_WINS = '- 「用户要求」里关于 {{user}} 身份的说法�
  * 什么都没写时「用户要求」的默认文字会说明 {{user}} 以新身份出现，见 cards.js 的 buildCardPrompt）。
  * @param {object} project
  * @param {object} role card.userRole
- * @param {{upto?: number, world?: boolean, orientation?: boolean}} opt
+ * @param {{upto?: number, world?: boolean, orientation?: boolean, original?: boolean}} opt
  *   world：世界/旁白卡（{{char}} 是旁白：原著里各角色与这个人的关系就是他们与 {{user}} 的关系；主要角色一览里不再单独列出这个人）；
- *   orientation：同时选了卡的导向（两人现在的关系以导向为准，原著关系只作底子）
+ *   orientation：同时选了卡的导向（两人现在的关系以导向为准，原著关系只作底子）；
+ *   original：原创写卡（{{char}} 和这个世界是按用户设定新写的，与这个人原本没有关系：按 TA 的身份和用户的设定安排）
  */
-export function userRolePromptBlock(project, role, { upto = Infinity, world = false, orientation = false } = {}) {
+export function userRolePromptBlock(project, role, { upto = Infinity, world = false, orientation = false, original = false } = {}) {
     const r = normalizeUserRole(role);
+    if (r.kind === 'character' && original) {
+        const name = userRoleCharName(project, r);
+        const profile = userRoleProfile(project, r, upto);
+        return [
+            '# {{user}} 的身份',
+            `{{user}} 扮演项目里的角色「${name}」。${profile ? `「${name}」的资料：\n${profile}` : ''}`,
+            `- 卡片各字段里凡是指「${name}」的地方一律写成 {{user}}，不要出现「${name}」这个名字。`,
+            world
+                ? `- 按「${name}」的身份和经历把 {{user}} 放进这个世界；主要角色与 {{user}} 的关系按用户的设定安排${orientation ? '，「卡的导向」对人物关系的设定优先' : ''}。`
+                : `- {{char}} 是按用户设定原创的角色：按「${name}」的身份和经历，结合用户的设定安排 {{char}} 与 {{user}} 的关系和相遇的契机${orientation ? '，「卡的导向」对两人关系的设定优先' : ''}。`,
+            orientation ? `- 原伴侣、第三者等导向里的其他角色不能是「${name}」本人。` : '',
+            world ? `- 主要角色和 cast 里都不要单独列出「${name}」，写到这个人时一律写成 {{user}}。` : '',
+            USER_ROLE_WINS,
+            '- 不替 {{user}} 说话、行动，不描写 {{user}} 的心理活动。',
+        ].filter(Boolean).join('\n');
+    }
     if (r.kind === 'character') {
         const name = userRoleCharName(project, r);
         const profile = userRoleProfile(project, r, upto);
@@ -137,10 +157,11 @@ export function userRoleStatusText(project, card) {
     if (r.kind === 'character') {
         const name = userRoleCharName(project, r);
         const profile = userRoleProfile(project, r, upto);
+        const original = card?.source === 'original';
         return [
             '# 主角（{{user}}）的身份',
-            `主角就是 {{user}}，扮演原著角色「${name}」。${profile ? `「${name}」的资料：\n${profile}` : ''}`,
-            `- 主角.* 的变量按「${name}」的身份、处境和能力设计，初始值符合「${name}」在故事时间点时的状态。`,
+            `主角就是 {{user}}，扮演${original ? '项目里的角色' : '原著角色'}「${name}」。${profile ? `「${name}」的资料：\n${profile}` : ''}`,
+            `- 主角.* 的变量按「${name}」的身份、处境和能力设计，初始值符合「${name}」在${original ? '卡片开场时' : '故事时间点时'}的状态。`,
             `- 「${name}」就是主角：不要再为「${name}」建角色变量，也不要把「${name}」放进按角色名记录的记录里。`,
         ].join('\n');
     }
@@ -159,7 +180,17 @@ export function userRoleEntry(project, card) {
     const r = normalizeUserRole(card?.userRole, { exclude: card?.kind === 'world' ? '' : card?.charName });
     if (r.kind === 'new') return null;
     let content;
-    if (r.kind === 'character') {
+    if (r.kind === 'character' && card?.source === 'original') {
+        // 原创卡：{{char}} 与这个人原本没有关系，只交代身份和经历
+        const name = userRoleCharName(project, r);
+        const profile = userRoleProfile(project, r, Infinity);
+        const tail = normalizeCardOrientation(card?.orientation) ? '；与「剧情导向」词条冲突时以剧情导向为准。' : '。';
+        content = [
+            `{{user}} 扮演「${name}」：「${name}」的经历、身份和人际关系都属于 {{user}}${tail}`,
+            profile ? `「${name}」的资料：\n${profile}` : '',
+            '不替 {{user}} 说话、行动，不描写 {{user}} 的心理活动。',
+        ].filter(Boolean).join('\n\n');
+    } else if (r.kind === 'character') {
         const name = userRoleCharName(project, r);
         const profile = userRoleProfile(project, r, Number.isFinite(card?.timepoint) ? card.timepoint : Infinity);
         const relation = card?.kind === 'world'

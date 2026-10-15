@@ -6,6 +6,7 @@ import { detectChapters } from '../splitter.js';
 import { deleteProject, listProjects, loadProject, saveProject } from '../store.js';
 import { exportTask, parseTask } from '../io.js';
 import { projectStats } from '../project.js';
+import { projectHasSource } from '../original.js';
 import { formatNumber, pickFile, readFileAsText } from '../utils.js';
 import { bindSettings, busy, confirmDialog, emptyState, esc, fmtTime, icon, optionList, promptDialog, qs } from './common.js';
 import { pipelineState } from './pipeline.js';
@@ -36,7 +37,7 @@ export const projectTab = {
                 <div class="nl-card-head">
                     <div>
                         <h3>${esc(p.name)}</h3>
-                        <div class="nl-card-desc">${formatNumber(st.chars)} 字 · 更新于 ${fmtTime(p.updatedAt)}</div>
+                        <div class="nl-card-desc">${projectHasSource(p) ? `${formatNumber(st.chars)} 字` : `${p.original ? '原创项目' : '没有原文'} · ${st.characters} 个角色 · ${p.cards.length} 张卡`} · 更新于 ${fmtTime(p.updatedAt)}</div>
                     </div>
                     <button class="nl-btn nl-sm" data-act="rename-current">重命名</button>
                 </div>
@@ -76,6 +77,20 @@ export const projectTab = {
             <section class="nl-card">
                 <div class="nl-card-head">
                     <div>
+                        <h3>新建原创项目（不导入 TXT）</h3>
+                        <div class="nl-card-desc">没有小说也能写卡：新建一个空项目，在「角色卡」页按你的设定原创单人角色卡或世界卡。AI 设计的角色和设定可以存进项目，之后在「角色」「世界书」页修改。</div>
+                    </div>
+                </div>
+                <div class="nl-row nl-wrap nl-orig-new">
+                    <label class="nl-sr-only" for="nl-orig-project-name">原创项目名称</label>
+                    <input class="nl-input nl-grow" id="nl-orig-project-name" data-orig-project-name maxlength="40" placeholder="项目名（可留空），例如「我的原创」">
+                    <button class="nl-btn" data-act="create-original">${icon('plus')}新建原创项目</button>
+                </div>
+            </section>
+
+            <section class="nl-card">
+                <div class="nl-card-head">
+                    <div>
                         <h3>全部项目</h3>
                         <div class="nl-card-desc">项目保存在浏览器里；导出的任务文件可以在别的设备上导入继续。</div>
                     </div>
@@ -85,13 +100,13 @@ export const projectTab = {
                     <div class="nl-list-item ${x.id === p?.id ? 'active' : ''}">
                         <div class="nl-grow">
                             <b>${esc(x.name)}</b>
-                            <div class="nl-muted nl-small">${x.doneCount}/${x.chunkCount} 段已提取 · ${x.characterCount} 个角色 · 更新于 ${fmtTime(x.updatedAt)}</div>
+                            <div class="nl-muted nl-small">${x.original && !x.chunkCount ? `原创项目 · ${x.characterCount} 个角色 · ${x.cardCount || 0} 张卡` : `${x.doneCount}/${x.chunkCount} 段已提取 · ${x.characterCount} 个角色`} · 更新于 ${fmtTime(x.updatedAt)}</div>
                         </div>
                         ${x.id === p?.id ? '<span class="nl-tag nl-imp-main">当前</span>' : `<button class="nl-btn nl-sm" data-act="open" data-id="${esc(x.id)}">打开</button>`}
                         <button class="nl-btn nl-sm" data-act="export" data-id="${esc(x.id)}">导出</button>
                         <button class="nl-btn nl-sm nl-danger" data-act="delete" data-id="${esc(x.id)}">删除</button>
                     </div>`).join('')}</div>`
-                    : emptyState('工作流程：导入小说 → 自动分段 → 逐段提取章节概要、角色档案、世界书条目（前文资料会滚动注入后续段落）→ 校对 → 生成角色卡并写入酒馆。可选：按大纲续写新章节，新章节会回灌资料库。', '', { title: '还没有项目', ico: 'overview' })}
+                    : emptyState('工作流程：导入小说 → 自动分段 → 逐段提取章节概要、角色档案、世界书条目（前文资料会滚动注入后续段落）→ 校对 → 生成角色卡并写入酒馆。可选：按大纲续写新章节，新章节会回灌资料库。没有小说时，新建原创项目直接按你的设定写卡。', '', { title: '还没有项目', ico: 'overview' })}
             </section>`;
             bindSettings(el, app.settings, () => app.saveSettings());
         };
@@ -152,6 +167,13 @@ export const projectTab = {
                     switchTab('chunks');
                     break;
                 }
+                case 'create-original': {
+                    if (app.isBusy()) return app.log('有任务正在运行，请先停止', 'warn');
+                    const name = qs(el, '[data-orig-project-name]')?.value.trim() || '';
+                    await busy(btn, () => app.createEmptyProject({ name }));
+                    switchTab('cards');
+                    break;
+                }
                 case 'open':
                     if (app.isBusy()) return app.log('有任务正在运行，不能切换项目', 'warn');
                     await app.openProject(id);
@@ -203,6 +225,12 @@ export const projectTab = {
 
         el.addEventListener('click', onClick);
         el.addEventListener('change', onChange);
+        // 原创项目名称里按回车 = 点「新建原创项目」
+        el.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' || e.isComposing || !e.target.matches?.('[data-orig-project-name]')) return;
+            e.preventDefault();
+            el.querySelector('[data-act="create-original"]')?.click();
+        });
         render();
         return {};
     },

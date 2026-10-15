@@ -112,6 +112,27 @@ const mock = (prompt) => {
     if (src.includes('魔药')) entries.世界观.push({ name: '魔女秘药', keywords: ['魔药', '秘药'], content: '效果: 喝下会成为见习魔女' });
     return '```json\n' + JSON.stringify({ chapters: [{ name: title, notes: title + '：江酒与莉莉丝之间发生了新的变化，关系进一步推进。' }], characters, entries, style: { perspective: '第三人称', tone: '口语化', mood: '轻松中带惊悚' }, missing_names: src.includes('雨中') ? [{ type: '地名类', vague: '那家店', context: '走进了那家店', suggest: '莉莉丝酒吧' }] : [] }) + '\n```';
   }
+  // 单字段重roll（smoke_original.py 用）：背景资料里有整段写卡提示词，放在写卡分支前面
+  const regenField = prompt.match(/请重新生成「([^」]+)」这一个字段/);
+  if (regenField) return '【重写的' + regenField[1] + '】雾港的夜雨还没停，旧书店的门铃又响了。';
+  // 原创写卡（smoke_original.py 用；window.__originalMock 存在时交给它）：单人卡带 character，世界卡带 cast，都带 lore；
+  // 整卡重新生成（已定下设定，提示词里没有 "character" / "cast" 模板）只回卡片字段
+  if (prompt.includes('按用户的原创设定写一张')) {
+    if (typeof window.__originalMock === 'function') return window.__originalMock(prompt);
+    const world = prompt.includes('这是一张“世界/旁白卡”');
+    const fixed = !prompt.includes('"character": {') && !prompt.includes('"cast": [');
+    const named = (prompt.match(/角色名：([^（\n]+)（用户定的/) || [])[1];
+    const base = world
+      ? { name: '雾港旧事', description: '世界总览:\n  雾港是一座常年起雾的港城\n主要角色:\n  - 沈砚：雾港警署的探长\n  - 阿绫：码头茶楼的老板娘', personality: '', scenario: '雾夜，{{user}} 刚下渡轮', first_mes: '汽笛声穿过浓雾。码头茶楼的灯笼一盏盏亮起来。', alternate_greetings: ['清晨的鱼市。'], mes_example: '<START>\n{{user}}: 这是哪里？\n{{char}}: 阿绫擦着茶碗：“雾港。”', creator_notes: '原创世界卡', tags: ['原创', '港城'] }
+      : { name: named || '林晚', description: '基本信息:\n  姓名: ' + (named || '林晚') + '\n  身份: 雾港旧书店的店主\n外貌特征:\n  - 左耳戴一枚铜质书签耳坠', personality: '说话慢条斯理', scenario: '下雨天，{{user}} 推开旧书店的门', first_mes: '门铃响了。她从书堆后抬起头，把一本书合上。\n“又下雨了。”', alternate_greetings: ['雨停的傍晚。', '书店打烊前。'], mes_example: '<START>\n{{user}}: 还开着吗？\n{{char}}: 开着，雨天都开。', creator_notes: '原创角色卡', tags: ['原创', '书店'] };
+    if (fixed) return JSON.stringify(base);
+    const lore = world
+      ? [{ category: '世界观', name: '雾港', keys: ['雾港'], content: '气候: 常年起雾\n规矩: 雾钟响三下宵禁' }, { category: '地点', name: '码头茶楼', keys: ['茶楼'], content: '位置: 三号码头\n老板: 阿绫' }, { category: '人物', name: '不该出现', keys: [], content: '人物不放进 lore' }]
+      : [{ category: '地点', name: '雾港旧书店', keys: ['旧书店'], content: '位置: 雾港老城区\n特点: 只在下雨天开门' }, { category: '势力', name: '港务署', keys: ['港务署'], content: '性质: 管理码头的官方机构' }, { category: '物品', name: '铜质书签', keys: ['书签'], content: '外观: 刻着潮汐纹\n来历: 祖母留下' }];
+    return '```json\n' + JSON.stringify(world
+      ? { ...base, cast: [{ name: '沈砚', aliases: ['沈探长'], identity: '雾港警署的探长', personality: '嘴硬心软', importance: 'main' }, { name: '阿绫', identity: '码头茶楼的老板娘', personality: '消息最灵通', importance: 'main' }, { name: '老周', identity: '摆渡人', importance: 'support' }], lore }
+      : { ...base, character: { name: named || '林晚', aliases: ['阿晚'], gender: '女', age: '二十四岁', identity: '雾港旧书店的店主', personality: '说话慢，遇到喜欢的书会忘了时间', relationship: '{{user}} 是常来避雨的客人', appearance: ['左耳戴一枚铜质书签耳坠'], verbalTics: ['称呼客人为“先生”或“小姐”'], experiences: ['十九岁继承了祖母的旧书店'], importance: 'main' }, lore }) + '\n```';
+  }
   if (prompt.includes('字段写法') && prompt.includes('这是一张“世界/旁白卡”')) return JSON.stringify({ name: '魔女旁白', description: '世界总览:\n  下城区边缘有一家莉莉丝的酒吧\n主要角色:\n  - 莉莉丝：大魔女\n  - 江酒：莉莉丝的女仆', personality: '', scenario: '酒吧打烊后，{{user}} 推门进来', first_mes: '雨夜，酒吧的灯还亮着。莉莉丝坐在吧台后，江酒在擦杯子。', alternate_greetings: ['清晨，酒吧还没开门。'], mes_example: '<START>\n{{user}}: 有人吗？\n{{char}}: 江酒抬起头：“打烊了。”', creator_notes: '来自《魔女》', tags: ['魔女', '群像'] });
   if (prompt.includes('字段写法')) return JSON.stringify({ name: '莉莉丝', description: '基本信息:\n  姓名: 莉莉丝\n  身份: 大魔女\n外貌特征:\n  - 黑色长裙\n性格调色盘:\n  底色: 骄傲\n  主色调: 从容', personality: '慢条斯理', scenario: '酒吧打烊后，{{user}} 推门进来', first_mes: '莉莉丝把最后一只杯子倒扣在吧台上——仿佛早就知道你会来。\n“坐。”', alternate_greetings: ['雨夜，门铃响了。', '茶会结束后。'], mes_example: '<START>\n{{user}}: 你好\n{{char}}: 坐。', creator_notes: '来自《魔女》', tags: ['魔女', '奇幻'] });
   if (prompt.includes('审稿意见')) return JSON.stringify({ first_mes: '莉莉丝把最后一只杯子倒扣在吧台上。\n“坐。”' });
@@ -180,6 +201,8 @@ const ctx = {
   SlashCommand: { fromProps: (p) => p },
 };
 window.SillyTavern = { getContext: () => ctx };
+// 测试脚本里自己接管某类请求（如先卡住、稍后放行）时，用它拿到默认的模拟回复
+window.__mockLLM = mock;
 // 模拟酒馆聊天：点击发送 → 追加用户消息 → 生成中（#mes_stop 可见）→ 追加 AI 回复
 document.getElementById('send_but').addEventListener('click', () => {
   const text = document.getElementById('send_textarea').value;
