@@ -471,11 +471,11 @@ function statusBarFingerprint(card) {
  * AI 生成又会覆盖 prev，所以结束后把 prev 改回套用前，「撤销」一步回到套用模板之前。
  * 卡上还没有变量时（只借外观）先由 AI 设计变量：模板有界面时接着参照它写界面，内置排版的模板只设计变量。
  * @param {'structure'|'look'} mode 沿用结构 / 只借外观
- * @param {{ai?: boolean, instruction?: string, warnings?: string[]}} opt warnings：传入数组时收集套用和 AI 生成时的提示
- *   （模板变量表规范化、AI 结果合并、界面兜底等，含超出范围 / 最小值大于最大值之类的修正）
+ * @param {{ai?: boolean, instruction?: string, warnings?: string[], signal?: AbortSignal}} opt warnings：传入数组时收集套用和 AI 生成时的提示
+ *   （模板变量表规范化、AI 结果合并、界面兜底等，含超出范围 / 最小值大于最大值之类的修正）；signal：中途停止
  * @returns {Promise<{warnings: string[], changed: boolean, ai: boolean}>} changed：状态栏的实际效果是否有变化；ai：是否调用了 AI
  */
-export async function applyTemplateToCard(card, c, template, mode, { ai = true, instruction = '', warnings = [] } = {}) {
+export async function applyTemplateToCard(card, c, template, mode, { ai = true, instruction = '', warnings = [], signal } = {}) {
     const before = statusBarFingerprint(card);
     // project：世界/旁白卡沿用结构时，把项目里的主要角色预先填进主要角色记录（不让 AI 调整时也不是空的）
     const res = applyStatusBarTemplate(card, template, mode, { settings: c.settings, project: c.project || null });
@@ -487,7 +487,7 @@ export async function applyTemplateToCard(card, c, template, mode, { ai = true, 
     let ran = false;
     if (ai && next) {
         try {
-            await generateStatusBar(c.project, c.settings, card, { ...next, template, instruction, onLog: c.log, warnings });
+            await generateStatusBar(c.project, c.settings, card, { ...next, template, instruction, signal, onLog: c.log, warnings });
             ran = true;
         } finally {
             sb.prev = undoTo;
@@ -508,10 +508,10 @@ function logWarnings(c, warnings, exclude = []) {
  * 选了模板时：模板有变量表就「沿用结构」（AI 只按这张卡填初始值和规则），只有界面就「只借外观」。
  * @param {object} card 刚生成的角色卡
  * @param {object} ctx { app, project, settings }
- * @param {{requirement?: string, templateId?: string}} opt
+ * @param {{requirement?: string, templateId?: string, signal?: AbortSignal}} opt signal：中途停止（停止时抛出 AbortError，卡片照常保留）
  * @returns {Promise<boolean>} 是否成功
  */
-export async function generateStatusBarForCard(card, ctx, { requirement = '', templateId = '' } = {}) {
+export async function generateStatusBarForCard(card, ctx, { requirement = '', templateId = '', signal } = {}) {
     const c = ctxOf(ctx);
     const sb = ensureStatusBar(card, c.settings);
     refreshPristineStatusBar(sb, c.settings);
@@ -520,10 +520,10 @@ export async function generateStatusBarForCard(card, ctx, { requirement = '', te
     try {
         const tpl = findTemplate(c.settings, templateId);
         if (tpl) {
-            await applyTemplateToCard(card, c, tpl, tpl.spec?.variables?.length ? 'structure' : 'look', { warnings });
-            if (!sb.spec.variables.length) await generateStatusBar(c.project, c.settings, card, { parts: ['spec'], onLog: c.log, warnings });
+            await applyTemplateToCard(card, c, tpl, tpl.spec?.variables?.length ? 'structure' : 'look', { warnings, signal });
+            if (!sb.spec.variables.length) await generateStatusBar(c.project, c.settings, card, { parts: ['spec'], signal, onLog: c.log, warnings });
         } else {
-            await generateStatusBar(c.project, c.settings, card, { parts: defaultParts(sb), onLog: c.log, warnings });
+            await generateStatusBar(c.project, c.settings, card, { parts: defaultParts(sb), signal, onLog: c.log, warnings });
         }
         refreshStatusBarLint(card);
         logWarnings(c, warnings, [sb.error]); // 界面兜底的提示 generateStatusBar 已经记过一次（也在 statusBar.error 里）

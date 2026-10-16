@@ -6,6 +6,7 @@ import { decodeText, normalizeNovelText } from './encoding.js';
 import { ExtractionRunner } from './extract.js';
 import { createEmptyProject, createProject, detectVolumesFromChunks, freeOriginalProjectName, normalizeProject } from './project.js';
 import { splitNovel } from './splitter.js';
+import { addStudio, getStudio, studioProjectName, studioTitleFromPremise } from './studio-base.js';
 import { CHAPTER_REGEX_PRESETS } from './constants.js';
 import * as store from './store.js';
 import { collectChatText } from './chatgen.js';
@@ -21,6 +22,11 @@ export const app = {
     chatgen: null,
     /** 正在进行的「AI 推断名称」（大纲页发起，见 ui/tab-outline.js）：{projectId, items, full, progress, ctl, origin}；回退快照前要等它结束 */
     nameJob: null,
+    /**
+     * 正在进行的创意工坊长任务（生成大纲、全部生成、逐个展开角色 / 写开场白…，见 runStudioJob）：{projectId, studioId, label, ctl}；
+     * 运行中算作忙（isBusy）：不能切换项目，关窗口时最小化；停止用 stopStudioJob
+     */
+    studioJob: null,
     initialized: false,
 
     async init() {
@@ -160,6 +166,48 @@ export const app = {
         return p;
     },
 
+    /**
+     * 创意工坊：没有打开的项目（或用户想为这份构思另开一个）时新建原创项目并把构思放进去。
+     * 项目名用构思的标题（没写时从创意里取一个短标题，见 studioTitleFromPremise），与已有项目重名时加「 2」「 3」…
+     * （项目名也是世界书名的一部分，重名的两个项目写入酒馆时会互相覆盖世界书）。
+     * 构思本身只在调用方给了标题时才记下标题：没给时草稿列表跟着大纲里的卡名走（和在已有项目里新建的构思一样）。
+     * @param {{title?: string, premise?: string, options?: object}} init 构思的初始内容
+     * @returns {Promise<{project: object, studio: object}>} studio 是打开后项目里的那一份（setProject 会重新规整项目）
+     */
+    async createStudioProject(init = {}) {
+        const title = String(init.title ?? '').trim();
+        const name = studioProjectName(title || studioTitleFromPremise(init.premise), (await store.listProjects()).map((x) => x.name));
+        const p = createEmptyProject({ name });
+        const s = addStudio(p, this.settings, { ...init, title });
+        await store.saveProject(p);
+        this.setProject(p);
+        this.log(`📚 新建原创项目「${p.name}」，在「创意工坊」里继续构思`, 'success');
+        return { project: this.project, studio: getStudio(this.project, s.id) };
+    },
+
+    /**
+     * 运行创意工坊的长任务：记在 studioJob（运行中 isBusy 为真），fn(signal) 结束后清掉。已经有一个在运行时抛错。
+     * @param {{studioId?: string, label?: string}} meta
+     * @param {(signal: AbortSignal) => Promise<any>} fn
+     */
+    async runStudioJob({ studioId = '', label = '' } = {}, fn) {
+        if (this.studioJob) throw new Error('创意工坊已有任务在运行');
+        const ctl = new AbortController();
+        this.studioJob = { projectId: this.project?.id || '', studioId, label, ctl };
+        this.events.emit('studio:job', this.studioJob);
+        try {
+            return await fn(ctl.signal);
+        } finally {
+            this.studioJob = null;
+            this.events.emit('studio:job', null);
+        }
+    },
+
+    /** 停止正在进行的创意工坊任务（正在等的那一次请求会被中止，已经写好的保留） */
+    stopStudioJob() {
+        this.studioJob?.ctl?.abort();
+    },
+
     /** 在已有项目上重新分块（会清空提取结果，调用方需确认） */
     async rechunk(text) {
         if (!this.project) return;
@@ -197,7 +245,7 @@ export const app = {
     },
 
     isBusy() {
-        return !!(this.extraction?.running || this.continuation?.running || this.chatgen?.running);
+        return !!(this.extraction?.running || this.continuation?.running || this.chatgen?.running || this.studioJob);
     },
 };
 

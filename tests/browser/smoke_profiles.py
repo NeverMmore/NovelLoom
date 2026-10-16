@@ -67,10 +67,10 @@ try:
         page.wait_for_selector('.nl-window')
         assert ev(page, 'NovelLoom.app.project') is None, '还没有打开项目'
 
-        # ---- 侧栏：「用户画像」在「生成」组里、角色卡前面；没打开项目也能用 ----
+        # ---- 侧栏：「用户画像」在「生成」组里、角色卡前面（中间是创意工坊）；没打开项目也能用 ----
         order = ev(page, '[...document.querySelectorAll(".nl-nav .nl-nav-btn")].map((b) => b.dataset.tab)')
         print('nav order:', order)
-        assert order.index('profiles') == order.index('cards') - 1, order
+        assert order.index('profiles') == order.index('studio') - 1 == order.index('cards') - 2, order
         assert 'nl-disabled' not in page.get_attribute('.nl-nav-btn[data-tab="profiles"]', 'class')
         assert 'nl-disabled' in page.get_attribute('.nl-nav-btn[data-tab="cards"]', 'class')
         page.click('.nl-nav-btn[data-tab="profiles"]')

@@ -979,6 +979,211 @@ h4.nl-role-system, h4.nl-role-user, h4.nl-role-assistant { display: flex; align-
 .nl-sample + .nl-sample { border-top: 1px solid var(--nl-line); }
 .nl-sample-text { white-space: pre-wrap; word-break: break-word; color: var(--nl-text-2); max-height: 7.5em; overflow: hidden; line-height: 1.65; }
 
+/* ---------------- 创意工坊 ---------------- */
+/* 草稿列表：一行一份构思（细线分隔），整行左边是打开按钮，当前打开的那份强调色浅底 */
+.nl-st-drafts { max-height: 260px; overflow-y: auto; }
+.nl-st-draft { padding: 4px var(--nl-s1) 4px 0; gap: var(--nl-s2); }
+.nl-st-draft-open {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 4px var(--nl-s2);
+    border: none;
+    border-radius: var(--nl-r-sm);
+    background: transparent;
+    color: var(--nl-text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.nl-st-draft-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nl-st-draft.active .nl-st-draft-title { font-weight: 600; }
+/* 构思标题 + 步骤条（编号圈 + 名称；当前步强调色浅底，做完的绿勾，还不能进的变淡） */
+.nl-st-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--nl-s1) var(--nl-s3); margin-bottom: var(--nl-s3); }
+.nl-st-head > .nl-icon-btn { margin-left: calc(-1 * var(--nl-s2)); }
+.nl-card .nl-st-head > .nl-muted.nl-small { margin: 0; }
+.nl-st-head h3 { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.nl-st-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--nl-s1); margin: 0; padding: 0; list-style: none; }
+.nl-st-step {
+    display: flex;
+    align-items: center;
+    gap: var(--nl-s2);
+    width: 100%;
+    min-height: 40px;
+    padding: 6px 10px;
+    border: none;
+    border-radius: var(--nl-r-sm);
+    background: transparent;
+    color: var(--nl-text-2);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.12s var(--nl-ease), color 0.12s var(--nl-ease);
+}
+.nl-st-step:hover:not(:disabled) { background: var(--nl-hover); color: var(--nl-text); }
+.nl-st-step[aria-current="step"] { background: var(--nl-accent-soft); color: var(--nl-text); font-weight: 600; }
+.nl-st-step:disabled { color: var(--nl-text-3); cursor: not-allowed; }
+.nl-st-step-mark {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1.5px solid var(--nl-line-strong);
+    border-radius: 50%;
+    color: var(--nl-text-3);
+    font-size: 11px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+.nl-st-step.is-done .nl-st-step-mark { background: var(--nl-ok); border-color: var(--nl-ok); color: #fff; }
+.nl-st-step[aria-current="step"] .nl-st-step-mark { border-color: var(--nl-accent); color: var(--nl-accent-ink); background: transparent; }
+.nl-st-step-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nl-st-foot { margin-top: calc(-1 * var(--nl-s1)); }
+.nl-st-back { transform: rotate(180deg); }
+.nl-st-dialog-msg { margin-top: var(--nl-s1); }
+/* 标题栏里的进度文字：阶段名很长时省略，不撑出横向滚动 */
+.nl-page-actions > .nl-header-status { min-width: 0; max-width: 100%; }
+.nl-st-job-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* 序号：角色、阶段、好感等级前面的小号数字 */
+.nl-st-num { color: var(--nl-text-3); font-size: var(--nl-fs-xs); font-weight: 600; font-variant-numeric: tabular-nums; text-align: center; line-height: 32px; }
+.nl-st-acts { display: flex; align-items: center; justify-content: flex-end; gap: 2px; min-height: 32px; }
+.nl-st-lock.is-on { color: var(--nl-accent-ink); }
+/* 大纲：地点、角色、阶段都是细线分隔的可编辑行 */
+.nl-st-locs, .nl-st-cast, .nl-st-stages, .nl-st-affs, .nl-st-openers { display: flex; flex-direction: column; }
+.nl-st-loc { display: grid; grid-template-columns: minmax(8em, 14em) minmax(0, 1fr) auto; gap: var(--nl-s2); align-items: start; padding: var(--nl-s2) 0; }
+.nl-st-loc + .nl-st-loc, .nl-st-member + .nl-st-member, .nl-st-stage + .nl-st-stage, .nl-st-aff + .nl-st-aff, .nl-st-opener + .nl-st-opener { border-top: 1px solid var(--nl-line); }
+.nl-st-cast-head,
+.nl-st-member {
+    display: grid;
+    grid-template-columns: 20px minmax(6em, 1fr) 4.5em 6.5em minmax(8em, 2fr) 88px;
+    gap: 6px var(--nl-s2);
+    align-items: start;
+}
+.nl-st-cast-head { padding-bottom: 4px; font-size: var(--nl-fs-xs); font-weight: 600; color: var(--nl-text-2); border-bottom: 1px solid var(--nl-line-strong); }
+.nl-st-cast-head > span:last-child { grid-column: 5 / -1; }
+.nl-st-member { grid-template-areas: "num name gender age ident acts" "num line line line tags tags"; padding: var(--nl-s2) 0; }
+.nl-st-member > .nl-st-num { grid-area: num; }
+.nl-st-m-name { grid-area: name; }
+.nl-st-m-gender { grid-area: gender; }
+.nl-st-m-age { grid-area: age; }
+.nl-st-m-ident { grid-area: ident; }
+.nl-st-member > .nl-st-acts { grid-area: acts; }
+.nl-st-m-line { grid-area: line; }
+.nl-st-m-tags { grid-area: tags; }
+.nl-st-member.is-locked > .nl-st-num { color: var(--nl-accent-ink); }
+/* 大纲表格的一格：输入框外面包一层（窄屏时显示小标题，宽屏时表头已经说明了） */
+.nl-st-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.nl-st-cell > .nl-input { width: 100%; min-width: 0; }
+.nl-st-m-name > .nl-input, .nl-st-g-name > .nl-input { font-weight: 500; }
+.nl-st-cap { display: none; }
+/* 阶段的两段文字：始终带小标题（处境和走向 / 核心冲突），填满之后也分得清 */
+.nl-st-mini { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.nl-st-mini > .nl-textarea { width: 100%; }
+.nl-st-mini-cap, .nl-st-cap { font-size: var(--nl-fs-xs); font-weight: 500; color: var(--nl-text-2); line-height: 1.4; }
+.nl-st-stage {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) minmax(0, 1fr) auto;
+    grid-template-areas: "num name time acts" "num sum conf conf";
+    gap: 6px var(--nl-s2);
+    align-items: start;
+    padding: var(--nl-s2) 0;
+}
+.nl-st-stage > .nl-st-num { grid-area: num; }
+.nl-st-g-name { grid-area: name; }
+.nl-st-g-time { grid-area: time; }
+.nl-st-stage > .nl-st-acts { grid-area: acts; }
+.nl-st-g-sum { grid-area: sum; }
+.nl-st-g-conf { grid-area: conf; }
+/* 角色与开场白：横向标签（每个角色一个，放不下时横向滚动），选中的标签下面一条强调色线 */
+.nl-st-progress { display: flex; align-items: center; gap: var(--nl-s2); }
+.nl-st-progress > .nl-progress { flex: 1; min-width: 0; margin: 0; }
+.nl-st-tabs {
+    display: flex;
+    gap: 2px;
+    margin: var(--nl-s3) 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-bottom: 1px solid var(--nl-line);
+    scrollbar-width: thin;
+}
+.nl-st-tab {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    margin-bottom: -1px;
+    padding: 0 var(--nl-s3);
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: var(--nl-r-sm) var(--nl-r-sm) 0 0;
+    background: transparent;
+    color: var(--nl-text-2);
+    font: inherit;
+    font-size: var(--nl-fs-sm);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 0.12s var(--nl-ease), color 0.12s var(--nl-ease);
+}
+.nl-st-tab:hover { background: var(--nl-hover); color: var(--nl-text); }
+/* 标签条横向滚动会裁掉画在外面的焦点框：改成画在标签里面（底边 1px 和分隔线重叠，也会被裁掉，所以往里收 3px） */
+.nl-root .nl-st-tabs .nl-st-tab:focus-visible { outline-offset: -3px; }
+.nl-st-tab[aria-selected="true"] { color: var(--nl-text); font-weight: 600; border-bottom-color: var(--nl-accent); }
+/* 「生成中」的小转圈：和状态圆点差不多大（标签、开场白的标题行） */
+.nl-st-spin, .nl-st-tab .nl-spin { width: 10px; height: 10px; border-width: 1.5px; }
+.nl-st-tab-dot { display: inline-flex; align-items: center; }
+.nl-st-panel { display: flex; flex-direction: column; gap: var(--nl-s1); min-width: 0; }
+.nl-st-panel > .nl-sb-note { margin: var(--nl-s1) 0; }
+.nl-st-panel-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--nl-s2) var(--nl-s3); }
+.nl-st-panel-head > .nl-grow { flex: 1 1 240px; }
+.nl-st-panel-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--nl-s2); font-size: var(--nl-fs-md); }
+.nl-st-panel-title .nl-ico { color: var(--nl-accent-ink); align-self: center; }
+/* 一行只用一种控件高度：和正常按钮在一行的小按钮（「重写这个角色」）也用正常高度 */
+.nl-st-panel-head:has(> .nl-btn:not(.nl-sm)) > .nl-btn.nl-sm { height: 32px; padding: 0 var(--nl-s3); font-size: var(--nl-fs-sm); gap: 6px; }
+/* 字段标题行：标签 + 只重写这一项的骰子 */
+.nl-st-fhead { display: flex; align-items: center; gap: 2px; min-height: 28px; }
+.nl-st-fhead > label, .nl-st-group-title { font-size: var(--nl-fs-sm); font-weight: 500; color: var(--nl-text-2); }
+.nl-field > .nl-st-fhead { margin-bottom: -4px; }
+/* 好感变化、秘密、立绘提示词：可编辑的分组（8px 描边框、不填底色） */
+.nl-st-group { display: flex; flex-direction: column; gap: 6px; margin: var(--nl-s2) 0; padding: var(--nl-s2) var(--nl-s3) var(--nl-s3); border: 1px solid var(--nl-line); border-radius: var(--nl-r); }
+.nl-st-group > .nl-grid3 .nl-field { margin: var(--nl-s1) 0; }
+.nl-st-group .nl-st-group-title { color: var(--nl-text); font-weight: 600; }
+.nl-st-aff { display: grid; grid-template-columns: 20px minmax(6em, 9em) minmax(0, 1fr) auto; gap: var(--nl-s2); align-items: start; padding: 6px 0; }
+.nl-st-opener { display: flex; flex-direction: column; gap: 6px; padding: var(--nl-s3) 0; }
+.nl-st-opener-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--nl-s1) var(--nl-s2); }
+.nl-st-opener-head > .nl-st-num { line-height: 1; min-width: 1.2em; }
+.nl-st-opener-acts { display: inline-flex; flex-wrap: wrap; gap: var(--nl-s1); margin-left: auto; }
+.nl-st-opener-sum { line-height: 1.6; }
+/* 生成卡：摘要是细线分隔的「项目 · 内容」行 */
+.nl-st-sum { display: flex; flex-direction: column; margin: var(--nl-s2) 0 var(--nl-s3); }
+.nl-st-sum-row { display: grid; grid-template-columns: 7.5em minmax(0, 1fr); gap: var(--nl-s3); padding: var(--nl-s2) 0; }
+.nl-st-sum-row + .nl-st-sum-row { border-top: 1px solid var(--nl-line); }
+.nl-st-sum-k { color: var(--nl-text-2); font-size: var(--nl-fs-sm); font-weight: 500; padding-top: 1px; }
+.nl-st-sum-v { min-width: 0; overflow-wrap: anywhere; }
+.nl-st-sum-v label { margin-right: var(--nl-s2); }
+@media (max-width: 800px) {
+    .nl-st-step { flex-direction: column; justify-content: center; gap: 4px; min-height: 52px; padding: 6px 2px; text-align: center; font-size: var(--nl-fs-xs); }
+    .nl-st-step-name { max-width: 100%; white-space: normal; line-height: 1.3; }
+    .nl-st-cast-head { display: none; }
+    .nl-st-cap { display: block; }
+    .nl-st-member {
+        grid-template-columns: 20px minmax(0, 1fr) minmax(0, 1fr) 88px;
+        grid-template-areas: "num name name acts" "num gender age age" "num ident ident ident" "num line line line" "num tags tags tags";
+    }
+    .nl-st-stage { grid-template-columns: 20px minmax(0, 1fr) auto; grid-template-areas: "num name acts" "num time time" "num sum sum" "num conf conf"; }
+    .nl-st-loc { grid-template-columns: minmax(0, 1fr) auto; }
+    .nl-st-loc > textarea { grid-column: 1 / -1; grid-row: 2; }
+    .nl-st-aff { grid-template-columns: 20px minmax(0, 1fr) auto; }
+    .nl-st-aff > textarea { grid-column: 2 / -1; grid-row: 2; }
+    .nl-st-sum-row { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+    .nl-st-tab { height: 34px; padding: 0 10px; }
+    .nl-st-panel-head:has(> .nl-btn:not(.nl-sm)) > .nl-btn.nl-sm { height: 30px; padding: 0 var(--nl-s2); font-size: var(--nl-fs-xs); }
+}
+
 /* ---------------- 对话框 ---------------- */
 .nl-dialog-overlay {
     position: fixed;

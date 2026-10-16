@@ -2,6 +2,7 @@
 // 设计参考：ai4rpg/tavern-cards 的故事大纲规范（章节概要 / 角色 identity·personality·relationship / 原文引用逐字校验）
 
 import { normalizeProjectStyle, PROJECT_STYLE_ID } from './style.js';
+import { normalizeStudios } from './studio-base.js';
 import { hashString, normalizeForMatch, structuredCloneSafe, uid, uniq } from './utils.js';
 
 export const IMPORTANCE_RANK = { main: 3, support: 2, minor: 1 };
@@ -36,6 +37,8 @@ export function createProject({ name, fileName = '', encoding = '', text = '', c
         /** 疑似敏感词被 AI 换成拼音/注音等替代写法（本地扫描提取结果发现，不消耗 token）：{id, chunk, field, text, createdAt} */
         censorFlags: [],
         plan: { chapters: [], arcs: [] },
+        /** 创意工坊的构思草稿（见 studio-base.js）：跟着项目保存、导出导入，不进快照 */
+        studios: [],
         stats: { calls: 0, failures: 0, promptChars: 0, completionChars: 0 },
     };
 }
@@ -149,6 +152,8 @@ export function normalizeProject(p) {
               }))
         : [];
     out.stats = { ...base.stats, ...(out.stats || {}) };
+    // 创意工坊的构思：逐份规整（上限、成年人、细节 / 开场白只留还在大纲里的角色和阶段）
+    out.studios = normalizeStudios(out.studios);
     out.missingNames = Array.isArray(out.missingNames) ? out.missingNames : [];
     out.censorFlags = Array.isArray(out.censorFlags)
         ? out.censorFlags
@@ -989,9 +994,16 @@ function dedupeRelationships(project) {
     });
 }
 
-/** 原创卡记着存进项目的角色名（card.original.characters[].savedAs）：角色改名 / 合并时跟着改 */
+/**
+ * 原创卡记着存进项目的角色名（card.original.characters[].savedAs）、创意工坊的卡记着角色 id → 项目里的名字（card.studio.keys）：
+ * 角色改名 / 合并时跟着改
+ */
 function renameInOriginal(card, oldName, newName) {
     for (const d of card?.original?.characters || []) if (d?.savedAs === oldName) d.savedAs = newName;
+    const keys = card?.studio?.keys;
+    if (keys && typeof keys === 'object' && !Array.isArray(keys)) {
+        for (const [id, k] of Object.entries(keys)) if (k === oldName) keys[id] = newName;
+    }
 }
 
 /** 重命名角色（同步别名、卡片引用、关系图谱） */

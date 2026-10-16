@@ -8,6 +8,7 @@ import { isWorldCard, statusBarActive, statusBarEntries } from './statusbar.js';
 import { normalizeUserRole, userRoleCharName, userRoleEntry, userRoleHasEntry } from './userrole.js';
 import { userProfileEntry, userProfileHasEntry } from './userprofile.js';
 import { cardEntryFilter, isOriginalCard, originalOwnEntries } from './original.js';
+import { studioOwnEntries } from './studio-base.js';
 import { buildWorldbookEntries, toCharacterBook, toSTWorld } from './worldbook.js';
 import { getVolumes } from './project.js';
 import { safeFileName } from './utils.js';
@@ -114,12 +115,13 @@ export const cardOwnWorldName = statusBarWorldName;
 
 /**
  * 只属于这张卡的世界书条目（状态栏条目除外）：原创卡没存进项目的人物和设定（见 original.js 的 originalOwnEntries，排在最前面）、
+ * 创意工坊卡记在卡上的世界规则 / 故事阶段 / 角色 / 地点（见 studio-base.js 的 studioOwnEntries）、
  * 「剧情导向：名称」（选了导向时）、「用户偏好」（选了用户画像并开着「聊天时也照顾这些偏好」时，排在剧情导向之后）、
  * 「{{user}} 的身份」（扮演原著角色或自定义时）。
  * 导向 / 偏好 / 身份都是常驻条目，跟着卡片自己的世界书和内嵌 character_book 走；取消导向 / 画像、改回原创新身份后重新写入，条目随之去掉。
  */
 export function cardExtraEntries(project, settings, card) {
-    return [...originalOwnEntries(settings, card), orientationEntry(card), userProfileEntry(card), userRoleEntry(project, card)].filter(Boolean);
+    return [...originalOwnEntries(settings, card), ...studioOwnEntries(settings, card), orientationEntry(card), userProfileEntry(card), userRoleEntry(project, card)].filter(Boolean);
 }
 
 /**

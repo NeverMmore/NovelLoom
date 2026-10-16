@@ -18,6 +18,7 @@ import {
     ORIGINAL_SOURCE, isOriginalCard, normalizeCardOriginal, originalBackgroundText, originalDesignFields, originalDesignGuide, originalDesignJson, originalDesignView,
     originalLoreCategories, originalPromptText, parseOriginalDesign,
 } from './original.js';
+import { STUDIO_SOURCE } from './studio-base.js';
 import { truncate, uid, uniq } from './utils.js';
 import { toCharacterBook } from './worldbook.js';
 
@@ -149,11 +150,13 @@ export function cardPromptOpt(card) {
         userProfile: card.userProfile || null,
         // 原创卡：按卡上的原创设定（已经设计好的人物和条目）写，不找原著资料
         ...(isOriginalCard(card) ? { source: ORIGINAL_SOURCE, original: card.original || null } : {}),
+        // 创意工坊的卡：整卡重新生成后仍是这份构思的卡，卡上记的本卡世界书条目（角色 / 地点 / 故事阶段）跟着带过去
+        ...(card.source === STUDIO_SOURCE ? { studioId: card.studioId || '', studio: card.studio || null } : {}),
     };
 }
 
-/** 没有指定文风时 styleTextFor 的默认文字说「保持前文风格」，原创卡没有前文：换一句 */
-function originalStyleText(project, settings) {
+/** 没有指定文风时 styleTextFor 的默认文字说「保持前文风格」，原创卡没有前文：换一句（创意工坊的提示词也用它） */
+export function originalStyleText(project, settings) {
     const t = styleTextFor(project, settings, 'card');
     return /^（(?:未设置|不指定)文风，保持前文风格）$/.test(t) ? '（未指定文风：按设定和用户要求把握语气、节奏和对话写法）' : t;
 }
@@ -434,6 +437,12 @@ export async function generateCard(project, settings, opt, { signal, onLog } = {
         card.timepoint = null;
         if (opt.kind === 'world') card.cardName = name;
         else card.charName = orig.characters[0]?.savedAs || orig.characters[0]?.name || name;
+        // 创意工坊的卡整卡重新生成：仍记成这份构思的卡，本卡世界书条目照旧
+        if (opt.studio || opt.studioId) {
+            card.source = STUDIO_SOURCE;
+            card.studioId = String(opt.studioId || '');
+            if (opt.studio) card.studio = opt.studio;
+        }
     }
     return card;
 }

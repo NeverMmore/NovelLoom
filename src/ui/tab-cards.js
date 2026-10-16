@@ -31,6 +31,7 @@ import {
     isOriginalCard, normalizeCardOriginal, normalizeOriginalInput, originalInputProblem, originalNovelAvailable, originalSaveForced, originalSaveLog, originalSavePlan,
     projectHasSource, saveOriginalDesign, suffixedName,
 } from '../original.js';
+import { isStudioCard } from '../studio-base.js';
 import { createSnapshot, saveProject } from '../store.js';
 import { downloadFile, estimateTokens, pickFile, safeFileName, truncate, uniq } from '../utils.js';
 import { alertDialog, bindSettings, busy, chainPreviewHtml, confirmDialog, emptyState, esc, fmtTime, icon, importanceLabel, openDialog, optionList, promptDialog, rerollBtn } from './common.js';
@@ -162,6 +163,11 @@ export function statusBarButtonTitle(card) {
     return card?.kind === 'world'
         ? 'MVU 变量状态栏（为整个群像设计）：变量、更新规则、界面、立绘、预览'
         : 'MVU 变量状态栏：变量、更新规则、界面、立绘、预览';
+}
+
+/** 创意工坊做的卡：列表里不给「整卡重新生成」（会把各阶段的开场白换成普通的开场白），换成回到那份构思 */
+function openStudioBtn(card) {
+    return `<button class="nl-btn nl-sm" data-act="open-studio" data-id="${esc(card.id)}" title="这张卡来自创意工坊：在那里改大纲、角色和开场白，再「更新卡片」">${icon('idea', { size: 14 })}在创意工坊打开</button>`;
 }
 
 /** 导出 JSON / PNG 后：状态栏的立绘有存在酒馆服务器上的，提醒分享出去不会跟着走（不阻止导出） */
@@ -346,6 +352,21 @@ export function originalSaveStateText(card) {
     return o.saved
         ? `${parts}已存进项目：在「角色」「世界书」页修改，之后的重新生成和写入酒馆用项目里的。`
         : `没有存进项目：${parts}放在这张卡上，写入酒馆时作为卡自己世界书里的条目。`;
+}
+
+/**
+ * 编辑框里创意工坊的卡那一节：设定来自那份构思——角色、地点、故事阶段的条目记在卡上（构思里改、再「更新卡片」），
+ * 项目里存的那份只是副本（在「角色」「世界书」页改了不会写进这张卡）
+ */
+export function studioEditHtml(card) {
+    const st = card?.studio || {};
+    const n = (st.cast || []).length;
+    const entries = (st.entries || []).length;
+    return `
+                    <section class="nl-orient-edit nl-orig-edit" data-studio-edit>
+                        <div class="nl-orient-edit-title">创意工坊</div>
+                        <div class="nl-muted nl-small">这张卡是在「创意工坊」从一句创意做的群像卡${n ? `（${n} 个角色）` : ''}：字段旁的骰子按那份构思的设定写。卡自己世界书里的 ${entries} 条（角色、地点、故事阶段）来自构思——想改角色、开场白或阶段，在创意工坊里改，再点「更新卡片」；「角色」「世界书」页里存的是副本，改了不会写进这张卡。</div>
+                    </section>`;
 }
 
 /** 编辑框里「你写的设定」：用户在表单里写的原创设定（给人看的，不是提示词） */
@@ -570,7 +591,7 @@ export const cardsTab = {
             el.innerHTML = `
             <section class="nl-card">
                 <div class="nl-card-head">
-                    <div><h3>新建角色卡</h3></div>
+                    <div><h3>新建角色卡</h3><div class="nl-card-desc">想从一句创意开始做群像卡？去<a href="#" data-act="goto-studio">「创意工坊」</a>：AI 设计大纲、逐个展开角色、写各阶段的开场白。</div></div>
                 </div>
                 <div class="nl-row nl-wrap">
                     ${form.avatarDataUrl ? `<img class="nl-avatar" src="${form.avatarDataUrl}" data-form-avatar-img>` : avatarEmpty('data-form-avatar-img')}
@@ -673,7 +694,7 @@ export const cardsTab = {
                     <div class="nl-cardbox" data-id="${esc(c.id)}">
                         ${c.avatarDataUrl ? `<img class="nl-avatar" src="${c.avatarDataUrl}" alt="">` : avatarEmpty()}
                         <div class="nl-grow">
-                            <div><b>${esc(c.data.name)}</b> <span class="nl-tag">${c.kind === 'world' ? '世界卡' : '角色卡'}</span> ${isOriginalCard(c) ? '<span class="nl-tag" title="按你的设定原创，不依赖原著资料">原创</span>' : ''} ${statusBarTagHtml(c)} ${orientationTagHtml(c)} ${userProfileTagHtml(c)} ${c.stAvatar ? (characterExistsInST(c.stAvatar) ? '<span class="nl-tag nl-ok">已在酒馆</span>' : '<span class="nl-tag">酒馆中已删除</span>') : ''}</div>
+                            <div><b>${esc(c.data.name)}</b> <span class="nl-tag">${c.kind === 'world' ? '世界卡' : '角色卡'}</span> ${isStudioCard(c) ? '<span class="nl-tag" title="在「创意工坊」从一句创意做的群像世界卡">创意工坊</span>' : isOriginalCard(c) ? '<span class="nl-tag" title="按你的设定原创，不依赖原著资料">原创</span>' : ''} ${statusBarTagHtml(c)} ${orientationTagHtml(c)} ${userProfileTagHtml(c)} ${c.stAvatar ? (characterExistsInST(c.stAvatar) ? '<span class="nl-tag nl-ok">已在酒馆</span>' : '<span class="nl-tag">酒馆中已删除</span>') : ''}</div>
                             <div class="nl-muted nl-small">${isOriginalCard(c) ? '原创设定' : !p.chunks.length ? '全部资料' : esc(timepointLabel(p, Number.isFinite(c.timepoint) ? c.timepoint : Infinity))} · ${fmtTime(c.updatedAt)} · 约 ${estimateTokens(c.data.description + c.data.first_mes)} tokens</div>
                             <div class="nl-small">${lintSummary(c.lint)}</div>
                             <div class="nl-small nl-clamp">${esc(truncate(c.data.first_mes, 120))}</div>
@@ -687,7 +708,7 @@ export const cardsTab = {
                             ${c.stAvatar && characterExistsInST(c.stAvatar) ? `<button class="nl-btn nl-sm" data-act="open-st" data-id="${esc(c.id)}">在酒馆打开</button>` : ''}
                             <button class="nl-btn nl-sm" data-act="json" data-id="${esc(c.id)}">导出 JSON</button>
                             <button class="nl-btn nl-sm" data-act="png" data-id="${esc(c.id)}">导出 PNG</button>
-                            ${rerollBtn('regen', `data-id="${esc(c.id)}"`, { label: '重新生成', title: '整张卡重新生成' })}
+                            ${isStudioCard(c) ? openStudioBtn(c) : rerollBtn('regen', `data-id="${esc(c.id)}"`, { label: '重新生成', title: '整张卡重新生成' })}
                             <button class="nl-btn nl-sm nl-danger" data-act="delete" data-id="${esc(c.id)}">删除</button>
                         </div>
                     </div>`).join('') || emptyState(orig ? '在上面写好原创设定后点「原创写卡」，生成的角色卡会出现在这里，可以审稿、试聊后写入酒馆。' : '在上面选好角色和故事时间点后点「生成」，生成的角色卡会出现在这里，可以审稿、试聊后写入酒馆。', '', { title: '还没有角色卡', ico: 'cards' })}
@@ -895,7 +916,7 @@ export const cardsTab = {
                         <details data-up-edit-entry ${savedProfile ? '' : 'hidden'}><summary>查看「${USER_PROFILE_ENTRY_TITLE}」条目</summary><div class="nl-pre nl-small" data-up-edit-preview>${esc(profileEntryPreview(savedProfile))}</div></details>
                         <div class="nl-muted nl-small">换画像只影响之后的重新生成和写入酒馆的条目，已经写好的字段不会自动改；可以点字段旁的骰子按现在的画像重新生成。</div>
                     </section>
-                    ${isOriginalCard(card) ? `
+                    ${isStudioCard(card) ? studioEditHtml(card) : isOriginalCard(card) ? `
                     <section class="nl-orient-edit nl-orig-edit" data-orig-edit>
                         <div class="nl-orient-edit-title">原创设定</div>
                         <div class="nl-muted nl-small">这张卡按你的设定原创：整卡重新生成、字段旁的骰子都按这份设定写。</div>
@@ -1643,6 +1664,13 @@ export const cardsTab = {
                 case 'goto-style':
                     e.preventDefault();
                     return switchTab('style');
+                case 'goto-studio':
+                    e.preventDefault();
+                    return switchTab('studio');
+                case 'open-studio':
+                    // 创意工坊做的卡：回到那份构思（第 4 步）改，再「更新卡片」
+                    app.pendingStudioId = card?.studioId || '';
+                    return switchTab('studio');
                 case 'form-avatar': {
                     const file = await pickFile('image/*');
                     if (!file) return;
@@ -1855,6 +1883,12 @@ export const cardsTab = {
         el.addEventListener('change', onFormChange);
         el.addEventListener('input', onFormChange);
         render();
+        // 从「创意工坊」点「去角色卡页编辑」过来：直接打开那张卡的编辑框
+        if (app.pendingEditCardId) {
+            const target = app.project?.cards.find((c) => c.id === app.pendingEditCardId);
+            delete app.pendingEditCardId;
+            if (target) editCard(target);
+        }
         return {};
     },
 };

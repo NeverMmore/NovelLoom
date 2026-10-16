@@ -3,7 +3,7 @@
 import { app } from '../app.js';
 import { DEFAULT_ANTI_TRUNCATE, DEFAULT_CATEGORIES, DEFAULT_STATUS_BAR, STATUS_BAR_VAR_CAP, WI_POSITIONS } from '../constants.js';
 import { applyConfig, exportConfig } from '../io.js';
-import { API_MODES, CHAIN_TASKS, DEEPSEEK_DEFAULT_ENDPOINT, DEEPSEEK_MODELS, DEFAULT_CHAIN, GEMINI_SAFETY_OPTIONS, listModels, testApi } from '../llm.js';
+import { API_MODES, CHAIN_TASKS, DEEPSEEK_DEFAULT_ENDPOINT, DEEPSEEK_MODELS, DEFAULT_CHAIN, GEMINI_SAFETY_OPTIONS, chainFallbackTask, getChain, listModels, testApi } from '../llm.js';
 import { DEFAULT_PROMPTS, PROMPT_LABELS, PROMPT_PLACEHOLDERS } from '../prompts.js';
 import { countSpecLeaves, isOwnServerImage, portraitUrlList, serverPortraitHint, specSummaryText } from '../statusbar.js';
 import { STATUSBAR_THEMES, buildPreviewSrcdoc } from '../statusbar-runtime.js';
@@ -454,6 +454,9 @@ export const settingsTab = {
             const roleOpts = [{ value: 'system', label: '系统' }, { value: 'user', label: '用户' }, { value: 'assistant', label: 'AI' }];
             const roleDot = { system: 'nl-info', user: 'nl-ok', assistant: 'nl-warn' };
             const hasPrompt = list.some((m) => m.enabled !== false && String(m.content || '').includes('{PROMPT}'));
+            // 没有自定义、先沿用别的任务的链时（创意工坊 → 写角色卡），说明沿用的是哪条
+            const fb = own ? '' : chainFallbackTask(chainTask);
+            const fbLabel = fb && (chains()[fb] || []).some((m) => m && m.enabled !== false) ? CHAIN_TASKS.find((t) => t.value === fb)?.label || fb : '';
             return `
             <section class="nl-card">
                 <div class="nl-card-head">
@@ -490,7 +493,7 @@ export const settingsTab = {
                     <button class="nl-btn nl-sm" data-act="chain-preview">预览</button>
                     <button class="nl-btn nl-sm" data-act="chain-reset">${chainTask === 'default' ? '恢复默认' : '清除（改用默认链）'}</button>
                 </div>` : `
-                <div class="nl-row nl-wrap"><span class="nl-muted">这个任务目前沿用默认链。</span><button class="nl-btn nl-sm" data-act="chain-copy">以默认链为模板自定义</button></div>`}
+                <div class="nl-row nl-wrap"><span class="nl-muted">${fbLabel ? `这个任务目前沿用「${esc(fbLabel)}」的链。` : '这个任务目前沿用默认链。'}</span><button class="nl-btn nl-sm" data-act="chain-copy">${fbLabel ? '以这条链为模板自定义' : '以默认链为模板自定义'}</button></div>`}
                 <div class="nl-row nl-checks"><label><input type="checkbox" data-setting="chainOptions.prependPrefill"> 链以 AI 预填结尾时，把预填内容拼回回复开头（方便解析 JSON）</label></div>
             </section>`;
         };
@@ -814,7 +817,8 @@ export const settingsTab = {
                     return render();
                 }
                 case 'chain-copy':
-                    chains()[chainTask] = structuredCloneSafe(chains().default);
+                    // 以现在实际用的链为模板（沿用别的任务的链时复制那条，否则复制默认链）
+                    chains()[chainTask] = structuredCloneSafe(getChain(app.settings, chainTask));
                     app.saveSettings();
                     return render();
                 case 'chain-reset':

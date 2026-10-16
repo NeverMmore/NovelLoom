@@ -51,7 +51,7 @@ export function exportConfig(settings, { includeKeys = false } = {}) {
 export function applyConfig(settings, json) {
     const s = json?.type === 'novel_loom_config' ? json.settings : json;
     if (!s || typeof s !== 'object') throw new Error('不是 NovelLoom 配置文件');
-    for (const key of ['api', 'continueApi', 'chunking', 'extraction', 'worldbook', 'cards', 'continuation', 'chatgen', 'prompts', 'categories', 'defaultEntries', 'messageChains', 'chainOptions', 'planner', 'stylePresets', 'styleOptions', 'antiTruncate', 'statusBar', 'nameResolve']) {
+    for (const key of ['api', 'continueApi', 'chunking', 'extraction', 'worldbook', 'cards', 'continuation', 'chatgen', 'prompts', 'categories', 'defaultEntries', 'messageChains', 'chainOptions', 'planner', 'stylePresets', 'styleOptions', 'antiTruncate', 'statusBar', 'nameResolve', 'studio']) {
         if (s[key] === undefined) continue;
         if (key === 'stylePresets' && Array.isArray(s[key])) {
             // 文风预设按 id 合并，不覆盖本机其他预设

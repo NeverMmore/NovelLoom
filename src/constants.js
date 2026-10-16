@@ -2,7 +2,7 @@
 
 export const MODULE = 'novel_loom';
 export const PREFIX = 'nl';
-export const VERSION = '0.17.0';
+export const VERSION = '0.18.0';
 export const DB_NAME = 'NovelLoomDB';
 export const DB_VERSION = 1;
 
@@ -131,6 +131,17 @@ export const DEFAULT_NAME_RESOLVE = {
     extra: '', // 额外要求（追加到提示词末尾）
 };
 
+/**
+ * 创意工坊的全局默认（新建构思时复制进构思的选项）：开场白长度、是否生成状态栏 / 示例对话，以及生成状态栏时套用的模板
+ * （默认「多人群像」；'' = 不套模板，让 AI 按群像设计）
+ */
+export const DEFAULT_STUDIO = {
+    openerLen: '400-800 字',
+    statusBar: true,
+    examples: true,
+    statusBarTemplateId: 'builtin_ensemble',
+};
+
 export const DEFAULT_SETTINGS = {
     version: VERSION,
     activeProjectId: '',
@@ -182,6 +193,8 @@ export const DEFAULT_SETTINGS = {
         statusBarTemplateId: '', // 写卡时套用的状态栏模板（'' = 自动）
         autoAllow: true, // 写入酒馆后自动允许本卡的局部正则、在酒馆助手里启用本卡的角色脚本（见 stallow.js）
     },
+    /** 创意工坊：新建构思时的默认选项（每份构思之后可以单独改，见 studio-base.js 的 defaultStudioOptions） */
+    studio: { ...DEFAULT_STUDIO },
     planner: {
         count: 10,
         batchSize: 5, // 每批章数：章数多时分几次请求，单次请求短、不容易被 API/网络中途断开；0 = 不分批

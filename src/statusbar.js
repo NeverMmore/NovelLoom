@@ -246,23 +246,24 @@ const CAST_RANK = { main: 3, support: 2, minor: 1 };
  * 按重要度（main > support > minor）排序；有 main 时只取 main。名字不能当记录键的（含 . / 引号等）跳过。
  * @param {object} project
  * @param {object} card
- * @param {{limit?: number, all?: boolean}} opt limit：最多几个（默认 8）；all：不只取 main
+ * 原创世界卡 / 创意工坊的卡：卡上设计好的主要角色全部预填（最多 12 个：创意工坊的阵容上限），不是项目里的全部角色。
+ * @param {{limit?: number|null, all?: boolean}} opt limit：最多几个（默认：项目里的角色 8 个，卡上设计好的阵容 12 个）；all：不只取 main
  * @returns {string[]}
  */
-export function worldCastNames(project, card, { limit = 8, all = false } = {}) {
+export function worldCastNames(project, card, { limit = null, all = false } = {}) {
     const upto = Number.isFinite(card?.timepoint) ? card.timepoint : Infinity;
     // {{user}} 扮演的原著角色就是主角（主角.*），不算进主要角色（card.userRole，见 userrole.js）
     const me = card?.userRole?.kind === 'character' ? String(card.userRole.charKey || '').trim() : '';
     // 原创世界卡：主要角色就是 AI 按设定设计的那几个（卡里的名字），不是项目里的全部角色
     const cast = originalCastNames(card);
-    if (cast) return cast.filter((n) => n !== me && !segmentProblem(n, { allowSpace: true })).slice(0, Math.max(0, limit));
+    if (cast) return cast.filter((n) => n !== me && !segmentProblem(n, { allowSpace: true })).slice(0, Math.max(0, limit ?? 12));
     const list = Object.entries(project?.characters || {})
         .filter(([key, c]) => !me || (key !== me && String(c?.name || '').trim() !== me))
         .map(([key, c]) => ({ name: String(c?.name || key).trim(), rank: CAST_RANK[c?.importance] || 0, first: Number.isFinite(c?.firstChunk) ? c.firstChunk : 0 }))
         .filter((c) => c.name && !(c.first > upto) && !segmentProblem(c.name, { allowSpace: true }))
         .sort((a, b) => b.rank - a.rank || a.first - b.first);
     const mains = list.filter((c) => c.rank === CAST_RANK.main);
-    return (all || !mains.length ? list : mains).slice(0, Math.max(0, limit)).map((c) => c.name);
+    return (all || !mains.length ? list : mains).slice(0, Math.max(0, limit ?? 8)).map((c) => c.name);
 }
 
 // 按角色名记录的多人数据（主要角色 / NPC / 队友…）：立绘候选、界面示例里的立绘槽位、世界卡预填主要角色都只认它们；物品、任务这类记录不算

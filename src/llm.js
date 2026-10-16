@@ -149,11 +149,15 @@ export const DEFAULT_CHAIN = [
 
 const ROLES = new Set(['system', 'user', 'assistant']);
 
-/** 可单独配置消息链的任务 */
+/**
+ * 可单独配置消息链的任务。fallback：这个任务没有自定义时先沿用哪个任务的链（那个任务也没有自定义时才用默认链），
+ * 比如创意工坊默认和写角色卡用同一条链。
+ */
 export const CHAIN_TASKS = [
     { value: 'default', label: '默认（所有任务）' },
     { value: 'extract', label: '分段提取' },
     { value: 'card', label: '写角色卡 / 群聊场景卡 / 审稿修订' },
+    { value: 'studio', label: '创意工坊（大纲 / 角色细节 / 开场白）', fallback: 'card' },
     { value: 'statusbar', label: '状态栏（变量/界面）' },
     { value: 'outline', label: '写大纲' },
     { value: 'continue', label: '续写正文' },
@@ -162,11 +166,22 @@ export const CHAIN_TASKS = [
     { value: 'rewrite', label: '局部重写' },
 ];
 
-/** 取某任务的消息链：任务自己的链（有启用消息时）> 默认链 > 内置默认 */
+function chainEnabled(list) {
+    return Array.isArray(list) && list.some((m) => m && m.enabled !== false);
+}
+
+/** 这个任务没有自定义链时先沿用的任务（见 CHAIN_TASKS 的 fallback）；没有时为 '' */
+export function chainFallbackTask(task) {
+    return CHAIN_TASKS.find((t) => t.value === task)?.fallback || '';
+}
+
+/** 取某任务的消息链：任务自己的链（有启用消息时）> 回退任务的链（如创意工坊 → 写角色卡）> 默认链 > 内置默认 */
 export function getChain(settings, task) {
     const chains = settings?.messageChains || {};
     const own = chains[task];
-    if (task !== 'default' && Array.isArray(own) && own.some((m) => m && m.enabled !== false)) return own;
+    if (task !== 'default' && chainEnabled(own)) return own;
+    const fb = chainFallbackTask(task);
+    if (fb && chainEnabled(chains[fb])) return chains[fb];
     const def = chains.default;
     return Array.isArray(def) && def.some((m) => m && m.enabled !== false) ? def : DEFAULT_CHAIN;
 }

@@ -13,6 +13,7 @@ import { styleTab } from './tab-style.js';
 import { relationsTab } from './tab-relations.js';
 import { profilesTab } from './tab-profiles.js';
 import { cardsTab } from './tab-cards.js';
+import { studioTab } from './tab-studio.js';
 import { continueTab } from './tab-continue.js';
 import { planTab } from './tab-plan.js';
 import { foreshadowTab } from './tab-foreshadow.js';
@@ -33,6 +34,7 @@ const TABS = [
     { id: 'outline', group: '整理', label: '大纲', icon: 'outline', mod: outlineTab, needProject: true, desc: '故事梗概、分卷梗概和每一章的概要。' },
     { id: 'style', group: '整理', label: '文风', icon: 'style', mod: styleTab, needProject: true, desc: '原著文风、范文与禁用词；按任务或视角角色选择文风。' },
     { id: 'profiles', group: '生成', label: '用户画像', icon: 'profile', mod: profilesTab, needProject: false, desc: '保存你的口味：喜欢的元素、雷点、尺度和叙事偏好，写卡时选一个画像量身定制。' },
+    { id: 'studio', group: '生成', label: '创意工坊', icon: 'idea', mod: studioTab, needProject: false, desc: '从一句创意开始：AI 设计大纲，逐个展开角色、写各阶段的开场白，做成一张群像世界卡。' },
     { id: 'cards', group: '生成', label: '角色卡', icon: 'cards', mod: cardsTab, needProject: true, desc: '生成角色卡和群聊场景卡，审稿、试聊后写入酒馆。' },
     { id: 'plan', group: '续写', label: '写大纲', icon: 'plan', mod: planTab, needProject: true, desc: '按你的要求规划接下来的章节，续写时逐章使用。' },
     { id: 'foreshadow', group: '续写', label: '伏笔看板', icon: 'foreshadow', mod: foreshadowTab, needProject: true, desc: '汇总全书伏笔，追踪哪些埋下了、哪些已经回收。' },
@@ -55,6 +57,7 @@ function navCount(id, p) {
         case 'worldbook': return Object.values(p.worldbook || {}).reduce((n, cat) => n + Object.keys(cat || {}).length, 0) || '';
         case 'outline': return p.chunks.reduce((n, c) => n + (c.outline?.length || 0), 0) || '';
         case 'cards': return ((p.cards || []).length + (p.groupCards || []).length) || '';
+        case 'studio': return (p.studios || []).length || '';
         case 'plan': return (p.plan?.chapters || []).filter((c) => c.status !== 'written').length || '';
         case 'foreshadow': return (p.foreshadow || []).filter((f) => f.status !== 'resolved').length || '';
         case 'continue': return (p.continuation?.chapters || []).length || '';
@@ -138,6 +141,8 @@ export async function openMain(tabId) {
     unsubs.push(app.events.on('log', appendLog));
     // 页面改了侧栏数字依据的数据（如用户画像的个数）时立即刷新，不用等每秒一次的刷新
     unsubs.push(app.events.on('nav', () => updateNav()));
+    // 创意工坊的长任务开始 / 结束：日志栏的「生成中」和侧栏的转圈立即跟着变，不用等每秒一次的刷新
+    unsubs.push(app.events.on('studio:job', () => updateBusy()));
     unsubs.push(app.events.on('project', () => {
         refreshProjectSelect();
         switchTab(currentTabId, true);
@@ -338,7 +343,7 @@ function appendLog(item) {
 function updateNav() {
     if (!root) return;
     const p = app.project;
-    const running = { extract: !!app.extraction?.running, continue: !!(app.continuation?.running || app.chatgen?.running) };
+    const running = { extract: !!app.extraction?.running, continue: !!(app.continuation?.running || app.chatgen?.running), studio: !!app.studioJob };
     const { steps, next } = pipelineState(p);
     for (const b of qsa(root, '.nl-nav-btn')) {
         const t = TABS.find((x) => x.id === b.dataset.tab);
@@ -363,6 +368,7 @@ function updateBusy() {
     if (app.extraction?.running) parts.push('提取中');
     if (app.continuation?.running) parts.push('续写中');
     if (app.chatgen?.running) parts.push('挂机中');
+    if (app.studioJob) parts.push('创意工坊生成中');
     const el = qs(root, '#nl-busy');
     el.innerHTML = parts.length ? `<span class="nl-spin"></span>${parts.join(' · ')}` : '';
     const fab = document.getElementById('nl-fab');

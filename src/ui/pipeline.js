@@ -5,6 +5,7 @@ import { projectStats } from '../project.js';
 
 /**
  * 没有原文的项目（原创项目，或分段被全部删掉的项目）：不需要分段和提取，下一步就是「角色卡」原创写卡；
+ * 项目里有创意工坊的构思时，先是「在创意工坊做群像卡」（做成卡后完成）；
  * 角色、世界书等整理步骤都是可选的（原创写卡时 AI 设计的角色和设定会存进来）。
  * @returns {{steps: {tab:string, name:string, optional?:boolean, ok:boolean, note:string}[], next: object|null}}
  */
@@ -16,7 +17,16 @@ export function pipelineState(p) {
     const style = { tab: 'style', name: '调整文风', optional: true, ok: !!(p.style?.samples?.length || p.style?.rules || p.style?.banned), note: '' };
     const relations = { tab: 'relations', name: '梳理关系', optional: true, ok: !!rels, note: rels ? `${rels} 条关系` : '' };
     if (!projectHasSource(p)) {
+        // 项目里有创意工坊的构思（一句创意 → 群像卡）：先把构思做成卡，下一步指回「创意工坊」而不是单人写卡表单
+        const studios = Array.isArray(p.studios) ? p.studios : [];
+        const latest = studios.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+        const studio = latest ? [{
+            tab: 'studio', name: '在创意工坊做群像卡',
+            ok: studios.some((s) => s.cardId && p.cards.some((c) => c.id === s.cardId)),
+            note: `第 ${latest.step || 1} 步`,
+        }] : [];
         const steps = [
+            ...studio,
             { ...cards, name: '原创写卡并写入酒馆' },
             { tab: 'characters', name: '校对角色', optional: true, ok: !!st.characters, note: st.characters ? `${st.characters} 个角色` : '' },
             { tab: 'worldbook', name: '校对世界书', optional: true, ok: !!st.entries, note: st.entries ? `${st.entries} 个条目` : '' },

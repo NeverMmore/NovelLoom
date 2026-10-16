@@ -18,7 +18,7 @@ ch1 = '第一章 魔女小姐\n' + '江酒走进酒吧。莉莉丝坐在角落�
 ch2 = '第二章 女仆\n' + '江酒穿上了女仆装。莉莉丝去参加魔女茶会。\n' * 22
 NOVEL = ch1 + ch2
 ADULT = '所有涉及恋爱或亲密内容的人物（包括 {{user}}）都是成年人'
-TABS = ['project', 'chunks', 'extract', 'characters', 'relations', 'worldbook', 'outline', 'style', 'profiles', 'cards', 'plan', 'foreshadow', 'continue', 'settings']
+TABS = ['project', 'chunks', 'extract', 'characters', 'relations', 'worldbook', 'outline', 'style', 'profiles', 'studio', 'cards', 'plan', 'foreshadow', 'continue', 'settings']
 errors = []
 
 def shot(page, name):

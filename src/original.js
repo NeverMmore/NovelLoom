@@ -9,9 +9,13 @@
 //   4) 「把 AI 设计的角色和设定存进项目」：角色存成手动角色（manual + locked，重新提取不会删也不会改），条目存成手动条目；
 //      项目里已有同名的角色或条目时由调用方问用户：覆盖，或者加后缀另存（不会悄悄并进别的角色）。
 //      不存时人物和条目只放在卡上，写入酒馆时作为卡自己世界书里的条目（见 publish.js 的 cardExtraEntries）。
+// 创意工坊（studio.js）做的卡（card.source = 'studio'）也算原创卡：card.original 记着它的设定（存进了项目），
+// 单字段重roll、状态栏、写入时的取舍都按原创卡处理；它自己世界书里的角色 / 地点 / 故事阶段条目记在卡上（card.studio.entries），
+// 所以写入时项目里由这张卡存进来的角色和条目不再带一份（见 cardEntryFilter）。
 // 所有提示词都写明：涉及恋爱或亲密内容的人物（包括 {{user}}）都是成年人。不碰 DOM、不调用 AI。
 
 import { IMPORTANCE_RANK, characterAt, characterProfileText, isSpecificAlias, normalizeCharacter, normalizeExtraction } from './project.js';
+import { STUDIO_SOURCE } from './studio-base.js';
 import { truncate, uniq } from './utils.js';
 
 export const ORIGINAL_SOURCE = 'original';
@@ -32,9 +36,9 @@ function cleanText(v, max) {
     return String(v ?? '').replace(/\r\n?/g, '\n').trim().slice(0, max);
 }
 
-/** 这张卡是不是原创写的 */
+/** 这张卡是不是原创写的（原创写卡，或创意工坊做的） */
 export function isOriginalCard(card) {
-    return card?.source === ORIGINAL_SOURCE;
+    return card?.source === ORIGINAL_SOURCE || card?.source === STUDIO_SOURCE;
 }
 
 /** 项目里有没有可以「按原著资料」写卡的东西：原文分段或角色资料（都没有时写卡表单只能用原创设定） */
@@ -558,6 +562,7 @@ export function otherOriginalCardIds(project, card) {
 
 /**
  * 写入酒馆时这张卡不带哪些项目资料（buildWorldbookEntries 的结果逐条判断）；什么都不排除时返回 null。
+ *  - 创意工坊的卡：另外不带它自己存进项目的角色和条目（卡上记的条目里有更全的一份）；
  *  - 原创卡：别的原创卡存进来的角色和条目（见 otherOriginalCardIds）；项目里与这张卡设计的人物 / 条目撞名的别人的资料
  *    （同名、别名或关键词相同，见 characterClash / entryClash）——比如原著里的「林晚」、提取的「雾港」：卡里的名字会把它们
  *    和这张卡自己的设定一起触发，两份资料互相矛盾；
@@ -567,6 +572,7 @@ export function otherOriginalCardIds(project, card) {
  */
 export function cardEntryFilter(project, card) {
     const original = isOriginalCard(card);
+    const studio = card?.source === STUDIO_SOURCE;
     const myId = original ? String(card?.id || '') : '';
     const others = otherOriginalCardIds(project, card);
     const clashChars = new Set();
@@ -596,6 +602,8 @@ export function cardEntryFilter(project, card) {
         const src = isChar ? project?.characters?.[entry?.name] : project?.worldbook?.[entry?.category]?.[entry?.name];
         if (!src) return false;
         const owner = String(src.originalCardId || '');
+        // 创意工坊的卡：自己存进项目的角色和条目由卡上记的条目代替（内容更全：好感、秘密……），项目里的这份不再带
+        if (studio && owner && owner === myId) return true;
         if (owner && owner !== myId) {
             if (others?.has(owner)) return true;
             if (src.originalShadow) return true;
@@ -610,7 +618,8 @@ export function cardEntryFilter(project, card) {
 
 /** 没存进项目的原创卡写入时有没有卡上的条目（人物 / 设定，放进卡自己的世界书；原创卡总是用自己的一本，见 publish.js 的 cardOwnWorld） */
 export function originalHasOwnEntries(card) {
-    if (!isOriginalCard(card)) return false;
+    // 创意工坊的卡：卡上记着自己的条目（card.studio.entries，见 studio-base.js 的 studioOwnEntries），不用这里的
+    if (!isOriginalCard(card) || card.source === STUDIO_SOURCE) return false;
     const o = normalizeCardOriginal(card.original);
     if (!o || o.saved) return false;
     return o.lore.length > 0 || (card.kind === 'world' ? o.characters.length > 0 : o.characters.length > 1);

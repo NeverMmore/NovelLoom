@@ -90,9 +90,89 @@ const sbMock = (prompt) => {
   // 世界/旁白卡整体设计（提示词里带「世界/旁白卡的变量设计」）：群像变量表；init 里只写了莉莉丝，其余主要角色由 NovelLoom 补上
   return '```json\n' + JSON.stringify(prompt.includes('世界/旁白卡的变量设计') ? SB_WORLD_SPEC : SB_SPEC) + '\n```';
 };
+// 创意工坊（smoke_studio.py 用）：按提示词里的标记分出 大纲 / 角色细节 / 开场白 / 示例对话。
+// 大纲：第一次给 A 组 7 人，之后每次「只重新设计角色阵容」轮换到另一组；「只换掉一位角色」给一个新的人；阶段 5 个、地点 4 个。
+// window.__studioHold 为真时角色细节的请求先挂着（window.__studioRelease() 放行），用来测「停止」。
+const STUDIO_CAST = [
+  [['林夏', '26', '急诊科护士', '冷静果断，总是第一个处理伤口'], ['苏晴', '29', '这趟航班的乘务长', '温柔周到，暗中照顾每一个人'], ['顾言', '31', '地质学者', '理性寡言，最先看出岛上的异常'],
+   ['唐恬', '24', '实习律师', '嘴快爱吐槽，负责调解争执'], ['沈墨', '34', '退役特警', '强势可靠，和所有人保持距离'], ['白露', '25', '旅行博主', '乐观外向，靠镜头记录一切'], ['叶知秋', '38', '外科医生', '成熟稳重，藏着自己的伤心事']],
+  [['周芷', '27', '私厨主厨', '用一顿饭安抚所有人'], ['江遥', '30', '民航副驾驶', '自责又倔强，想找到坠机原因'], ['秦岚', '33', '调查记者', '好奇心重，到处打听秘密'],
+   ['宋雨', '24', '潜水教练', '水性最好，常一个人去礁石'], ['许静', '36', '心理咨询师', '看穿别人却看不清自己'], ['陆宁', '28', '电气工程师', '动手能力强，修好了无线电'], ['程安', '31', '摄影师', '安静的观察者，镜头里藏着线索']],
+];
+const STUDIO_STAGES = [
+  ['坠机', '第 1 天', '飞机坠入海中，幸存者被冲上一座无人岛的海滩，彼此陌生。', '谁来带头，伤员怎么办'],
+  ['求生', '第 2-7 天', '搭起营地，分工找水和食物，矛盾和默契一起出现。', '物资分配引发争执'],
+  ['异变', '第 2 周', '岛上出现不属于幸存者的脚印，夜里有灯光。', '要不要探索岛的另一边'],
+  ['秘密', '第 3 周', '每个人藏着的过去开始浮出水面，有人和坠机脱不了干系。', '信任还是揭穿'],
+  ['救援', '一个月后', '无线电终于有了回应，但并不是所有人都想离开。', '走还是留'],
+];
+const STUDIO_FIELD_JSON = { 外貌: 'appearance', 穿着: 'outfit', 性格: 'personality', 说话方式: 'speech', 示例台词: 'sample_lines', 背景经历: 'background', '与 {{user}} 的关系': 'relation_to_user', 好感变化: 'affection', 秘密与隐藏剧情: 'secret', 立绘提示词: 'portrait_prompt' };
+function studioMember(row) {
+  return { name: row[0], aliases: [], gender: '女', age: row[1], identity: row[2], one_liner: row[3], tags: ['幸存者'] };
+}
+function studioDetails(name) {
+  return {
+    appearance: name + '：黑色短发，左眉有一道浅疤', outfit: '被海水泡皱的衬衫，腰间别着一把折叠刀', personality: '底色：冷静\n主色调：嘴硬心软，遇到危险会先挡在别人前面',
+    speech: '说话简短，称呼 {{user}} 为“你”', sample_lines: ['别乱动，我看看伤口。', '水要省着喝。', '……谢谢。'], background: '在急诊室工作了五年，见过太多生死',
+    relation_to_user: '坠机后第一个把 {{user}} 从水里拖上岸的人，对 {{user}} 还有戒心',
+    affection: [{ level: 1, label: '戒备', behavior: '保持距离，只谈正事' }, { level: 2, label: '熟悉', behavior: '会分 {{user}} 一半食物' }, { level: 3, label: '信任', behavior: '把守夜交给 {{user}}' }, { level: 4, label: '依恋', behavior: '夜里会坐到 {{user}} 身边' }],
+    secret: { content: name + '其实认识机上的一名乘客', hints: '提到那名乘客时会转移话题', reveal: '好感到「信任」以上，或进入「秘密」阶段' },
+    portrait_prompt: 'adult woman, 26 years old, short black hair, scar on left eyebrow, wrinkled shirt, calm expression, beach background, anime style',
+  };
+}
+const studioMock = (prompt) => {
+  if (prompt.includes('设计群像故事大纲')) {
+    window.__studioOutlineCalls = (window.__studioOutlineCalls || 0) + 1;
+    const n = Number((prompt.match(/正好 (\d+) 人/) || [])[1] || 7);
+    if (prompt.includes('只换掉一位角色')) return JSON.stringify({ member: { name: '温妤', gender: '女', age: '27', identity: '花艺师', one_liner: '安静细心，擅长辨认植物', tags: ['植物'] } });
+    const world = { title: prompt.includes('暴风雪') ? '雪夜旅馆' : '孤岛七日', logline: '一次坠机，七位陌生的幸存者和 {{user}} 被困在无人岛上。', world: { setting: '现代，太平洋上一座地图上没有标注的无人岛', rules: '淡水有限\n夜里不能离开营地\n无线电只能在山顶使用', tone: '紧张中带着温情', locations: [{ name: '坠机海滩', desc: '残骸散落的白沙滩' }, { name: '椰林营地', desc: '大家搭起的庇护所' }, { name: '山顶瞭望台', desc: '唯一能收到无线电信号的地方' }, { name: '废弃气象站', desc: '岛北边锁着的旧建筑' }] }, user_role: '{{user}} 是同一趟航班的乘客，坠机后和她们一起醒在海滩上。' };
+    if (prompt.includes('只重新设计世界观')) return JSON.stringify(world);
+    const round = window.__studioCastRound = (window.__studioCastRound || 0) + (prompt.includes('只重新设计角色阵容') ? 1 : 0);
+    const cast = STUDIO_CAST[round % 2].slice(0, n).map(studioMember);
+    if (prompt.includes('只重新设计角色阵容')) return JSON.stringify({ cast });
+    const stages = STUDIO_STAGES.map(([name, time, summary, conflict]) => ({ name, time, summary, conflict }));
+    if (prompt.includes('只重新设计故事阶段')) return JSON.stringify({ stages });
+    return '```json\n' + JSON.stringify({ ...world, cast, stages }) + '\n```';
+  }
+  if (prompt.includes('展开角色细节')) {
+    window.__studioCharCalls = (window.__studioCharCalls || 0) + 1;
+    const name = (prompt.match(/展开角色「([^」]+)」的细节/) || [])[1] || '某人';
+    const field = (prompt.match(/只重写「([^」]+)」这一项/) || [])[1];
+    let out;
+    if (field) {
+      const key = STUDIO_FIELD_JSON[field];
+      const v = key === 'sample_lines' ? ['【重写】我不怕。', '【重写】跟紧我。'] : key === 'affection' ? [{ label: '冷淡', behavior: '【重写】不理人' }, { label: '心软', behavior: '【重写】嘴上嫌弃' }]
+        : key === 'secret' ? { content: '【重写】' + name + '的秘密', hints: '线索', reveal: '条件' } : key === 'portrait_prompt' ? 'adult woman, long hair, smiling' : '【重写】' + name + '的' + field;
+      out = JSON.stringify({ [key]: v });
+    } else {
+      out = '```json\n' + JSON.stringify(studioDetails(name)) + '\n```';
+    }
+    if (window.__studioHold) return new Promise((res) => { window.__studioRelease = () => res(out); });
+    return out;
+  }
+  if (prompt.includes('写这一阶段的开场白')) {
+    window.__studioOpenerCalls = (window.__studioOpenerCalls || 0) + 1;
+    const label = (prompt.match(/的(第 \d+ 阶段「[^」]+」)写一段开场白/) || [])[1] || '';
+    const again = prompt.includes('当前的开场白（重写') ? '【重写】' : '';
+    return again + '【' + label + '】海浪一遍遍拍打着残骸。林夏蹲在沙滩上包扎伤口，苏晴数着剩下的水。\n“你醒了？”林夏抬起头，“能站起来吗？”';
+  }
+  if (prompt.includes('写示例对话')) {
+    window.__studioExampleCalls = (window.__studioExampleCalls || 0) + 1;
+    return '<START>\n{{user}}: 有人吗？\n{{char}}: 林夏从篝火边抬起头：“这边。”苏晴把水递过来：“先喝点。”\n<START>\n{{user}}: 今晚谁守夜？\n{{char}}: 沈墨站起身：“我来。”';
+  }
+  return null;
+};
+// 挂起一次回复，等 window.__studioRelease() / window.__sbRelease() 放行（测「停止」和生成期间的界面）
+const held = (out, key) => new Promise((res) => { window[key] = () => res(out); });
 const mock = (prompt) => {
   const sb = sbMock(prompt);
-  if (sb !== null) return sb;
+  // window.__sbHold 为真时状态栏的请求先挂着（smoke_studio.py：生成卡时停止状态栏这一步）
+  if (sb !== null) return window.__sbHold ? held(sb, '__sbRelease') : sb;
+  const studio = studioMock(prompt);
+  // window.__studioHoldOutline / __studioHoldOpener 为真时大纲 / 开场白的请求先挂着（smoke_studio.py：生成期间只读、焦点不盖掉新内容）
+  const hold = typeof studio === 'string' && ((window.__studioHoldOutline && prompt.includes('设计群像故事大纲')) || (window.__studioHoldOpener && prompt.includes('写这一阶段的开场白')));
+  if (hold) return held(studio, '__studioRelease');
+  if (studio !== null) return studio;
   // 推断待确认名称（smoke_names.py 用 window.__namesMock 按条目给出不同的候选；没设时每条给一个 AI 起的名字）。
   // 放在最前面：提示词里有「故事梗概」「原文片段」等字样，会被后面的分支误认
   if (prompt.includes('推断具体名称')) {
